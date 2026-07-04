@@ -1,0 +1,136 @@
+"""Offline tests for the employer verification engine. Run: python3 test_verify.py
+All network I/O is injected — no real DNS/HTTP calls, fully deterministic."""
+
+import sys
+
+from verify import (compute_trust, extract_domain, is_free_mail,
+                    name_matches_domain, scan_red_flags, verify_employer,
+                    check_site_content)
+
+
+def check(label, cond):
+    print(("PASS" if cond else "FAIL"), "-", label)
+    return cond
+
+
+class FakeModel:
+    def __init__(self, text):
+        self._t = text
+
+    def generate_content(self, prompt):
+        class R: pass
+        r = R(); r.text = self._t
+        return r
+
+
+dns_up = lambda d: True
+dns_down = lambda d: False
+mx_yes = lambda d: True
+mx_no = lambda d: False
+site_up = lambda d, timeout=6: (200, "Acme Corp is a marketing agency. " * 20)
+site_down = lambda d, timeout=6: (None, "")
+
+ok = True
+
+# 1. Domain extraction
+ok &= check("email -> domain", extract_domain("info@graylinedigital.com") == "graylinedigital.com")
+ok &= check("url -> domain", extract_domain("https://www.acme.co/careers") == "acme.co")
+ok &= check("junk -> None", extract_domain("call me on whatsapp") is None)
+ok &= check("empty -> None", extract_domain("") is None)
+
+# 2. Free-mail detection
+ok &= check("gmail is free mail", is_free_mail("gmail.com"))
+ok &= check("corporate is not", not is_free_mail("graylinedigital.com"))
+
+# 3. Red-flag lexicon
+ok &= check("fee request flagged",
+            scan_red_flags("Pay a small registration fee to start") != [])
+ok &= check("whatsapp-only flagged",
+            scan_red_flags("Contact us on WhatsApp only") != [])
+ok &= check("crypto salary flagged",
+            scan_red_flags("Salary paid in USDT payment weekly") != [])
+ok &= check("clean JD not flagged",
+            scan_red_flags("We seek a marketing manager with 3 years experience") == [])
+
+# 4. Name/domain matching
+ok &= check("Grayline Digital ~ graylinedigital.com",
+            name_matches_domain("Grayline Digital", "graylinedigital.com"))
+ok &= check("Omx Digital !~ gmail.com", not name_matches_domain("Omx Digital", "gmail.com"))
+ok &= check("Eco Green Developers ~ eco-greendevelopers.com",
+            name_matches_domain("Eco Green Developers", "eco-greendevelopers.com"))
+
+# 5. Deterministic scoring
+s, level, ev = compute_trust({"free_mail": False, "dns": True, "mx": True,
+                              "site_up": True, "name_match": True,
+                              "site_content": "consistent", "red_flags": []})
+ok &= check("all-good employer -> High trust (>=75)", s >= 75 and level == "High trust")
+
+s, level, ev = compute_trust({"free_mail": True, "red_flags": []})
+ok &= check("gmail-only employer -> Medium/Low", s < 50)
+
+s, level, ev = compute_trust({"free_mail": False, "dns": True, "mx": True,
+                              "site_up": True, "name_match": True,
+                              "red_flags": ["asks applicants to pay a fee"]})
+ok &= check("red flag caps score at 35 regardless of good signals", s <= 35)
+
+s, level, ev = compute_trust({"no_contact": True, "red_flags": []})
+ok &= check("no contact -> capped at 40, evidence says unverifiable",
+            s <= 40 and any("no contact" in e for e in ev))
+
+s, level, ev = compute_trust({"free_mail": False, "dns": False, "red_flags": []})
+ok &= check("dead domain tanks the score", s < 50)
+
+# 6. Full pipeline with fakes
+v = verify_employer("Grayline Digital", "info@graylinedigital.com",
+                    "Design role, portfolio required", "Graphic Designer",
+                    model=FakeModel("CONSISTENT"), dns_fn=dns_up, mx_fn=mx_yes,
+                    fetch_fn=site_up)
+ok &= check("legit employer end-to-end -> High trust",
+            v["level"] == "High trust" and v["domain"] == "graylinedigital.com")
+
+v = verify_employer("Omx Digital", "omxdigitals@gmail.com",
+                    "Video editor role", "Video Editor",
+                    model=None, dns_fn=dns_up, mx_fn=mx_yes, fetch_fn=site_up)
+ok &= check("gmail employer end-to-end -> below High, no site checks run",
+            v["score"] < 75 and "dns" not in v["signals"])
+
+v = verify_employer("Scammy Ltd", "scam@fakejobs.biz",
+                    "No experience needed! Pay a registration fee to begin. Earn up to $500 per day",
+                    "Data Entry", model=None, dns_fn=dns_down, mx_fn=mx_no, fetch_fn=site_down)
+ok &= check("scam posting end-to-end -> Avoid", v["level"] == "Avoid")
+
+v = verify_employer("Mystery Co", "", "Nice role", "", model=None)
+ok &= check("no contact end-to-end -> unverified, no network calls",
+            v["score"] <= 40 and v["signals"].get("no_contact"))
+
+# 7. Caching: second call must not re-run network probes
+calls = {"n": 0}
+def counting_dns(d):
+    calls["n"] += 1
+    return True
+cache = {}
+for _ in range(3):
+    verify_employer("Acme", "hr@acme.com", "role", "x", model=None,
+                    dns_fn=counting_dns, mx_fn=mx_yes, fetch_fn=site_up, cache=cache)
+ok &= check("cache prevents repeat network probes", calls["n"] == 1)
+
+# 8. Site-content check is narrow and safe
+ok &= check("site check: consistent",
+            check_site_content(FakeModel("CONSISTENT"), "Acme", "VA", "x" * 200) == "consistent")
+ok &= check("site check: inconsistent",
+            check_site_content(FakeModel("INCONSISTENT — parked page"), "Acme", "VA", "x" * 200) == "inconsistent")
+ok &= check("site check: unclear -> None",
+            check_site_content(FakeModel("UNCLEAR"), "Acme", "VA", "x" * 200) is None)
+ok &= check("site check: no model -> None",
+            check_site_content(None, "Acme", "VA", "x" * 200) is None)
+ok &= check("site check: thin content -> None",
+            check_site_content(FakeModel("CONSISTENT"), "Acme", "VA", "hi") is None)
+
+class BoomModel:
+    def generate_content(self, p):
+        raise RuntimeError("api down")
+ok &= check("site check: model error -> None (never crashes)",
+            check_site_content(BoomModel(), "Acme", "VA", "x" * 200) is None)
+
+print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
+sys.exit(0 if ok else 1)

@@ -1,0 +1,9 @@
+streamlit>=1.43
+google-generativeai>=0.8
+pandas>=2.0
+fpdf2>=2.7
+openpyxl>=3.1
+python-docx>=1.1
+pypdf>=4.0
+requests>=2.31
+dnspython>=2.4

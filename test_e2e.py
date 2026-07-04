@@ -1,0 +1,241 @@
+"""End-to-end test of Emploi core logic with a fake Gemini model.
+Run: python3 test_e2e.py
+"""
+
+import sys
+
+from core import (batch_generate, build_cv_prompt, build_interview_prompt,
+                  build_match_prompt, build_prompt, build_review_prompt,
+                  classify_document, detect_intent, extract_jobs,
+                  extract_profile, generate_application, generate_cv,
+                  guess_columns, load_skill, make_docx, make_pdf, match_jobs,
+                  parse_fit_score, parse_json_array, parse_profile_json,
+                  pdf_to_text, resolve_job)
+
+PROFILE = {
+    "name": "Joy Adeniran", "title": "Product Engineer",
+    "location": "Remote (Lagos)", "experience": "Built Supplya, a B2B BNPL platform...",
+    "skills": "Python, React, Node, product strategy",
+    "education": "BSc Computer Science", "goals": "Remote senior product/eng roles",
+}
+
+CANNED = """## Cover Letter
+Dear Hiring Manager, I am excited to apply...
+
+## CV Bullet Points
+- Built a B2B BNPL platform serving informal retailers
+- Led cross-functional product delivery
+
+## Fit Score
+Fit Score: {score}/100 — strong overlap on product + Python."""
+
+PROFILE_JSON = """Here is the profile:
+```json
+{"name": "Joy Adeniran", "title": "Product Engineer", "location": "Lagos",
+ "experience": "Supplya, Eduwalls", "skills": "Python, React",
+ "education": "BSc CS", "goals": ""}
+```"""
+
+
+class FakeModel:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def generate_content(self, prompt):
+        self.calls.append(prompt)
+        text = self.responses.pop(0) if self.responses else CANNED.format(score=50)
+        class R: pass
+        r = R(); r.text = text
+        return r
+
+
+def check(label, cond):
+    print(("PASS" if cond else "FAIL"), "-", label)
+    return cond
+
+
+ok = True
+
+# 1. Fit score parsing
+ok &= check("parse_fit_score extracts 78", parse_fit_score("blah Fit Score: 78/100 x") == 78)
+ok &= check("parse_fit_score handles missing", parse_fit_score("no score here") is None)
+ok &= check("parse_fit_score rejects >100", parse_fit_score("Fit Score: 300/100") is None)
+
+# 2. Prompt building + skills injection
+ok &= check("skill files load", all(len(load_skill(s)) > 200 for s in
+            ["writing_style", "evaluation", "interview_prep"]))
+p = build_prompt(PROFILE, "We need a Python engineer", "Acme")
+ok &= check("prompt contains profile + JD + company",
+            "Joy Adeniran" in p and "Python engineer" in p and "Acme" in p)
+ok &= check("generation prompt embeds style guide + rubric",
+            "NO em-dashes" in p and "weight 30%" in p)
+rp = build_review_prompt(PROFILE, "JD text", "draft text")
+ok &= check("review prompt embeds draft", "draft text" in rp)
+ok &= check("review prompt enforces style guide", "NO em-dashes" in rp)
+mp = build_match_prompt(PROFILE, [{"company": "Acme", "title": "VA", "description": "x"}])
+ok &= check("match prompt embeds rubric", "weight 30%" in mp)
+ip = build_interview_prompt(PROFILE, "JD here", "Acme")
+ok &= check("interview prompt embeds skill + profile",
+            "STAR" in ip and "Joy Adeniran" in ip and "JD here" in ip)
+cp = build_cv_prompt(PROFILE, "JD here", "Acme")
+ok &= check("cv prompt embeds cv skill + style + profile + JD",
+            "Relevance-weighted" in cp and "NO em-dashes" in cp
+            and "Joy Adeniran" in cp and "JD here" in cp)
+m = FakeModel(["# Joy Adeniran\n## Professional Summary\nMarketing leader..."])
+ok &= check("generate_cv returns model text", "Professional Summary" in generate_cv(m, PROFILE, "JD"))
+
+# 3. Single generation, no review (1 API call)
+m = FakeModel([CANNED.format(score=70)])
+app = generate_application(m, PROFILE, "JD", "Acme", review=False)
+ok &= check("no-review = 1 model call", len(m.calls) == 1)
+ok &= check("fit score parsed (70)", app["fit_score"] == 70)
+ok &= check("company recorded", app["company"] == "Acme")
+
+# 4. Reviewer pass (2 API calls, draft kept)
+m = FakeModel([CANNED.format(score=60), CANNED.format(score=85)])
+app = generate_application(m, PROFILE, "JD", "Acme", review=True)
+ok &= check("review = 2 model calls", len(m.calls) == 2)
+ok &= check("final fit score from reviewed version (85)", app["fit_score"] == 85)
+ok &= check("original draft preserved", "60/100" in app["draft"])
+
+# 5. Batch mode: ranking + limit + skip empty JDs
+jobs = [
+    {"jd": "Role A description with details", "co": "Alpha"},
+    {"jd": "", "co": "EmptyCo"},
+    {"jd": "Role B description with details", "co": "Beta"},
+    {"jd": "Role C description with details", "co": "Gamma"},
+]
+m = FakeModel([CANNED.format(score=40), CANNED.format(score=90)])
+results = batch_generate(m, PROFILE, jobs, "jd", "co", review=False, limit=3)
+ok &= check("batch skips empty JD + respects limit", len(results) == 2)
+ok &= check("batch ranked best-first", results[0]["company"] == "Beta"
+            and results[0]["fit_score"] == 90)
+
+# 6. Column guessing
+jd_col, co_col = guess_columns(jobs)
+ok &= check("guess_columns finds longest text col", jd_col == "jd")
+ok &= check("guess_columns finds company col", co_col == "co")
+
+# 7. CV profile extraction (fenced JSON tolerated)
+prof = parse_profile_json(PROFILE_JSON)
+ok &= check("profile JSON parsed from fenced output", prof.get("name") == "Joy Adeniran")
+ok &= check("profile has all keys as strings",
+            all(isinstance(prof.get(k), str) for k in PROFILE))
+m = FakeModel([PROFILE_JSON])
+prof2 = extract_profile(m, "CV TEXT HERE")
+ok &= check("extract_profile sends CV text to model", "CV TEXT HERE" in m.calls[0])
+ok &= check("extract_profile returns profile", prof2.get("skills") == "Python, React")
+ok &= check("parse_profile_json handles garbage", parse_profile_json("not json") == {})
+
+# 7b. Document classification + job extraction + matching
+ok &= check("classify: CV", classify_document(FakeModel(["CV"]), "x") == "cv")
+ok &= check("classify: JOBS", classify_document(FakeModel(["JOBS"]), "x") == "jobs")
+ok &= check("classify: junk -> other", classify_document(FakeModel(["banana"]), "x") == "other")
+
+JOBS_JSON = """```json
+[{"company": "Acme", "title": "VA", "description": "Remote VA role, apply via email"},
+ {"company": "Globex", "title": "Writer", "description": "Content writer, remote"},
+ {"company": "NoDesc", "title": "x", "description": ""}]
+```"""
+jobs_x = extract_jobs(FakeModel([JOBS_JSON]), "doc")
+ok &= check("extract_jobs parses + drops empty descriptions", len(jobs_x) == 2
+            and jobs_x[0]["company"] == "Acme")
+
+MATCH_JSON = '[{"index": 0, "fit_score": 45, "reason": "meh"}, {"index": 1, "fit_score": 91, "reason": "great"}]'
+ranked = match_jobs(FakeModel([MATCH_JSON]), PROFILE, jobs_x)
+ok &= check("match_jobs ranks best-first", ranked[0]["company"] == "Globex"
+            and ranked[0]["fit_score"] == 91)
+ok &= check("match_jobs keeps reasons", ranked[0]["reason"] == "great")
+
+ok &= check("resolve_job by number", resolve_job("1", ranked)["company"] == "Globex")
+ok &= check("resolve_job by '#2'", resolve_job("#2", ranked)["company"] == "Acme")
+ok &= check("resolve_job by company name", resolve_job("acme", ranked)["company"] == "Acme")
+ok &= check("resolve_job miss -> None", resolve_job("zzz", ranked) is None)
+ok &= check("parse_json_array handles garbage", parse_json_array("nope") == [])
+
+# 7c. Conversational chat turn: context + profile updates
+from core import chat_turn
+CHAT_JSON = '{"reply": "Great goal, noted!", "profile_updates": {"goals": "Senior Marketing Manager roles", "bogus_key": "x", "title": ""}}'
+reply, updates = chat_turn(FakeModel([CHAT_JSON]), PROFILE, "I want senior marketing roles", "user: hi")
+ok &= check("chat_turn parses reply", reply == "Great goal, noted!")
+ok &= check("chat_turn keeps only valid non-empty profile keys",
+            updates == {"goals": "Senior Marketing Manager roles"})
+reply, updates = chat_turn(FakeModel(["plain text answer, no JSON"]), PROFILE, "hi")
+ok &= check("chat_turn falls back to raw text", reply.startswith("plain text") and updates == {})
+m = FakeModel([CHAT_JSON])
+chat_turn(m, PROFILE, "question", "user: earlier\nassistant: earlier reply")
+ok &= check("chat prompt includes history + question",
+            "earlier reply" in m.calls[0] and "question" in m.calls[0])
+
+# 8. Intent routing
+ok &= check("pdf upload -> process_pdf", detect_intent("", has_pdf=True)[0] == "process_pdf")
+ok &= check("'apply 2' -> apply('2')", detect_intent("apply 2") == ("apply", "2"))
+ok &= check("'apply to Acme' -> apply('Acme')", detect_intent("apply to Acme") == ("apply", "Acme"))
+ok &= check("'find a match' -> match", detect_intent("find a match")[0] == "match")
+ok &= check("'/verify email' -> verify",
+            detect_intent("/verify holla@suplya.shop") == ("verify", "holla@suplya.shop"))
+ok &= check("'verify 2' -> verify('2')", detect_intent("verify 2") == ("verify", "2"))
+ok &= check("'/apply 2' slash tolerated", detect_intent("/apply 2") == ("apply", "2"))
+ok &= check("'/batch 3' slash tolerated", detect_intent("/batch 3") == ("batch", 3))
+ok &= check("'/tracker' slash tolerated", detect_intent("/tracker")[0] == "tracker")
+ok &= check("'interview' -> interview(None)", detect_intent("interview") == ("interview", None))
+ok &= check("'prep me for 2' -> interview('2')", detect_intent("prep me for 2") == ("interview", "2"))
+ok &= check("'interview Acme' -> interview('Acme')", detect_intent("interview Acme") == ("interview", "Acme"))
+ok &= check("'read these and find a match' -> match",
+            detect_intent("Read these job listings and find a match")[0] == "match")
+ok &= check("sheet upload -> import_jobs", detect_intent("", has_sheet=True)[0] == "import_jobs")
+ok &= check("'batch 7' -> batch(7)", detect_intent("batch 7") == ("batch", 7))
+ok &= check("'batch' defaults to 5", detect_intent("Batch") == ("batch", 5))
+ok &= check("'tracker' -> tracker", detect_intent("show my tracker")[0] == "tracker")
+jd_text = ("We are looking for a senior engineer. Responsibilities include X. "
+           "Requirements: Python. " + "More detail. " * 40)
+ok &= check("long JD text -> generate", detect_intent(jd_text)[0] == "generate")
+ok &= check("short question -> chat", detect_intent("how do I negotiate salary?")[0] == "chat")
+
+# 9. PDF roundtrip: build a CV pdf with fpdf, read it back with pypdf
+cv_pdf = make_pdf("Joy Adeniran\nProduct Engineer\nSkills: Python, React")
+ok &= check("PDF bytes valid", cv_pdf[:5] == b"%PDF-" and len(cv_pdf) > 500)
+extracted = pdf_to_text(cv_pdf)
+ok &= check("pdf_to_text roundtrip", "Joy Adeniran" in extracted and "Python" in extracted)
+
+# 9b. Markdown must be RENDERED in exports, not dumped raw (was a real bug)
+MD = """## Cover Letter
+Dear Team, I closed ₦2m in sales — **measurable** impact.
+
+*   **Brand Strategy:** built identity across channels
+- Led launches
+
+| Dimension | Score |
+|-----------|-------|
+| Skills | 55 |
+
+Fit Score: 72/100"""
+rendered = pdf_to_text(make_pdf(MD))
+ok &= check("PDF: no raw markdown tokens",
+            "##" not in rendered and "**" not in rendered and "|" not in rendered)
+ok &= check("PDF: content survives rendering",
+            "Cover Letter" in rendered and "Brand Strategy" in rendered
+            and "Skills" in rendered and "72/100" in rendered)
+ok &= check("PDF: naira encoded readably", "NGN" in rendered and "?" not in rendered.split("Fit")[0])
+ok &= check("DOCX: renders same markdown", make_docx(MD)[:2] == b"PK")
+
+# 9c. Downloads must exclude the fit evaluation (sendable content only)
+from core import strip_evaluation
+APP_MD = MD.replace("| Dimension | Score |", "## Fit Evaluation\n| Dimension | Score |")
+stripped = strip_evaluation(APP_MD)
+ok &= check("strip_evaluation removes fit section",
+            "Fit Evaluation" not in stripped and "72/100" not in stripped
+            and "Dear Team" in stripped)
+ok &= check("strip_evaluation handles old '## Fit Score' header",
+            "88/100" not in strip_evaluation(CANNED.format(score=88)))
+ok &= check("strip_evaluation is a no-op without the section",
+            strip_evaluation("## Cover Letter\nhi") == "## Cover Letter\nhi")
+ok &= check("strip_evaluation survives None/empty", strip_evaluation("") == "")
+
+# 10. DOCX export
+docx = make_docx(CANNED.format(score=88), title="Application - Acme")
+ok &= check("DOCX bytes valid (zip magic)", docx[:2] == b"PK" and len(docx) > 1000)
+
+print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
+sys.exit(0 if ok else 1)
