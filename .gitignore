@@ -5,5 +5,6 @@ __pycache__/
 .DS_Store
 *.sqlite3
 business/
-.claude/
+.claude/*
+!.claude/skills/
 index-screenshot.png
