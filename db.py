@@ -1,23 +1,20 @@
-"""Emploi persistence scaffold — SQLite storage for profiles and the tracker.
+"""Emploi persistence — SQLite storage for Career Twins and the application tracker.
 
-Wired into app.py ONLY for signed-in users (Google OIDC via st.login). Anonymous
-sessions stay in-memory: SQLite on a shared deployment is global, and persisting
-without user identity would leak one user's CV to the next visitor. Everything
-here is keyed by user_id (Google `sub` claim) for exactly that reason.
+Everything is keyed by user_id (Google `sub` claim) so data is never shared
+between users. No Streamlit imports; pure stdlib; testable offline.
 
-Design notes:
-- Profiles are stored as JSON blobs: the profile is a schema-flexible dict
-  everywhere else in the codebase, so the store must not impose columns on it.
+Design:
+- Career Twin data is a JSON blob: the dict is schema-flexible everywhere else
+  in the codebase, so the store must not impose columns on it.
 - Applications get real columns for the fields the tracker filters/sorts on
   (company, role, status) plus an `extra` JSON blob for everything else.
-- No Streamlit imports; pure stdlib; fully testable offline (see test_db.py).
 """
 
 import json
 import sqlite3
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS profiles (
+CREATE TABLE IF NOT EXISTS career_twins (
     user_id    TEXT PRIMARY KEY,
     data       TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -46,27 +43,34 @@ def connect(path: str, check_same_thread: bool = True) -> sqlite3.Connection:
     """
     conn = sqlite3.connect(path, check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
+    # migrate legacy `profiles` table before schema creation so the
+    # CREATE TABLE IF NOT EXISTS career_twins becomes a no-op after the rename
+    try:
+        conn.execute("ALTER TABLE profiles RENAME TO career_twins")
+        conn.commit()
+    except Exception:
+        pass  # already renamed, or old table never existed
     conn.executescript(_SCHEMA)
     return conn
 
 
-def save_profile(conn, user_id: str, profile: dict) -> None:
-    """Upsert the user's profile as a JSON blob."""
-    if not isinstance(profile, dict):
-        raise TypeError("profile must be a dict")
+def save_career_twin(conn, user_id: str, data: dict) -> None:
+    """Upsert the user's Career Twin as a JSON blob."""
+    if not isinstance(data, dict):
+        raise TypeError("career twin data must be a dict")
     conn.execute(
-        "INSERT INTO profiles (user_id, data, updated_at) "
+        "INSERT INTO career_twins (user_id, data, updated_at) "
         "VALUES (?, ?, datetime('now')) "
         "ON CONFLICT(user_id) DO UPDATE SET data=excluded.data, "
         "updated_at=excluded.updated_at",
-        (user_id, json.dumps(profile)))
+        (user_id, json.dumps(data)))
     conn.commit()
 
 
-def load_profile(conn, user_id: str) -> dict:
-    """Return the user's profile, or {} if absent/unreadable. Never raises."""
+def load_career_twin(conn, user_id: str) -> dict:
+    """Return the user's Career Twin dict, or {} if absent. Never raises."""
     row = conn.execute(
-        "SELECT data FROM profiles WHERE user_id = ?", (user_id,)).fetchone()
+        "SELECT data FROM career_twins WHERE user_id = ?", (user_id,)).fetchone()
     if not row:
         return {}
     try:
@@ -75,6 +79,21 @@ def load_profile(conn, user_id: str) -> dict:
     except Exception:
         return {}
 
+
+# ---------------------------------------------------------------------------
+# Backward-compat aliases — remove once all callers are updated
+# ---------------------------------------------------------------------------
+def save_profile(conn, user_id: str, profile: dict) -> None:
+    save_career_twin(conn, user_id, profile)
+
+
+def load_profile(conn, user_id: str) -> dict:
+    return load_career_twin(conn, user_id)
+
+
+# ---------------------------------------------------------------------------
+# Applications tracker
+# ---------------------------------------------------------------------------
 
 def add_application(conn, user_id: str, app: dict) -> int:
     """Insert a tracker entry. Known fields become columns; the rest goes to
@@ -115,8 +134,7 @@ def update_application_status(conn, app_id: int, status: str) -> None:
 
 
 def clear_user(conn, user_id: str) -> None:
-    """Delete everything stored for one user (their right under NDPA/GDPR).
-    Backs the app's 'Clear all data' button for signed-in users."""
-    conn.execute("DELETE FROM profiles WHERE user_id = ?", (user_id,))
+    """Delete everything stored for one user (right under NDPA/GDPR)."""
+    conn.execute("DELETE FROM career_twins WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM applications WHERE user_id = ?", (user_id,))
     conn.commit()

@@ -3,8 +3,9 @@ Uses in-memory SQLite only — no files, no network."""
 
 import sys
 
-from db import (connect, save_profile, load_profile, add_application,
-                list_applications, update_application_status, clear_user)
+from db import (connect, save_career_twin, load_career_twin,
+                add_application, list_applications,
+                update_application_status, clear_user)
 
 
 def check(label, cond):
@@ -15,23 +16,23 @@ def check(label, cond):
 ok = True
 conn = connect(":memory:")
 
-# 1. Profile roundtrip
-profile = {"name": "Ada", "skills": "Python, SQL", "goals": "remote data roles"}
-save_profile(conn, "user-1", profile)
-ok &= check("profile roundtrip", load_profile(conn, "user-1") == profile)
+# 1. Career Twin roundtrip
+twin = {"name": "Ada", "skills": "Python, SQL", "goals": "remote data roles"}
+save_career_twin(conn, "user-1", twin)
+ok &= check("career twin roundtrip", load_career_twin(conn, "user-1") == twin)
 
 # 2. Save is an upsert
-save_profile(conn, "user-1", {"name": "Ada Obi"})
-ok &= check("second save overwrites", load_profile(conn, "user-1") == {"name": "Ada Obi"})
+save_career_twin(conn, "user-1", {"name": "Ada Obi"})
+ok &= check("second save overwrites", load_career_twin(conn, "user-1") == {"name": "Ada Obi"})
 
 # 3. Unknown user -> empty dict, never raises
-ok &= check("unknown user -> {}", load_profile(conn, "nobody") == {})
+ok &= check("unknown user -> {}", load_career_twin(conn, "nobody") == {})
 
 # 4. Users are isolated
-save_profile(conn, "user-2", {"name": "Bola"})
+save_career_twin(conn, "user-2", {"name": "Bola"})
 ok &= check("users isolated",
-            load_profile(conn, "user-1") == {"name": "Ada Obi"}
-            and load_profile(conn, "user-2") == {"name": "Bola"})
+            load_career_twin(conn, "user-1") == {"name": "Ada Obi"}
+            and load_career_twin(conn, "user-2") == {"name": "Bola"})
 
 # 5. Applications: insert + list (newest first)
 a1 = add_application(conn, "user-1", {"company": "Acme", "role": "Analyst",
@@ -54,36 +55,49 @@ apps = list_applications(conn, "user-1")
 ok &= check("status update sticks",
             [a for a in apps if a["id"] == a1][0]["status"] == "Interview")
 
-# 8. Defensive: non-dict profile rejected, DB untouched
+# 8. Defensive: non-dict data rejected, DB untouched
 try:
-    save_profile(conn, "user-1", "not a dict")
+    save_career_twin(conn, "user-1", "not a dict")
     bad = False
 except (TypeError, ValueError):
     bad = True
-ok &= check("non-dict profile raises, existing data intact",
-            bad and load_profile(conn, "user-1") == {"name": "Ada Obi"})
+ok &= check("non-dict career twin raises, existing data intact",
+            bad and load_career_twin(conn, "user-1") == {"name": "Ada Obi"})
 
-# 9. clear_user wipes only that user (privacy: "Clear all data" when signed in)
+# 9. clear_user wipes only that user (NDPA/GDPR right)
 clear_user(conn, "user-1")
-ok &= check("clear_user removes profile and applications",
-            load_profile(conn, "user-1") == {} and list_applications(conn, "user-1") == [])
+ok &= check("clear_user removes career twin and applications",
+            load_career_twin(conn, "user-1") == {}
+            and list_applications(conn, "user-1") == [])
 ok &= check("clear_user leaves other users untouched",
-            load_profile(conn, "user-2") == {"name": "Bola"})
+            load_career_twin(conn, "user-2") == {"name": "Bola"})
 
-# 10. Cross-thread use (Streamlit shares one cached connection across session threads)
+# 10. Cross-thread use
 import tempfile as _tf, os as _os2, threading
 _dbfile = _tf.NamedTemporaryFile(suffix=".sqlite3", delete=False).name
 tconn = connect(_dbfile, check_same_thread=False)
 err = []
 def _work():
     try:
-        save_profile(tconn, "t-user", {"name": "Thread"})
+        save_career_twin(tconn, "t-user", {"name": "Thread"})
     except Exception as e:
         err.append(e)
 t = threading.Thread(target=_work); t.start(); t.join()
 ok &= check("connection usable from another thread when check_same_thread=False",
-            not err and load_profile(tconn, "t-user") == {"name": "Thread"})
+            not err and load_career_twin(tconn, "t-user") == {"name": "Thread"})
 tconn.close(); _os2.unlink(_dbfile)
+
+# 11. Legacy profiles table migrated transparently on connect
+import sqlite3
+_dbfile2 = _tf.NamedTemporaryFile(suffix=".sqlite3", delete=False).name
+_c = sqlite3.connect(_dbfile2)
+_c.execute("CREATE TABLE profiles (user_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT (datetime('now')))")
+_c.execute("INSERT INTO profiles VALUES ('migrated-user', '{\"name\":\"Legacy\"}', datetime('now'))")
+_c.commit(); _c.close()
+mconn = connect(_dbfile2)
+ok &= check("legacy profiles table migrated to career_twins",
+            load_career_twin(mconn, "migrated-user") == {"name": "Legacy"})
+mconn.close(); _os2.unlink(_dbfile2)
 
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

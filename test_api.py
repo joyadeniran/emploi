@@ -35,32 +35,45 @@ check("health reports ai unavailable without key", r.json()["ai"] is False)
 check("health reports auth enabled", r.json()["auth"] is True)
 
 check("missing api key -> 401",
-      client.get("/profile", headers={"X-User-Id": "u"}).status_code == 401)
+      client.get("/career-twin", headers={"X-User-Id": "u"}).status_code == 401)
 check("wrong api key -> 401",
-      client.get("/profile", headers={"X-API-Key": "nope", "X-User-Id": "u"}).status_code == 401)
+      client.get("/career-twin", headers={"X-API-Key": "nope", "X-User-Id": "u"}).status_code == 401)
 check("missing user id -> 401",
-      client.get("/profile", headers={"X-API-Key": "test-key"}).status_code == 401)
+      client.get("/career-twin", headers={"X-API-Key": "test-key"}).status_code == 401)
 
-# ---------------- profile round-trip ----------------
-check("empty profile initially",
-      client.get("/profile", headers=AUTH).json()["profile"] == {})
-r = client.put("/profile", headers=AUTH,
-               json={"profile": {"name": "Ada", "skills": "Python"}})
-check("profile save ok", r.status_code == 200)
-check("profile round-trip",
-      client.get("/profile", headers=AUTH).json()["profile"]["name"] == "Ada")
-check("profile is per-user",
-      client.get("/profile", headers={**AUTH, "X-User-Id": "user-2"}).json()["profile"] == {})
+# ---------------- career twin round-trip ----------------
+check("empty career twin initially",
+      client.get("/career-twin", headers=AUTH).json()["career_twin"] == {})
+
+r = client.patch("/career-twin", headers=AUTH,
+                 json={"data": {"name": "Ada", "skills": "Python"}})
+check("career twin patch ok", r.status_code == 200)
+check("career twin round-trip",
+      client.get("/career-twin", headers=AUTH).json()["career_twin"]["name"] == "Ada")
+check("career twin is per-user",
+      client.get("/career-twin", headers={**AUTH, "X-User-Id": "user-2"}).json()["career_twin"] == {})
+
+# patch merges, not replaces
+r = client.patch("/career-twin", headers=AUTH, json={"data": {"headline": "PM"}})
+ct = client.get("/career-twin", headers=AUTH).json()["career_twin"]
+check("patch merges fields (name retained after headline patch)",
+      ct["name"] == "Ada" and ct["headline"] == "PM")
+
+# complete endpoint marks onboarding done
+r = client.post("/career-twin/complete", headers=AUTH)
+check("career twin complete ok", r.status_code == 200)
+ct = client.get("/career-twin", headers=AUTH).json()["career_twin"]
+check("onboarding_complete flag set", ct.get("onboarding_complete") is True)
 
 # ---------------- AI endpoints degrade without a key ----------------
-r = client.post("/resume/extract", headers=AUTH, json={"cv_text": "x" * 60})
-check("resume extract without key -> 503 with clear message",
+r = client.post("/career-twin/extract", headers=AUTH, json={"cv_text": "x" * 60})
+check("extract without key -> 503 with clear message",
       r.status_code == 503 and "GEMINI_API_KEY" in r.json()["detail"])
 r = client.post("/matches", headers=AUTH, json={"jobs": [{"title": "PM"}]})
 check("matches without key -> 503", r.status_code == 503)
 
 
-# ---------------- resume extract with a fake model ----------------
+# ---------------- career-twin/extract with a fake model ----------------
 class FakeModel:
     def __init__(self, text):
         self._text = text
@@ -75,18 +88,24 @@ class FakeModel:
 
 m.app.state.model_factory = lambda: FakeModel(
     '```json\n{"name": "Ada Obi", "skills": "Python, SQL"}\n```')
-r = client.post("/resume/extract", headers=AUTH, json={"cv_text": "x" * 60})
-check("resume extract parses fenced JSON", r.json()["profile"]["name"] == "Ada Obi")
-check("extracted profile persisted",
-      client.get("/profile", headers=AUTH).json()["profile"]["name"] == "Ada Obi")
+r = client.post("/career-twin/extract", headers=AUTH, json={"cv_text": "x" * 60})
+check("extract parses fenced JSON", r.json()["career_twin"]["name"] == "Ada Obi")
+check("extracted data persisted",
+      client.get("/career-twin", headers=AUTH).json()["career_twin"]["name"] == "Ada Obi")
 
 m.app.state.model_factory = lambda: FakeModel("this is not json at all")
-r = client.post("/resume/extract", headers=AUTH, json={"cv_text": "x" * 60})
+r = client.post("/career-twin/extract", headers=AUTH, json={"cv_text": "x" * 60})
 check("garbage model output -> 422, never a crash", r.status_code == 422)
 
 check("short cv text rejected by validation",
-      client.post("/resume/extract", headers=AUTH,
+      client.post("/career-twin/extract", headers=AUTH,
                   json={"cv_text": "short"}).status_code == 422)
+
+# legacy /resume/extract alias still works
+m.app.state.model_factory = lambda: FakeModel(
+    '```json\n{"name": "Legacy Ada"}\n```')
+r = client.post("/resume/extract", headers=AUTH, json={"cv_text": "x" * 60})
+check("legacy /resume/extract alias still responds 200", r.status_code == 200)
 
 # ---------------- deterministic trust verification ----------------
 m.app.state.model_factory = lambda: None
@@ -162,8 +181,8 @@ check("invalid transition status rejected",
 # ---------------- user deletion (NDPA/GDPR) ----------------
 r = client.delete("/user", headers=AUTH)
 check("delete user ok", r.status_code == 200)
-check("profile gone after deletion",
-      client.get("/profile", headers=AUTH).json()["profile"] == {})
+check("career twin gone after deletion",
+      client.get("/career-twin", headers=AUTH).json()["career_twin"] == {})
 check("applications gone after deletion",
       client.get("/applications", headers=AUTH).json()["applications"] == [])
 

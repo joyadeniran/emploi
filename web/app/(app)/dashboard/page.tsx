@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import {
   ArrowRight,
   Bookmark,
@@ -11,6 +12,7 @@ import {
   Trophy,
   Percent,
   MoreVertical,
+  Loader2,
 } from "lucide-react";
 import { auth } from "@/auth";
 import {
@@ -26,6 +28,7 @@ import {
 } from "@/lib/data";
 import { FitRing, ProgressRing } from "@/components/ProgressRing";
 import { CareerTwinBot } from "@/components/CareerTwinBot";
+import { apiFetch, ApiUnavailableError, DEMO_MODE } from "@/lib/api";
 
 function matchTone(fit: number) {
   if (fit >= 85) return { label: "Great Match", cls: "text-good" };
@@ -36,6 +39,54 @@ function matchTone(fit: number) {
 export default async function DashboardPage() {
   const session = await auth();
   const name = firstName(session?.user?.name);
+
+  // Onboarding gate: fetch career twin and redirect if not complete
+  if (!DEMO_MODE) {
+    try {
+      const { career_twin } = await apiFetch<{ career_twin: Record<string, unknown> }>("/career-twin");
+      const isComplete = career_twin && Object.keys(career_twin).length > 0 && career_twin.onboarding_complete;
+      if (!isComplete) {
+        redirect("/create-career-twin");
+      }
+    } catch (e) {
+      // If the API is unavailable, don't block the user — fall through to the dashboard
+      if (!(e instanceof ApiUnavailableError)) {
+        redirect("/create-career-twin");
+      }
+    }
+  }
+
+  // If twin is complete but has no matches yet, show the "getting to work" state.
+  // For now we always show the full dashboard (demo data); swap this flag when
+  // the backend can return real match counts.
+  const hasMatches = true;
+
+  // Empty state — Career Twin is set up but hasn't found matches yet
+  if (!hasMatches) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">
+          {greeting()}, {name}.
+        </h1>
+        <p className="mt-3 text-lg font-semibold text-muted">Your Career Twin is getting to work.</p>
+        <div className="mt-8 w-full max-w-sm space-y-3 text-left">
+          {[
+            "Scanning new opportunities...",
+            "Building your first recommendations...",
+            "Verifying employers...",
+          ].map((line) => (
+            <div key={line} className="flex items-center gap-3 rounded-xl border border-line bg-white px-4 py-3 shadow-card">
+              <Loader2 size={16} className="shrink-0 animate-spin text-brand" />
+              <span className="text-sm font-semibold">{line}</span>
+            </div>
+          ))}
+        </div>
+        <p className="mt-8 text-sm text-muted">
+          We&apos;ll notify you when your first matches are ready.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto grid max-w-7xl gap-6 xl:grid-cols-[1fr_360px]">

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth, signIn, googleConfigured, devLoginEnabled } from "@/auth";
 import { Logo } from "@/components/Logo";
-import { ShieldCheck, Sparkles, FileCheck } from "lucide-react";
+import { Sparkles } from "lucide-react";
 
 function GoogleIcon() {
   return (
@@ -48,11 +48,10 @@ export default async function LoginPage() {
             <Logo markSize={24} />
           </div>
           <h1 className="mt-6 text-center text-2xl font-extrabold tracking-tight">
-            Your Career Twin is waiting.
+            Welcome to Emploi.
           </h1>
           <p className="mt-2 text-center text-sm leading-relaxed text-muted">
-            Sign in with Google to create your Career Twin — or pick up right
-            where you left off.
+            Create your Career Twin in under 2 minutes.
           </p>
 
           <div className="mt-8 space-y-3">
@@ -98,18 +97,6 @@ export default async function LoginPage() {
             ) : null}
           </div>
 
-          <ul className="mt-8 space-y-2.5 border-t border-line pt-6">
-            {[
-              { icon: Sparkles, text: "Your Career Twin works while you sleep" },
-              { icon: ShieldCheck, text: "Every employer verified for scam signals" },
-              { icon: FileCheck, text: "Applications built only from your real experience" },
-            ].map(({ icon: Icon, text }) => (
-              <li key={text} className="flex items-center gap-2.5 text-xs font-semibold text-muted">
-                <Icon size={14} className="shrink-0 text-brand" />
-                {text}
-              </li>
-            ))}
-          </ul>
         </div>
 
         <p className="mt-6 text-center text-xs leading-relaxed text-faint">

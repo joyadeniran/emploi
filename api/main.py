@@ -87,8 +87,8 @@ app.state.model_factory = get_model
 
 
 # ---------------- schemas ----------------
-class ProfileIn(BaseModel):
-    profile: dict
+class CareerTwinIn(BaseModel):
+    data: dict
 
 
 class ResumeIn(BaseModel):
@@ -135,27 +135,67 @@ def health():
     }
 
 
-@app.get("/profile")
-def get_profile(user_id: str = Depends(auth)):
-    return {"profile": db.load_profile(get_conn(), user_id)}
+@app.get("/career-twin")
+def get_career_twin(user_id: str = Depends(auth)):
+    return {"career_twin": db.load_career_twin(get_conn(), user_id)}
 
 
-@app.put("/profile")
-def put_profile(body: ProfileIn, user_id: str = Depends(auth)):
-    db.save_profile(get_conn(), user_id, body.profile)
+@app.patch("/career-twin")
+def patch_career_twin(body: CareerTwinIn, user_id: str = Depends(auth)):
+    """Merge incoming fields into the stored Career Twin (partial update)."""
+    conn = get_conn()
+    existing = db.load_career_twin(conn, user_id)
+    existing.update(body.data)
+    db.save_career_twin(conn, user_id, existing)
     return {"ok": True}
 
 
-@app.post("/resume/extract")
-def resume_extract(body: ResumeIn, user_id: str = Depends(auth)):
-    """CV text -> structured profile (Gemini), persisted for the user."""
+@app.post("/career-twin/extract")
+def career_twin_extract(body: ResumeIn, user_id: str = Depends(auth)):
+    """CV text → structured Career Twin data (Gemini), merged into the store."""
     model = require_model()
     profile = core.extract_profile(model, body.cv_text)
     if not profile:
         raise HTTPException(status_code=422,
                             detail="could not extract a profile from that text")
-    db.save_profile(get_conn(), user_id, profile)
-    return {"profile": profile}
+    conn = get_conn()
+    existing = db.load_career_twin(conn, user_id)
+    existing.update(profile)
+    db.save_career_twin(conn, user_id, existing)
+    return {"career_twin": existing}
+
+
+@app.post("/career-twin/complete")
+def career_twin_complete(user_id: str = Depends(auth)):
+    """Mark the Career Twin as activated (onboarding finished)."""
+    conn = get_conn()
+    existing = db.load_career_twin(conn, user_id)
+    existing["onboarding_complete"] = True
+    db.save_career_twin(conn, user_id, existing)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Legacy aliases — kept so any in-flight calls don't hard-break
+# ---------------------------------------------------------------------------
+@app.get("/profile")
+def _legacy_get_profile(user_id: str = Depends(auth)):
+    return {"profile": db.load_career_twin(get_conn(), user_id)}
+
+
+@app.post("/resume/extract")
+def _legacy_resume_extract(body: ResumeIn, user_id: str = Depends(auth)):
+    """Deprecated — use POST /career-twin/extract."""
+    model = require_model()
+    profile = core.extract_profile(model, body.cv_text)
+    if not profile:
+        raise HTTPException(status_code=422,
+                            detail="could not extract a profile from that text")
+    conn = get_conn()
+    existing = db.load_career_twin(conn, user_id)
+    existing.update(profile)
+    db.save_career_twin(conn, user_id, existing)
+    return {"profile": existing}
 
 
 @app.post("/verify")
@@ -205,10 +245,10 @@ def set_app_status(app_id: int, body: StatusIn, user_id: str = Depends(auth)):
 def matches_endpoint(body: MatchIn, user_id: str = Depends(auth)):
     """Rank jobs against the stored profile (Gemini)."""
     model = require_model()
-    profile = db.load_profile(get_conn(), user_id)
+    profile = db.load_career_twin(get_conn(), user_id)
     if not profile:
         raise HTTPException(status_code=409,
-                            detail="no profile yet — upload a CV first")
+                            detail="no Career Twin yet — complete setup first")
     if not body.jobs:
         raise HTTPException(status_code=422, detail="no jobs provided")
     return {"matches": core.match_jobs(model, profile, body.jobs)}

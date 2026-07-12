@@ -11,6 +11,9 @@ import { auth } from "@/auth";
 const API_URL = process.env.EMPLOI_API_URL ?? "http://localhost:8000";
 const API_KEY = process.env.EMPLOI_API_KEY ?? "";
 
+/** When true, API routes return hardcoded demo data without hitting the real API. */
+export const DEMO_MODE = process.env.DEMO_MODE === "true";
+
 export class ApiUnavailableError extends Error {}
 
 export async function apiFetch<T>(
