@@ -363,6 +363,7 @@ export default function CreateCareerTwinPage() {
   const [userName, setUserName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [extractionFailed, setExtractionFailed] = useState(false);
   const [newSkill, setNewSkill] = useState("");
   const [newRole, setNewRole] = useState("");
   const [newIndustry, setNewIndustry] = useState("");
@@ -378,12 +379,13 @@ export default function CreateCareerTwinPage() {
     if (meta) setUserName(meta.getAttribute("content") ?? "");
   }, []);
 
-  // Step 3 auto-advance
+  // Step 3 auto-advance — only when no file is being uploaded (skip case)
   useEffect(() => {
     if (step !== 3) return;
+    if (uploading) return; // wait for upload to finish; handleUploadContinue advances step
     const timer = setTimeout(() => setStep(4), 2200);
     return () => clearTimeout(timer);
-  }, [step]);
+  }, [step, uploading]);
 
   // Step 8 — save & complete, then advance
   const doActivate = useCallback(async () => {
@@ -405,7 +407,8 @@ export default function CreateCareerTwinPage() {
   }, [step, doActivate]);
 
   async function handleUploadContinue() {
-    if (!file) { setStep(3); return; }
+    if (!file) { setStep(3); return; } // no file → skip → 2.2s timer advances
+    setExtractionFailed(false);
     setUploading(true);
     setStep(3);
     try {
@@ -416,12 +419,17 @@ export default function CreateCareerTwinPage() {
         const json = await res.json();
         if (json.career_twin) {
           setTwin((prev) => ({ ...prev, ...json.career_twin }));
+        } else {
+          setExtractionFailed(true);
         }
+      } else {
+        setExtractionFailed(true);
       }
     } catch {
-      /* extraction failed — user will review blank form */
+      setExtractionFailed(true);
     } finally {
       setUploading(false);
+      setStep(4); // advance only after upload resolves (success or failure)
     }
   }
 
@@ -587,9 +595,15 @@ export default function CreateCareerTwinPage() {
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-2xl font-extrabold tracking-tight">Review &amp; edit your information</h2>
-                <span className="rounded-full bg-brand-soft px-2.5 py-0.5 text-xs font-bold text-brand">AI Extracted</span>
+                {!extractionFailed && <span className="rounded-full bg-brand-soft px-2.5 py-0.5 text-xs font-bold text-brand">AI Extracted</span>}
               </div>
-              <p className="mt-1.5 text-sm text-muted">We extracted the details below. Please review and make any changes.</p>
+              {extractionFailed ? (
+                <p className="mt-2 rounded-xl border border-amber/30 bg-amber-soft px-4 py-2.5 text-xs font-semibold text-ink">
+                  We couldn&apos;t extract text from your CV — it may be image-only or password-protected. Please fill in your details below.
+                </p>
+              ) : (
+                <p className="mt-1.5 text-sm text-muted">We extracted the details below. Please review and make any changes.</p>
+              )}
             </div>
 
             <div className="space-y-4">

@@ -42,18 +42,16 @@ export default async function DashboardPage() {
 
   // Onboarding gate: fetch career twin and redirect if not complete
   if (!DEMO_MODE) {
+    let twinComplete = false;
     try {
       const { career_twin } = await apiFetch<{ career_twin: Record<string, unknown> }>("/career-twin");
-      const isComplete = career_twin && Object.keys(career_twin).length > 0 && career_twin.onboarding_complete;
-      if (!isComplete) {
-        redirect("/create-career-twin");
-      }
+      twinComplete = !!(career_twin && Object.keys(career_twin).length > 0 && career_twin.onboarding_complete);
     } catch (e) {
-      // If the API is unavailable, don't block the user — fall through to the dashboard
-      if (!(e instanceof ApiUnavailableError)) {
-        redirect("/create-career-twin");
-      }
+      // API unavailable → don't block; any other error → treat as not complete
+      if (e instanceof ApiUnavailableError) twinComplete = true;
     }
+    // redirect() must be called outside try/catch — it throws a special Next.js error internally
+    if (!twinComplete) redirect("/create-career-twin");
   }
 
   // If twin is complete but has no matches yet, show the "getting to work" state.
