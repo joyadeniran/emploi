@@ -18,7 +18,7 @@ import os
 import sys
 import logging
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -158,6 +158,32 @@ def career_twin_extract(body: ResumeIn, user_id: str = Depends(auth)):
     if not profile:
         raise HTTPException(status_code=422,
                             detail="could not extract a profile from that text")
+    conn = get_conn()
+    existing = db.load_career_twin(conn, user_id)
+    existing.update(profile)
+    db.save_career_twin(conn, user_id, existing)
+    return {"career_twin": existing}
+
+
+@app.post("/career-twin/upload")
+async def career_twin_upload(
+    file: UploadFile = File(...),
+    user_id: str = Depends(auth),
+):
+    """PDF binary → extracted Career Twin (Gemini), merged into the store."""
+    model = require_model()
+    pdf_bytes = await file.read()
+    try:
+        cv_text = core.pdf_to_text(pdf_bytes)
+    except Exception:
+        raise HTTPException(status_code=422, detail="could not read that PDF")
+    if len(cv_text.strip()) < 50:
+        raise HTTPException(status_code=422,
+                            detail="PDF appears to be image-only or too short to extract text")
+    profile = core.extract_profile(model, cv_text)
+    if not profile:
+        raise HTTPException(status_code=422,
+                            detail="could not extract a profile from that PDF")
     conn = get_conn()
     existing = db.load_career_twin(conn, user_id)
     existing.update(profile)

@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { apiFetch, ApiUnavailableError, DEMO_MODE } from "@/lib/api";
+import { auth } from "@/auth";
+import { DEMO_MODE } from "@/lib/api";
+
+const API_URL = process.env.EMPLOI_API_URL ?? "http://localhost:8000";
+const API_KEY = process.env.EMPLOI_API_KEY ?? "";
 
 const DEMO_CAREER_TWIN = {
   name: "Joy Adesola",
@@ -23,42 +27,58 @@ const DEMO_CAREER_TWIN = {
 };
 
 /**
- * Accepts a multipart/form-data upload with a `file` field (PDF).
- * TODO: Extract text from the PDF server-side (e.g. via pdf-parse or by
- * forwarding the binary to the FastAPI /career-twin/extract endpoint).
- * For now we send the filename as a placeholder so the UI flow works.
+ * Forwards the uploaded PDF to the FastAPI /career-twin/upload endpoint,
+ * which runs core.pdf_to_text() + core.extract_profile() server-side.
+ * Returns the extracted career twin data.
  */
 export async function POST(req: Request) {
   if (DEMO_MODE) {
     return NextResponse.json({ career_twin: DEMO_CAREER_TWIN });
   }
 
-  let filename = "resume.pdf";
+  const session = await auth();
+  const userId =
+    (session?.user as { id?: string } | undefined)?.id ?? session?.user?.email;
+  if (!userId) {
+    return NextResponse.json({ error: "not authenticated" }, { status: 401 });
+  }
+
+  let formData: FormData;
   try {
-    const formData = await req.formData();
-    const file = formData.get("file");
-    if (file && typeof file === "object" && "name" in file) {
-      filename = (file as File).name;
-    }
+    formData = await req.formData();
   } catch {
-    /* non-multipart request — fall through with placeholder */
+    return NextResponse.json({ error: "expected multipart/form-data" }, { status: 400 });
   }
 
-  // TODO: Replace with real PDF→text extraction. Currently sends filename
-  // as cv_text which will produce an empty/error profile from the backend.
-  const cv_text = `[PDF upload: ${filename}]`;
+  // Forward the raw form data (with the PDF file) straight to FastAPI
+  const upstream = new FormData();
+  const file = formData.get("file");
+  if (!file || !(file instanceof Blob)) {
+    return NextResponse.json({ error: "no file provided" }, { status: 400 });
+  }
+  upstream.append("file", file, (file as File).name ?? "resume.pdf");
 
+  let res: Response;
   try {
-    const data = await apiFetch<{ career_twin: Record<string, unknown> }>("/career-twin/extract", {
+    res = await fetch(`${API_URL}/career-twin/upload`, {
       method: "POST",
-      body: JSON.stringify({ cv_text }),
+      headers: {
+        "X-API-Key": API_KEY,
+        "X-User-Id": userId,
+        // Do NOT set Content-Type — let fetch set it with the boundary
+      },
+      body: upstream,
     });
-    return NextResponse.json(data);
-  } catch (e) {
-    if (e instanceof ApiUnavailableError) {
-      return NextResponse.json({ error: "api offline" }, { status: 503 });
-    }
-    const err = e as Error & { status?: number };
-    return NextResponse.json({ error: err.message }, { status: err.status ?? 500 });
+  } catch {
+    return NextResponse.json({ error: "API unreachable" }, { status: 503 });
   }
+
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail ?? detail; } catch { /* non-JSON */ }
+    return NextResponse.json({ error: detail }, { status: res.status });
+  }
+
+  const data = await res.json();
+  return NextResponse.json(data);
 }
