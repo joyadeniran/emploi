@@ -37,7 +37,7 @@ python3 -m streamlit run app.py            # port 8501
 
 Deployment order: API → verify `/health` shows `{"ai": true, "auth": true}` → web with matching `EMPLOI_API_KEY` → smoke test trust check + application CRUD → landing.
 
-**Free-tier caveats:** Render free instances sleep (~15 min idle) and their filesystem is ephemeral — attach a Render Disk for `EMPLOI_DB_PATH` or accept data loss until the Postgres migration. Streamlit cannot run on Vercel/Netlify.
+**Deployed 2026-07-12** on a paid Render plan: web live at app.emploihq.com (Vercel), api at emploi-api.onrender.com with a 1 GB Render Disk mounted at `/var/data` for `EMPLOI_DB_PATH` (`render.yaml` disk block is active — the DB path 500s if the mount is missing). Landing is headed for Hostinger shared hosting (static HTML is fine there). Streamlit cannot run on Vercel/Netlify. If ever back on free tier: instances sleep (~15 min idle) and the filesystem is ephemeral without the disk.
 
 ## Migrations & backups
 
@@ -46,13 +46,13 @@ Deployment order: API → verify `/health` shows `{"ai": true, "auth": true}` �
 
 ## Launch checklist
 
-- [ ] Google OAuth client created; redirect URIs for app.emploihq.com + localhost
-- [ ] `EMPLOI_API_KEY` set on BOTH tiers (API refuses to be open in prod)
+- [x] Google OAuth client created; redirect URIs for app.emploihq.com + localhost (still in Testing mode — whitelist test users, then publish the consent screen)
+- [x] `EMPLOI_API_KEY` set on BOTH tiers (API refuses to be open in prod)
 - [ ] `AUTH_DEV_LOGIN` absent in production env
-- [ ] Rate limiting added to API (08-auth-and-security.md) 
-- [ ] emploihq.com + app.emploihq.com DNS live; HTTPS verified
+- [ ] Rate limiting added to API (08-auth-and-security.md)
+- [x] app.emploihq.com DNS live; HTTPS verified — emploihq.com landing still pending (Hostinger)
 - [ ] Privacy/Terms pages reachable from app footer as well as landing
-- [ ] CI green; CHANGELOG entry for the release
+- [x] CI green; CHANGELOG entry for the release
 
 ## Roadmap
 

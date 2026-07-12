@@ -3,7 +3,14 @@
 All notable changes to this project. Format loosely follows [Keep a Changelog](https://keepachangelog.com); dates are when the work shipped.
 
 ## [Unreleased]
-Planned: fresh-listings agent (job APIs + monitored sources), WHOIS domain-age check, OCR for scanned CVs, curator partner pilot (Halo), BYOK option for users, per-user quotas (auth now makes this possible), durable DB storage for deploys (Render Disk / Cloud SQL — free-tier filesystem is ephemeral).
+Planned: fresh-listings agent (job APIs + monitored sources), WHOIS domain-age check, OCR for scanned CVs, curator partner pilot (Halo), BYOK option for users, per-user quotas (auth now makes this possible), Postgres migration when multi-instance is needed (SQLite on a Render Disk shipped in 0.11.1).
+
+## [0.11.1] — 2026-07-12 — Production deploy fixes (app.emploihq.com live)
+### Fixed
+- **`emploi-api` 500s on every DB endpoint in production**: `render.yaml` set `EMPLOI_DB_PATH=/var/data/emploi.sqlite3` but the disk block was commented out, so `/var/data` never existed and `db.connect()` raised on each request (surfaced as 500 on `/applications`). Disk block is now active (1 GB at `/var/data`) — running on a paid Render plan.
+- **App favicon**: `web/app/icon.svg` added with the landing page's logo SVG (extracted from its inline data URI) so app.emploihq.com no longer shows the default favicon.
+### Notes
+- Live topology: web on Vercel at app.emploihq.com, api on Render at emploi-api.onrender.com, landing headed to Hostinger. Vercel env vars set (AUTH_SECRET, AUTH_URL, Google OAuth pair, EMPLOI_API_URL/KEY). Google OAuth is still in Testing mode — sign-in only works for whitelisted test users.
 
 ## [0.11.0] — 2026-07-12 — Live backend: FastAPI service, real trust checks, real tracker
 ### Added
