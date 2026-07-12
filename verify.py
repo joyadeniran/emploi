@@ -8,6 +8,8 @@ Design principles:
 - All I/O (DNS, HTTP, LLM) is injectable so the whole engine is testable offline.
 """
 
+import json
+import os
 import re
 import socket
 
@@ -38,6 +40,34 @@ RED_FLAGS = [
 
 EMAIL_RE = re.compile(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)")
 DOMAIN_RE = re.compile(r"(?:https?://)?(?:www\.)?([\w-]+(?:\.[\w-]+)+)")
+
+
+# ---------------- Shared blacklist / whitelist ----------------
+
+DEFAULT_LISTS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "data", "blacklist.json")
+_lists_cache = {}
+
+
+def load_lists(path: str = None) -> dict:
+    """Load the shared employer blacklist/whitelist (domains, lowercase).
+
+    Missing or malformed file degrades to empty sets — verification must never
+    crash because a data file is absent. Results are cached per path.
+    """
+    p = path or DEFAULT_LISTS_PATH
+    if p in _lists_cache:
+        return _lists_cache[p]
+    lists = {"blacklist": set(), "whitelist": set()}
+    try:
+        with open(p) as f:
+            data = json.load(f)
+        for key in ("blacklist", "whitelist"):
+            lists[key] = {str(d).lower().strip() for d in data.get(key, []) if d}
+    except Exception:
+        pass
+    _lists_cache[p] = lists
+    return lists
 
 
 # ---------------- Signal extraction (pure, no I/O) ----------------
@@ -196,10 +226,17 @@ def compute_trust(signals: dict):
         score -= 5
         evidence.append("🔻 company name doesn't match the contact domain")
 
+    if signals.get("whitelisted"):
+        score += 20
+        evidence.append("✅ employer domain is on the trusted whitelist")
+
     flags = signals.get("red_flags") or []
     for f in flags[:3]:
         score -= 15
         evidence.append(f"🚫 red flag: {f}")
+
+    if signals.get("blacklisted"):
+        evidence.append("🚫 employer domain is on the shared scam blacklist")
 
     if signals.get("site_content") == "consistent":
         score += 10
@@ -211,6 +248,8 @@ def compute_trust(signals: dict):
     score = max(0, min(100, score))
     if flags:
         score = min(score, 35)
+    if signals.get("blacklisted"):
+        score = min(score, 10)
 
     if score >= 75:
         level = "High trust"
@@ -225,10 +264,13 @@ def compute_trust(signals: dict):
 
 def verify_employer(company: str, contact: str, job_text: str = "", role: str = "",
                     model=None, dns_fn=dns_resolves, mx_fn=has_mx,
-                    fetch_fn=fetch_site, cache: dict = None) -> dict:
+                    fetch_fn=fetch_site, cache: dict = None,
+                    lists: dict = None) -> dict:
     """Full verification pipeline. All I/O injectable; results cacheable by domain."""
     domain = extract_domain(contact or "")
     red_flags = scan_red_flags(job_text)
+    if lists is None:
+        lists = load_lists()
 
     cache_key = domain or f"__none__{company}"
     if cache is not None and cache_key in cache:
@@ -243,6 +285,10 @@ def verify_employer(company: str, contact: str, job_text: str = "", role: str = 
     if not domain:
         signals["no_contact"] = True
     else:
+        if domain in lists["blacklist"]:
+            signals["blacklisted"] = True
+        elif domain in lists["whitelist"]:
+            signals["whitelisted"] = True
         free = is_free_mail(domain)
         signals["free_mail"] = free
         if not free:

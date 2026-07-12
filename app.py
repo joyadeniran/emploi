@@ -21,8 +21,35 @@ def friendly_error(e):
                 "key — each application costs well under $0.01.")
     return f"Gemini error: {e}"
 from verify import extract_domain, verify_employer
+import db
 
 st.set_page_config(page_title="Emploi", layout="centered")
+
+# ---------------- Auth (optional — enabled when [auth] exists in secrets) ----------------
+# Google Sign-In via Streamlit-native OIDC (st.login). Without an [auth] config
+# the app runs exactly as before: anonymous, session-only, nothing persisted.
+try:
+    AUTH_ENABLED = "auth" in st.secrets
+except Exception:
+    AUTH_ENABLED = False
+
+if AUTH_ENABLED and not st.user.is_logged_in:
+    st.title("💼 Emploi")
+    st.subheader("Your Career Twin works while you sleep.")
+    st.write("Tailored job applications with built-in scam protection. "
+             "Sign in, drop your CV, and your Career Twin — your profile and "
+             "application tracker — is saved across sessions.")
+    if st.button("Sign in with Google", type="primary"):
+        st.login()
+    st.stop()
+
+USER_ID = (getattr(st.user, "sub", None) or st.user.email) if AUTH_ENABLED else None
+
+
+@st.cache_resource
+def get_db():
+    return db.connect(os.getenv("EMPLOI_DB_PATH", "emploi.sqlite3"),
+                      check_same_thread=False)
 
 
 def get_server_key():
@@ -42,6 +69,18 @@ st.session_state.setdefault("jobs", [])
 st.session_state.setdefault("matches", [])
 st.session_state.setdefault("messages", [])
 st.session_state.setdefault("verify_cache", {})
+st.session_state.setdefault("db_loaded", False)
+st.session_state.setdefault("profile_saved", None)
+
+# Hydrate a signed-in user's saved data once per session
+if USER_ID and not st.session_state.db_loaded:
+    saved = db.load_profile(get_db(), USER_ID)
+    if saved and not st.session_state.profile:
+        st.session_state.profile = saved
+    if not st.session_state.applications:
+        st.session_state.applications = db.list_applications(get_db(), USER_ID)
+    st.session_state.profile_saved = dict(st.session_state.profile)
+    st.session_state.db_loaded = True
 
 # ---------------- Sidebar ----------------
 SERVER_KEY = get_server_key()
@@ -72,9 +111,16 @@ with st.sidebar:
                     k.title(), st.session_state.profile.get(k, ""), height=68,
                     key=f"pf_{k}")
     if st.button("Clear all data"):
+        if USER_ID:
+            db.clear_user(get_db(), USER_ID)
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
+    if AUTH_ENABLED:
+        st.divider()
+        st.caption(f"Signed in as {st.user.email}")
+        if st.button("Sign out"):
+            st.logout()
 
 
 def get_model():
@@ -87,9 +133,11 @@ def say(role, content, payload=None):
 
 
 def log_application(app):
-    st.session_state.applications.append(
-        {"date": app["date"], "company": app["company"],
-         "fit_score": app["fit_score"], "status": "Generated"})
+    entry = {"date": app["date"], "company": app["company"],
+             "fit_score": app["fit_score"], "status": "Generated"}
+    st.session_state.applications.append(entry)
+    if USER_ID:
+        db.add_application(get_db(), USER_ID, entry)
 
 
 def render_downloads(result_text, company, key):
@@ -247,8 +295,8 @@ def do_apply(job):
 # ---------------- Greeting ----------------
 if not st.session_state.messages:
     say("assistant",
-        "Hi, I'm **Emploi** — your job application agent.\n\n"
-        "1. 📎 **Drop your CV (PDF)** — I'll build your profile automatically\n"
+        "Hi, I'm **Emploi** — your Career Twin.\n\n"
+        "1. 📎 **Drop your CV (PDF)** — I'll set up your Career Twin profile automatically\n"
         "2. 📋 **Drop job listings** — a PDF of postings or a CSV/Excel sheet; I'll rank them by fit\n"
         "3. ✨ **Paste a job description** — I'll draft a tailored cover letter + CV bullets\n"
         "4. ⚡ **apply 2** / **apply Acme** — apply to a ranked job · **batch 5** — apply across a sheet\n"
@@ -461,3 +509,8 @@ if user_input:
         say("assistant", reply)
 
     st.rerun()
+
+# ---------------- Persist profile changes (runs on the rerun after any edit) ----
+if USER_ID and st.session_state.profile != st.session_state.profile_saved:
+    db.save_profile(get_db(), USER_ID, st.session_state.profile)
+    st.session_state.profile_saved = dict(st.session_state.profile)

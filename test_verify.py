@@ -5,7 +5,7 @@ import sys
 
 from verify import (compute_trust, extract_domain, is_free_mail,
                     name_matches_domain, scan_red_flags, verify_employer,
-                    check_site_content)
+                    check_site_content, load_lists)
 
 
 def check(label, cond):
@@ -131,6 +131,52 @@ class BoomModel:
         raise RuntimeError("api down")
 ok &= check("site check: model error -> None (never crashes)",
             check_site_content(BoomModel(), "Acme", "VA", "x" * 200) is None)
+
+# 9. Shared blacklist / whitelist
+lists = {"blacklist": {"fakejobs.biz"}, "whitelist": {"halojobs.co"}}
+
+s, level, ev = compute_trust({"free_mail": False, "dns": True, "mx": True,
+                              "site_up": True, "name_match": True,
+                              "site_content": "consistent",
+                              "blacklisted": True, "red_flags": []})
+ok &= check("blacklisted domain caps score at 10 -> Avoid even with good signals",
+            s <= 10 and level == "Avoid")
+
+s_wl, _, ev = compute_trust({"free_mail": False, "dns": True,
+                             "whitelisted": True, "red_flags": []})
+s_plain, _, _ = compute_trust({"free_mail": False, "dns": True, "red_flags": []})
+ok &= check("whitelisted domain boosts score with named evidence",
+            s_wl > s_plain and any("whitelist" in e for e in ev))
+
+s, _, _ = compute_trust({"free_mail": False, "dns": True, "mx": True,
+                         "site_up": True, "whitelisted": True,
+                         "red_flags": ["asks applicants to pay a fee"]})
+ok &= check("whitelist never overrides red flags (cap 35 stands)", s <= 35)
+
+v = verify_employer("Fake Jobs", "hr@fakejobs.biz", "Nice role", "x",
+                    model=None, dns_fn=dns_up, mx_fn=mx_yes, fetch_fn=site_up,
+                    lists=lists)
+ok &= check("blacklisted employer end-to-end -> Avoid with evidence",
+            v["level"] == "Avoid" and any("blacklist" in e for e in v["evidence"]))
+
+v = verify_employer("Halo Jobs", "team@halojobs.co", "Nice role", "x",
+                    model=None, dns_fn=dns_up, mx_fn=mx_yes, fetch_fn=site_up,
+                    lists=lists)
+ok &= check("whitelisted employer end-to-end gets the boost",
+            v["signals"].get("whitelisted") is True)
+
+import json as _json, os as _os, tempfile as _tempfile
+with _tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+    _json.dump({"blacklist": ["  BadCo.COM "], "whitelist": ["good.co"]}, f)
+    _tmp = f.name
+loaded = load_lists(_tmp)
+ok &= check("load_lists normalizes domains to lowercase/stripped",
+            "badco.com" in loaded["blacklist"] and "good.co" in loaded["whitelist"])
+_os.unlink(_tmp)
+ok &= check("load_lists on missing file -> empty sets, never raises",
+            load_lists("/nonexistent/x.json") == {"blacklist": set(), "whitelist": set()})
+ok &= check("default lists file ships empty (no behavior change)",
+            load_lists() == {"blacklist": set(), "whitelist": set()})
 
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

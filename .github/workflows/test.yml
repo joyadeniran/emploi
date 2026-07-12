@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: python3 -m pip install -r requirements.txt
+      - name: Core suite (offline, fake Gemini)
+        run: python3 test_e2e.py
+      - name: Verification suite (offline, injected DNS/HTTP/LLM)
+        run: python3 test_verify.py
+      - name: Persistence suite (in-memory SQLite)
+        run: python3 test_db.py
+      - name: Landing-site link audit (offline)
+        run: python3 test_landing.py
+      - name: API suite (offline, fake model/DNS/HTTP)
+        run: python3 test_api.py

@@ -1,4 +1,27 @@
 services:
+  # FastAPI backend for the Next.js dashboard (app.emploihq.com)
+  - type: web
+    name: emploi-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: EMPLOI_API_KEY
+        sync: false          # shared secret; must match the web tier's env
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: EMPLOI_DB_PATH
+        value: /var/data/emploi.sqlite3   # attach a Render Disk at /var/data
+      - key: PYTHON_VERSION
+        value: 3.12.0
+    # disk:                  # uncomment after attaching a paid Render Disk
+    #   name: emploi-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+
+  # Legacy Streamlit chat app / future internal admin console
   - type: web
     name: emploi
     runtime: python

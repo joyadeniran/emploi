@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emploi — Your Career Twin works while you sleep</title>
+<meta name="description" content="Emploi finds the right opportunities, verifies every employer for scam signals, and prepares your best application. Starting in Africa, built for the world.">
+<meta property="og:title" content="Emploi — Your Career Twin works while you sleep">
+<meta property="og:description" content="AI job applications with built-in scam protection. Every employer verified before you apply.">
+<meta property="og:url" content="https://emploihq.com">
+<link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 165"><defs><linearGradient id="g" x1="0%25" x2="78%25" y1="61%25" y2="0%25"><stop offset="0%25" stop-color="%238b48fd"/><stop offset="99%25" stop-color="%23435afe"/></linearGradient></defs><path fill="%234651fc" d="M116.7 45.3H15.9A15.9 15.9 0 0 1 15.9 13.5h100.8a15.9 15.9 0 0 1 0 31.8Z"/><path fill="url(%23g)" d="M127.6 95.1H15.9a15.9 15.9 0 0 1 0-31.8h111.7a15.9 15.9 0 0 1 0 31.8Z"/><path fill="%234651fc" d="M120 144.9H25.8a15.9 15.9 0 0 0-15.9 17.1A15.9 15.9 0 0 1 0 147.7v-16.5a15.9 15.9 0 0 1 15.9-18h104a15.9 15.9 0 0 1 0 31.7Z"/></svg>'>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#04114d;
+    --muted:#4b5476;
+    --violet:#8b48fd;
+    --indigo:#435afe;
+    --brand:#5b4ffd;
+    --bg:#f6f5ff;
+    --glass:rgba(255,255,255,.55);
+    --glass-strong:rgba(255,255,255,.75);
+    --glass-border:rgba(255,255,255,.65);
+    --shadow:0 20px 60px -20px rgba(67,90,254,.25);
+    --good:#0e9f6e;
+    --warnbg:#fff1f0;
+    --warn:#d92d20;
+    --radius:20px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+    color:var(--ink);background:var(--bg);line-height:1.6;overflow-x:hidden;
+  }
+  ::selection{background:#8b48fd;color:#fff}
+
+  /* ---------- kinetic background orbs ---------- */
+  .orbs{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
+  .orb{position:absolute;border-radius:50%;filter:blur(90px);opacity:.5}
+  .orb.a{width:520px;height:520px;background:#c9b4ff;top:-160px;left:-120px;animation:drift 26s ease-in-out infinite alternate}
+  .orb.b{width:460px;height:460px;background:#b3c0ff;top:20%;right:-180px;animation:drift 32s ease-in-out infinite alternate-reverse}
+  .orb.c{width:420px;height:420px;background:#e6d5ff;bottom:-140px;left:30%;animation:drift 38s ease-in-out infinite alternate}
+  @keyframes drift{
+    0%{transform:translate(0,0) scale(1)}
+    50%{transform:translate(60px,-40px) scale(1.12)}
+    100%{transform:translate(-40px,50px) scale(.95)}
+  }
+
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+
+  /* ---------- nav ---------- */
+  header{position:sticky;top:12px;z-index:50;margin:12px 0}
+  .navbar{
+    display:flex;justify-content:space-between;align-items:center;
+    background:var(--glass);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+    border:1px solid var(--glass-border);border-radius:99px;
+    padding:10px 22px;box-shadow:0 8px 32px -12px rgba(67,90,254,.18);
+  }
+  .logo svg{height:26px;width:auto;display:block}
+  nav.links{display:flex;gap:26px;align-items:center}
+  nav.links a{color:var(--muted);text-decoration:none;font-size:.92rem;font-weight:600;transition:color .2s}
+  nav.links a:hover{color:var(--brand)}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;
+    background:linear-gradient(120deg,var(--violet),var(--indigo));
+    background-size:200% 100%;
+    color:#fff;padding:12px 26px;border-radius:99px;text-decoration:none;
+    font-weight:700;font-size:.95rem;border:none;cursor:pointer;font-family:inherit;
+    box-shadow:0 10px 30px -8px rgba(91,79,253,.55);
+    transition:background-position .5s,transform .2s,box-shadow .2s;
+  }
+  .btn:hover{background-position:100% 0;transform:translateY(-2px);box-shadow:0 16px 36px -8px rgba(91,79,253,.6)}
+  .btn.small{padding:9px 20px;font-size:.88rem}
+  .btn.ghost{background:var(--glass-strong);color:var(--brand);border:1px solid #ddd8ff;box-shadow:none}
+  .btn.ghost:hover{transform:translateY(-2px);box-shadow:0 10px 24px -10px rgba(91,79,253,.35)}
+  @media(max-width:820px){nav.links{display:none}}
+  .nav-right{display:flex;align-items:center;gap:10px}
+  .menu-btn{
+    display:none;width:40px;height:40px;border-radius:12px;border:1px solid #ddd8ff;
+    background:var(--glass-strong);cursor:pointer;align-items:center;justify-content:center;
+    flex-direction:column;gap:4px;padding:0;
+  }
+  .menu-btn span{display:block;width:16px;height:2px;border-radius:2px;background:var(--brand);transition:transform .25s,opacity .25s}
+  .menu-btn[aria-expanded="true"] span:nth-child(1){transform:translateY(6px) rotate(45deg)}
+  .menu-btn[aria-expanded="true"] span:nth-child(2){opacity:0}
+  .menu-btn[aria-expanded="true"] span:nth-child(3){transform:translateY(-6px) rotate(-45deg)}
+  @media(max-width:820px){.menu-btn{display:flex}}
+  .mobile-menu{
+    display:none;margin-top:8px;padding:10px;
+    background:var(--glass-strong);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+    border:1px solid var(--glass-border);border-radius:20px;
+    box-shadow:0 8px 32px -12px rgba(67,90,254,.18);
+  }
+  .mobile-menu.open{display:block}
+  .mobile-menu a{
+    display:block;padding:12px 16px;border-radius:12px;color:var(--ink);
+    text-decoration:none;font-weight:700;font-size:.98rem;
+  }
+  .mobile-menu a:hover{background:rgba(91,79,253,.08);color:var(--brand)}
+  .btn .label-short{display:none}
+  @media(max-width:560px){
+    .navbar{padding:8px 14px}
+    .logo svg{height:22px}
+    .btn.small{padding:8px 16px;font-size:.82rem;white-space:nowrap}
+    .btn .label-full{display:none}
+    .btn .label-short{display:inline}
+  }
+
+  /* ---------- hero ---------- */
+  .hero{display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center;padding-top:72px;padding-bottom:48px}
+  @media(max-width:940px){.hero{grid-template-columns:1fr;padding-top:48px}}
+  .hero>div{min-width:0}
+  @media(max-width:420px){.hero h1{font-size:2.1rem}}
+  .kicker{
+    display:inline-flex;align-items:center;gap:8px;
+    background:var(--glass);border:1px solid var(--glass-border);
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    color:var(--brand);font-size:.72rem;font-weight:800;letter-spacing:.12em;
+    padding:8px 16px;border-radius:99px;text-transform:uppercase;
+  }
+  .kicker .dot{width:7px;height:7px;border-radius:50%;background:var(--good);animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(14,159,110,.5)}50%{box-shadow:0 0 0 6px rgba(14,159,110,0)}}
+  .hero h1{
+    font-size:clamp(2.4rem,5.4vw,4rem);line-height:1.06;letter-spacing:-.03em;
+    font-weight:800;margin:22px 0 0;
+  }
+  .hero h1 .line{display:block;overflow:hidden;padding-bottom:.08em}
+  .hero h1 .line>span{display:inline-block;transform:translateY(110%);animation:rise .9s cubic-bezier(.2,.7,.2,1) forwards}
+  .hero h1 .line:nth-child(2)>span{animation-delay:.12s}
+  .hero h1 .line:nth-child(3)>span{animation-delay:.24s}
+  @keyframes rise{to{transform:translateY(0)}}
+  .grad-text{
+    background:linear-gradient(120deg,var(--violet),var(--indigo),var(--violet));
+    background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;
+    animation:shimmer 6s linear infinite;
+  }
+  @keyframes shimmer{to{background-position:200% center}}
+  .underline{position:relative;white-space:nowrap}
+  .underline::after{
+    content:"";position:absolute;left:0;right:0;bottom:0;height:.12em;border-radius:99px;
+    background:linear-gradient(90deg,var(--violet),var(--indigo));
+    transform:scaleX(0);transform-origin:left;animation:draw 1s .8s cubic-bezier(.2,.7,.2,1) forwards;
+  }
+  @keyframes draw{to{transform:scaleX(1)}}
+  .hero p.lede{margin:24px 0 0;color:var(--muted);font-size:1.13rem;max-width:480px}
+  .hero .ctas{display:flex;gap:14px;margin-top:34px;flex-wrap:wrap}
+  .hero .fineprint{margin-top:16px;font-size:.84rem;color:var(--muted)}
+
+  /* ---------- hero dashboard mock ---------- */
+  .mock{position:relative;perspective:1200px}
+  .mock-card{
+    background:var(--glass-strong);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+    border:1px solid var(--glass-border);border-radius:24px;padding:24px;
+    box-shadow:var(--shadow);
+    animation:float 7s ease-in-out infinite;
+    transition:transform .3s ease-out;transform-style:preserve-3d;
+  }
+  @keyframes float{0%,100%{translate:0 0}50%{translate:0 -12px}}
+  .mock-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
+  .mock-head .hi{font-weight:800;font-size:1.02rem}
+  .mock-head .sub{font-size:.78rem;color:var(--muted)}
+  .stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .stat{
+    background:rgba(255,255,255,.7);border:1px solid rgba(255,255,255,.8);
+    border-radius:14px;padding:12px 10px;text-align:center;
+  }
+  .stat b{display:block;font-size:1.3rem;letter-spacing:-.02em}
+  .stat span{font-size:.68rem;color:var(--muted);font-weight:600}
+  .stat.scam b{color:var(--warn)}
+  @media(max-width:560px){
+    .mock-card{padding:16px}
+    .stat-row{grid-template-columns:repeat(2,1fr)}
+    .mock-head .sub{font-size:.74rem}
+  }
+  .joblist{margin-top:16px;display:flex;flex-direction:column;gap:10px}
+  .jobrow{
+    display:flex;align-items:center;gap:12px;
+    background:rgba(255,255,255,.72);border:1px solid rgba(255,255,255,.85);
+    border-radius:14px;padding:12px 14px;
+    opacity:0;transform:translateY(14px);
+  }
+  .reveal-in .jobrow{animation:cardin .6s cubic-bezier(.2,.7,.2,1) forwards}
+  .reveal-in .jobrow:nth-child(2){animation-delay:.15s}
+  .reveal-in .jobrow:nth-child(3){animation-delay:.3s}
+  @keyframes cardin{to{opacity:1;transform:translateY(0)}}
+  .jobrow .co{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:.95rem;flex-shrink:0}
+  .jobrow .meta{flex:1;min-width:0}
+  .jobrow .meta b{display:block;font-size:.88rem;line-height:1.3}
+  .jobrow .meta span{font-size:.72rem;color:var(--muted)}
+  .fit{position:relative;width:44px;height:44px;flex-shrink:0}
+  .fit svg{transform:rotate(-90deg)}
+  .fit circle{fill:none;stroke-width:4}
+  .fit .track{stroke:#e8e6ff}
+  .fit .bar{stroke:url(#fitgrad);stroke-linecap:round;stroke-dasharray:113;stroke-dashoffset:113}
+  .reveal-in .fit .bar{transition:stroke-dashoffset 1.4s .4s cubic-bezier(.2,.7,.2,1)}
+  .fit b{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.62rem}
+  .verified{display:inline-flex;align-items:center;gap:4px;color:var(--good);font-size:.7rem;font-weight:700}
+  .chip-float{
+    position:absolute;background:var(--glass-strong);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    border:1px solid var(--glass-border);border-radius:14px;padding:10px 16px;
+    font-size:.8rem;font-weight:700;box-shadow:var(--shadow);display:flex;gap:8px;align-items:center;
+  }
+  .chip-float.one{top:-18px;right:-8px;animation:float 6s .8s ease-in-out infinite}
+  .chip-float.two{bottom:-16px;left:-14px;animation:float 8s .3s ease-in-out infinite}
+  .chip-float .ico{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:.8rem}
+  @media(max-width:520px){.chip-float{display:none}}
+
+  /* ---------- marquee ---------- */
+  .marquee-sec{padding:34px 0 10px;text-align:center}
+  .marquee-sec .label{font-size:.72rem;font-weight:800;letter-spacing:.14em;color:var(--muted);text-transform:uppercase}
+  .marquee{overflow:hidden;margin-top:18px;-webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
+  .marquee .track{display:flex;gap:56px;width:max-content;animation:scroll 28s linear infinite}
+  .marquee:hover .track{animation-play-state:paused}
+  @keyframes scroll{to{transform:translateX(-50%)}}
+  .marquee .co-name{font-weight:800;font-size:1.05rem;color:#8f96b8;white-space:nowrap;letter-spacing:-.01em}
+
+  /* ---------- sections ---------- */
+  section.block{padding-top:84px;padding-bottom:84px}
+  .sec-kicker{display:block;text-align:center;font-size:.72rem;font-weight:800;letter-spacing:.16em;color:var(--brand);text-transform:uppercase}
+  h2.sec-title{text-align:center;font-size:clamp(1.7rem,3.6vw,2.5rem);letter-spacing:-.02em;font-weight:800;margin-top:10px}
+  h2.sec-title em{font-style:normal}
+  .sec-sub{text-align:center;color:var(--muted);max-width:560px;margin:14px auto 0;font-size:1.02rem}
+
+  /* scroll reveal */
+  .rv{opacity:0;transform:translateY(28px);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
+  .rv.in{opacity:1;transform:none}
+  .rv.d1{transition-delay:.08s}.rv.d2{transition-delay:.16s}.rv.d3{transition-delay:.24s}.rv.d4{transition-delay:.32s}
+
+  /* ---------- how it works ---------- */
+  .steps{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-top:48px}
+  @media(max-width:940px){.steps{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:560px){.steps{grid-template-columns:1fr}}
+  .step{
+    background:var(--glass);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    border:1px solid var(--glass-border);border-radius:var(--radius);padding:22px 18px;
+    transition:transform .25s,box-shadow .25s;
+  }
+  .step:hover{transform:translateY(-6px);box-shadow:var(--shadow)}
+  .step .n{
+    width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(120deg,var(--violet),var(--indigo));color:#fff;font-weight:800;margin-bottom:14px;
+  }
+  .step h3{font-size:.98rem;margin-bottom:6px;letter-spacing:-.01em}
+  .step p{font-size:.84rem;color:var(--muted);line-height:1.5}
+
+  /* ---------- why cards ---------- */
+  .why{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-top:48px}
+  @media(max-width:940px){.why{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:560px){.why{grid-template-columns:1fr}}
+  .why-card{
+    background:var(--glass);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    border:1px solid var(--glass-border);border-radius:var(--radius);padding:26px 22px;
+    transition:transform .25s,box-shadow .25s;position:relative;overflow:hidden;
+  }
+  .why-card:hover{transform:translateY(-6px);box-shadow:var(--shadow)}
+  .why-card .ico{width:46px;height:46px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:1.25rem;margin-bottom:16px}
+  .why-card h3{font-size:1.02rem;margin-bottom:8px;letter-spacing:-.01em}
+  .why-card p{font-size:.88rem;color:var(--muted)}
+
+  /* ---------- trust demo ---------- */
+  .trust-grid{display:grid;grid-template-columns:1fr 1fr;gap:52px;align-items:center;margin-top:52px}
+  @media(max-width:880px){.trust-grid{grid-template-columns:1fr}}
+  .trust-copy h3{font-size:1.4rem;letter-spacing:-.02em;margin-bottom:14px}
+  .trust-copy p{color:var(--muted);margin-bottom:14px}
+  .trust-copy ul{list-style:none;margin-top:8px}
+  .trust-copy li{padding:7px 0 7px 30px;position:relative;color:var(--ink);font-weight:600;font-size:.95rem}
+  .trust-copy li::before{content:"✓";position:absolute;left:0;top:6px;width:20px;height:20px;border-radius:50%;background:#e5f7ef;color:var(--good);font-size:.72rem;display:flex;align-items:center;justify-content:center;font-weight:800}
+  .score-card{
+    background:var(--glass-strong);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+    border:1px solid var(--glass-border);border-radius:var(--radius);overflow:hidden;
+    box-shadow:var(--shadow);font-size:.92rem;
+  }
+  .score-card .sc-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid rgba(4,17,77,.06);font-weight:800}
+  .score-card .sc-head .live{font-size:.68rem;color:var(--warn);background:var(--warnbg);padding:4px 10px;border-radius:99px;font-weight:800;letter-spacing:.06em;flex-shrink:0}
+  .srow{display:flex;justify-content:space-between;gap:12px;padding:13px 20px;border-bottom:1px solid rgba(4,17,77,.05);opacity:0;transform:translateX(-14px);transition:opacity .5s,transform .5s}
+  .srow.in{opacity:1;transform:none}
+  .srow .sig{color:var(--muted)}
+  .srow .pts{font-weight:800;white-space:nowrap}
+  .srow .pts.bad{color:var(--warn)}
+  .sverdict{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;background:var(--warnbg);font-weight:800;color:var(--warn)}
+  .sverdict .num{font-size:1.5rem;letter-spacing:-.02em}
+  .swarn{padding:13px 20px;font-size:.82rem;color:var(--muted);background:rgba(255,255,255,.5)}
+
+  /* ---------- pricing ---------- */
+  .plans{display:grid;grid-template-columns:repeat(2,minmax(0,400px));gap:22px;justify-content:center;margin-top:48px}
+  @media(max-width:760px){.plans{grid-template-columns:1fr}}
+  .plan{
+    background:var(--glass);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+    border:1px solid var(--glass-border);border-radius:24px;padding:32px 28px;
+    display:flex;flex-direction:column;transition:transform .25s,box-shadow .25s;
+  }
+  .plan:hover{transform:translateY(-6px);box-shadow:var(--shadow)}
+  .plan.pro{border:2px solid transparent;background:
+    linear-gradient(var(--glass-strong),var(--glass-strong)) padding-box,
+    linear-gradient(140deg,var(--violet),var(--indigo)) border-box}
+  .plan .tag{font-size:.72rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--brand)}
+  .plan .price{font-size:2.2rem;font-weight:800;letter-spacing:-.03em;margin:10px 0 2px}
+  .plan .price span{font-size:.9rem;color:var(--muted);font-weight:600;letter-spacing:0}
+  .plan ul{list-style:none;margin:20px 0 26px;flex:1}
+  .plan li{padding:6px 0 6px 28px;position:relative;font-size:.92rem;color:var(--muted)}
+  .plan li::before{content:"✓";position:absolute;left:0;color:var(--good);font-weight:800}
+  .plan .note{font-size:.76rem;color:var(--muted);margin-top:12px;text-align:center}
+
+  /* ---------- final CTA ---------- */
+  .cta-final{
+    background:linear-gradient(130deg,#0a1052,#31247f 55%,#5b4ffd);
+    border-radius:32px;padding:72px 32px;text-align:center;color:#fff;
+    position:relative;overflow:hidden;
+  }
+  .cta-final::before,.cta-final::after{
+    content:"";position:absolute;border-radius:50%;filter:blur(70px);opacity:.45;
+  }
+  .cta-final::before{width:380px;height:380px;background:#8b48fd;top:-160px;left:-80px;animation:drift 20s ease-in-out infinite alternate}
+  .cta-final::after{width:320px;height:320px;background:#435afe;bottom:-140px;right:-60px;animation:drift 26s ease-in-out infinite alternate-reverse}
+  .cta-final h2{font-size:clamp(1.7rem,3.6vw,2.4rem);letter-spacing:-.02em;position:relative;z-index:1}
+  .cta-final p{color:#c6c4f4;margin:14px auto 0;max-width:480px;position:relative;z-index:1}
+  .cta-actions{display:flex;gap:10px;justify-content:center;margin-top:30px;flex-wrap:wrap;position:relative;z-index:1}
+  .cta-final .fineprint{font-size:.78rem;color:#8f8cd0;margin-top:16px;position:relative;z-index:1}
+  .cta-final .fineprint a{color:#c6c4f4}
+
+  /* ---------- footer ---------- */
+  footer{padding:56px 0 40px;color:var(--muted);font-size:.88rem}
+  .foot-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:32px}
+  @media(max-width:760px){.foot-grid{grid-template-columns:1fr 1fr}}
+  footer .logo svg{height:22px;width:auto;margin-bottom:12px}
+  footer h4{font-size:.78rem;text-transform:uppercase;letter-spacing:.1em;color:var(--ink);margin-bottom:12px}
+  footer a{display:block;color:var(--muted);text-decoration:none;padding:3px 0;transition:color .2s}
+  footer a:hover{color:var(--brand)}
+  .foot-bottom{margin-top:40px;padding-top:20px;border-top:1px solid rgba(4,17,77,.08);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:.8rem}
+
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
+    html{scroll-behavior:auto}
+    .hero h1 .line>span{transform:none}
+    .jobrow{opacity:1;transform:none}
+    .rv{opacity:1;transform:none}
+    .srow{opacity:1;transform:none}
+  }
+</style>
+</head>
+<body>
+
+<div class="orbs" aria-hidden="true"><div class="orb a"></div><div class="orb b"></div><div class="orb c"></div></div>
+
+<header>
+  <div class="wrap">
+    <div class="navbar">
+      <a class="logo" href="#" aria-label="Emploi home">
+        <svg viewBox="0 0 739 165" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Emploi">
+          <defs>
+            <linearGradient id="lg1" x1="0%" x2="78.801%" y1="61.566%" y2="0%">
+              <stop offset="0%" stop-color="rgb(139,72,253)"/><stop offset="30%" stop-color="rgb(111,74,251)"/>
+              <stop offset="62%" stop-color="rgb(93,79,253)"/><stop offset="99%" stop-color="rgb(67,90,254)"/>
+            </linearGradient>
+          </defs>
+          <path fill="rgb(70,81,252)" d="M116.665,45.258 L15.894,45.258 C7.127,45.258 0.020,38.150 0.020,29.383 C0.020,20.616 7.127,13.509 15.894,13.509 L116.665,13.509 C125.432,13.509 132.540,20.616 132.540,29.383 C132.540,38.150 125.432,45.258 116.665,45.258 Z"/>
+          <path fill="url(#lg1)" d="M127.617,95.089 L15.894,95.089 C7.127,95.089 0.020,87.982 0.020,79.215 C0.020,70.448 7.127,63.340 15.894,63.340 L127.617,63.340 C136.385,63.340 143.492,70.448 143.492,79.215 C143.492,87.982 136.385,95.089 127.617,95.089 Z"/>
+          <path fill="rgb(70,81,252)" d="M119.951,144.921 L108.154,144.921 C108.149,144.925 108.144,144.929 108.139,144.933 L25.751,144.933 C16.984,144.933 9.876,152.040 9.876,160.807 C9.876,161.209 9.896,161.606 9.926,162.000 C4.137,159.808 0.020,154.216 0.020,147.659 L0.020,131.243 L0.174,131.243 C0.075,130.524 0.020,129.792 0.020,129.046 C0.020,120.279 7.127,113.172 15.894,113.172 L119.951,113.172 C128.718,113.172 135.825,120.279 135.825,129.046 C135.825,137.814 128.718,144.921 119.951,144.921 Z"/>
+          <path fill="rgb(4,17,77)" d="M714.752,130.300 L714.752,36.772 L737.274,36.772 L737.274,130.300 L714.752,130.300 ZM673.145,126.002 C665.693,130.244 657.441,132.363 648.388,132.363 C639.217,132.363 630.878,130.244 623.372,126.002 C615.864,121.763 609.903,115.974 605.492,108.637 C601.078,101.303 598.873,92.935 598.873,83.536 C598.873,74.139 601.078,65.771 605.492,58.435 C609.903,51.101 615.834,45.312 623.286,41.070 C630.736,36.831 639.104,34.709 648.388,34.709 C657.556,34.709 665.865,36.831 673.317,41.070 C680.766,45.312 686.698,51.071 691.112,58.349 C695.523,65.629 697.731,74.023 697.731,83.536 C697.731,92.935 695.496,101.303 691.026,108.637 C686.555,115.974 680.594,121.763 673.145,126.002 ZM670.824,69.008 C668.589,64.825 665.551,61.502 661.712,59.036 C657.871,56.573 653.430,55.340 648.388,55.340 C643.230,55.340 638.701,56.573 634.806,59.036 C630.908,61.502 627.843,64.825 625.607,69.008 C623.372,73.193 622.255,78.034 622.255,83.536 C622.255,88.925 623.372,93.766 625.607,98.064 C627.843,102.362 630.908,105.714 634.806,108.121 C638.701,110.528 643.230,111.732 648.388,111.732 C653.430,111.732 657.871,110.528 661.712,108.121 C665.551,105.714 668.589,102.362 670.824,98.064 C673.059,93.766 674.177,88.925 674.177,83.536 C674.177,78.034 673.059,73.193 670.824,69.008 ZM559.330,0.151 L581.852,0.151 L581.852,130.300 L559.330,130.300 L559.330,0.151 ZM519.099,125.916 C511.991,130.214 503.910,132.363 494.857,132.363 C488.093,132.363 481.877,131.015 476.203,128.323 C472.366,126.502 469.080,124.131 466.317,121.234 L466.317,164.685 L443.795,164.685 L443.795,36.772 L464.942,36.772 L464.942,47.835 C467.878,44.151 471.538,41.172 475.945,38.921 C481.447,36.114 487.808,34.709 495.029,34.709 C503.854,34.709 511.819,36.887 518.927,41.242 C526.032,45.599 531.676,51.445 535.862,58.778 C540.044,66.115 542.137,74.367 542.137,83.536 C542.137,92.592 540.074,100.844 535.948,108.293 C531.821,115.745 526.204,121.618 519.099,125.916 ZM515.402,69.008 C513.167,64.825 510.043,61.502 506.032,59.036 C502.019,56.573 497.436,55.340 492.278,55.340 C487.349,55.340 482.908,56.543 478.954,58.950 C474.999,61.357 471.905,64.710 469.670,69.008 C467.435,73.306 466.317,78.150 466.317,83.536 C466.317,89.038 467.435,93.911 469.670,98.150 C471.905,102.391 474.999,105.714 478.954,108.121 C482.908,110.528 487.349,111.732 492.278,111.732 C497.436,111.732 502.019,110.528 506.032,108.121 C510.043,105.714 513.167,102.391 515.402,98.150 C517.637,93.911 518.755,89.038 518.755,83.536 C518.755,78.034 517.637,73.193 515.402,69.008 ZM402.189,75.455 C402.189,71.329 401.442,67.778 399.954,64.796 C398.463,61.817 396.400,59.496 393.764,57.833 C391.126,56.173 387.919,55.340 384.136,55.340 C380.582,55.340 377.431,56.173 374.680,57.833 C371.930,59.496 369.807,61.817 368.319,64.796 C366.828,67.778 366.084,71.329 366.084,75.455 L366.084,130.300 L343.562,130.300 L343.562,75.455 C343.562,71.329 342.815,67.778 341.327,64.796 C339.836,61.817 337.743,59.496 335.051,57.833 C332.357,56.173 329.176,55.340 325.509,55.340 C321.955,55.340 318.804,56.173 316.053,57.833 C313.302,59.496 311.180,61.817 309.692,64.796 C308.201,67.778 307.457,71.329 307.457,75.455 L307.457,130.300 L284.935,130.300 L284.935,36.772 L306.082,36.772 L306.082,48.428 C307.984,44.784 310.617,41.870 313.990,39.695 C319.148,36.372 325.222,34.709 332.214,34.709 C339.892,34.709 346.656,36.715 352.502,40.726 C356.187,43.256 359.048,46.288 361.093,49.819 C363.595,45.874 366.689,42.696 370.382,40.296 C376.112,36.573 382.702,34.709 390.154,34.709 C396.800,34.709 402.731,36.200 407.948,39.179 C413.162,42.161 417.259,46.314 420.241,51.643 C423.220,56.973 424.711,63.136 424.711,70.126 L424.711,130.300 L402.189,130.300 L402.189,75.455 ZM266.710,89.897 L199.341,89.897 C199.645,93.096 200.407,96.049 201.636,98.751 C203.640,103.165 206.622,106.574 210.576,108.981 C214.531,111.388 219.087,112.591 224.244,112.591 C229.402,112.591 233.786,111.504 237.397,109.325 C241.007,107.149 243.844,104.226 245.907,100.557 L264.131,109.497 C262.297,113.967 259.430,117.921 255.535,121.360 C251.637,124.798 247.025,127.493 241.695,129.440 C236.365,131.388 230.490,132.363 224.073,132.363 C214.445,132.363 206.020,130.187 198.799,125.830 C191.578,121.475 185.961,115.573 181.950,108.121 C177.937,100.672 175.933,92.420 175.933,83.364 C175.933,73.967 177.967,65.629 182.036,58.349 C186.104,51.071 191.664,45.312 198.713,41.070 C205.762,36.831 213.641,34.709 222.353,34.709 C229.687,34.709 236.134,35.912 241.695,38.319 C247.253,40.726 251.981,44.052 255.879,48.291 C259.774,52.533 262.756,57.376 264.819,62.819 C266.882,68.264 267.914,74.139 267.914,80.441 C267.914,82.048 267.828,83.708 267.656,85.427 C267.484,87.146 267.167,88.637 266.710,89.897 ZM242.555,66.687 C241.007,62.561 238.485,59.294 234.990,56.887 C231.492,54.480 227.280,53.277 222.353,53.277 C217.652,53.277 213.469,54.453 209.803,56.801 C206.133,59.152 203.355,62.590 201.464,67.117 C200.744,68.842 200.196,70.706 199.817,72.704 L243.854,72.704 C243.685,70.581 243.261,68.571 242.555,66.687 Z"/>
+          <path fill="rgb(139,72,253)" d="M726.271,1.500 C732.899,1.500 738.271,6.873 738.271,13.500 C738.271,20.127 732.899,25.500 726.271,25.500 C719.644,25.500 714.271,20.127 714.271,13.500 C714.271,6.873 719.644,1.500 726.271,1.500 Z"/>
+        </svg>
+      </a>
+      <nav class="links" aria-label="Main">
+        <a href="#how">How it works</a>
+        <a href="#why">Why Emploi</a>
+        <a href="#trust">Scam protection</a>
+        <a href="#pricing">Pricing</a>
+      </nav>
+      <div class="nav-right">
+        <a class="btn small applink" href="https://app.emploihq.com"><span class="label-full">Create your Career Twin</span><span class="label-short">Get started</span></a>
+        <button class="menu-btn" id="menuBtn" aria-expanded="false" aria-controls="mobileMenu" aria-label="Open menu"><span></span><span></span><span></span></button>
+      </div>
+    </div>
+    <nav class="mobile-menu" id="mobileMenu" aria-label="Mobile">
+      <a href="#how">How it works</a>
+      <a href="#why">Why Emploi</a>
+      <a href="#trust">Scam protection</a>
+      <a href="#pricing">Pricing</a>
+      <a class="applink" href="https://app.emploihq.com">Log in</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<!-- ============ HERO ============ -->
+<section class="hero wrap">
+  <div>
+    <span class="kicker"><span class="dot"></span>AI-powered · Trust-first · Built for you</span>
+    <h1>
+      <span class="line"><span>Your Career Twin</span></span>
+      <span class="line"><span>works while</span></span>
+      <span class="line"><span><em class="grad-text underline">you sleep.</em></span></span>
+    </h1>
+    <p class="lede">Emploi finds the right opportunities, verifies every employer for scam signals, and prepares your best application — so you can focus on what matters.</p>
+    <div class="ctas">
+      <a class="btn applink" href="https://app.emploihq.com">Create your Career Twin →</a>
+      <a class="btn ghost" href="#how">See how it works</a>
+    </div>
+    <p class="fineprint">Free to start · Sign in with Google · Your experience is never invented</p>
+  </div>
+
+  <div class="mock" id="mock">
+    <div class="mock-card" id="mockCard">
+      <div class="mock-head">
+        <div>
+          <div class="hi">Good morning, Joy 👋</div>
+          <div class="sub">Your Career Twin analyzed 120+ opportunities overnight.</div>
+        </div>
+      </div>
+      <div class="stat-row">
+        <div class="stat"><b data-count="12">0</b><span>New matches</span></div>
+        <div class="stat scam"><b data-count="2">0</b><span>Scams blocked</span></div>
+        <div class="stat"><b data-count="7">0</b><span>Applications</span></div>
+        <div class="stat"><b data-count="1">0</b><span>Interviews</span></div>
+      </div>
+      <svg width="0" height="0" aria-hidden="true"><defs><linearGradient id="fitgrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b48fd"/><stop offset="1" stop-color="#435afe"/></linearGradient></defs></svg>
+      <div class="joblist">
+        <div class="jobrow">
+          <div class="co" style="background:#04114d">P</div>
+          <div class="meta"><b>Product Designer</b><span>Paystack · Lagos, Nigeria · Hybrid</span> <span class="verified">✓ verified</span></div>
+          <div class="fit"><svg width="44" height="44"><circle class="track" cx="22" cy="22" r="18"/><circle class="bar" cx="22" cy="22" r="18" data-fit="92"/></svg><b>92%</b></div>
+        </div>
+        <div class="jobrow">
+          <div class="co" style="background:#5b4ffd">K</div>
+          <div class="meta"><b>UX Researcher</b><span>Kuda Bank · Lagos, Nigeria · On-site</span> <span class="verified">✓ verified</span></div>
+          <div class="fit"><svg width="44" height="44"><circle class="track" cx="22" cy="22" r="18"/><circle class="bar" cx="22" cy="22" r="18" data-fit="88"/></svg><b>88%</b></div>
+        </div>
+        <div class="jobrow">
+          <div class="co" style="background:#f79009">A</div>
+          <div class="meta"><b>Product Manager</b><span>Autochek · Lagos, Nigeria · Hybrid</span> <span class="verified">✓ verified</span></div>
+          <div class="fit"><svg width="44" height="44"><circle class="track" cx="22" cy="22" r="18"/><circle class="bar" cx="22" cy="22" r="18" data-fit="75"/></svg><b>75%</b></div>
+        </div>
+      </div>
+    </div>
+    <div class="chip-float one"><span class="ico" style="background:#e5f7ef">🛡️</span> Scam detected &amp; blocked</div>
+    <div class="chip-float two"><span class="ico" style="background:#efeaff">✉️</span> Cover letter ready to send</div>
+  </div>
+</section>
+
+<!-- ============ MARQUEE ============ -->
+<section class="marquee-sec">
+  <span class="label">Built for professionals applying to roles at companies like</span>
+  <div class="marquee" aria-hidden="true">
+    <div class="track" id="marqueeTrack">
+      <span class="co-name">Paystack</span><span class="co-name">Flutterwave</span><span class="co-name">Kuda</span><span class="co-name">PiggyVest</span><span class="co-name">Moniepoint</span><span class="co-name">Chipper Cash</span><span class="co-name">Autochek</span><span class="co-name">Interswitch</span><span class="co-name">Andela</span><span class="co-name">M-KOPA</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ HOW IT WORKS ============ -->
+<section class="block wrap" id="how">
+  <span class="sec-kicker rv">How Emploi works</span>
+  <h2 class="sec-title rv">Your career, <em class="grad-text">on autopilot</em>.</h2>
+  <div class="steps">
+    <div class="step rv"><div class="n">1</div><h3>Build your Career Twin</h3><p>Drop your CV and we create a smart, living profile that gets better every time you chat.</p></div>
+    <div class="step rv d1"><div class="n">2</div><h3>We find &amp; verify</h3><p>Load jobs from sheets, PDFs or pasted posts — every employer is checked for trust before you see it.</p></div>
+    <div class="step rv d2"><div class="n">3</div><h3>Get your best matches</h3><p>Honest, weighted fit scores rank every opportunity against your real experience and goals.</p></div>
+    <div class="step rv d3"><div class="n">4</div><h3>We prepare, you apply</h3><p>A tailored cover letter and a complete, ready-to-send CV for each role — as PDF or Word.</p></div>
+    <div class="step rv d4"><div class="n">5</div><h3>Land more interviews</h3><p>Track every application and rehearse the tough questions with interview prep built from your own story.</p></div>
+  </div>
+</section>
+
+<!-- ============ WHY ============ -->
+<section class="block wrap" id="why">
+  <span class="sec-kicker rv">Built different</span>
+  <h2 class="sec-title rv">Why professionals <em class="grad-text">love Emploi</em></h2>
+  <div class="why">
+    <div class="why-card rv"><div class="ico" style="background:#e5f7ef">🛡️</div><h3>Trust first, always</h3><p>Every employer is verified with real, named signals — domain records, live websites, scam patterns. We protect you from fake jobs and risky listings.</p></div>
+    <div class="why-card rv d1"><div class="ico" style="background:#efeaff">🧠</div><h3>AI that understands you</h3><p>Your Career Twin learns from your experience, preferences and goals — and never invents a single line of your CV.</p></div>
+    <div class="why-card rv d2"><div class="ico" style="background:#fff4e5">⚡</div><h3>Works while you sleep</h3><p>Load a job sheet before bed and wake up to ranked, verified matches with applications ready to review and send.</p></div>
+    <div class="why-card rv d3"><div class="ico" style="background:#e8f1ff">🎯</div><h3>Honest fit scores</h3><p>No flattery. A weighted rubric scores every match and names your gaps — so you spend time only where you can win.</p></div>
+  </div>
+</section>
+
+<!-- ============ TRUST DEMO ============ -->
+<section class="block wrap" id="trust">
+  <span class="sec-kicker rv">Scam protection</span>
+  <h2 class="sec-title rv">Protection you can <em class="grad-text">actually see</em></h2>
+  <p class="sec-sub rv">Every trust score is computed from real, named evidence — never from an AI's opinion. Here's a pattern Emploi catches:</p>
+  <div class="trust-grid">
+    <div class="trust-copy rv">
+      <h3>The "registration fee" scam, caught in seconds</h3>
+      <p>Fake employers flood WhatsApp groups, Telegram channels and job sheets everywhere — charging fees, harvesting ID and bank details, promising salaries that never come.</p>
+      <p>Before you apply, Emploi checks:</p>
+      <ul>
+        <li>Employer domain &amp; mail-server records</li>
+        <li>Live website and company-name consistency</li>
+        <li>The posting itself against known scam patterns</li>
+        <li>A shared blacklist that compounds over time</li>
+      </ul>
+    </div>
+    <div class="score-card rv d1" id="scoreCard">
+      <div class="sc-head"><span>Trust check: "remote data entry — ₦450k/week"</span><span class="live">LIVE DEMO</span></div>
+      <div class="srow"><span class="sig">Contact uses a free email service (gmail)</span><span class="pts bad">−15</span></div>
+      <div class="srow"><span class="sig">Posting asks for a "registration fee"</span><span class="pts bad">🚩 red flag</span></div>
+      <div class="srow"><span class="sig">High pay promised for no experience</span><span class="pts bad">🚩 red flag</span></div>
+      <div class="srow"><span class="sig">No verifiable company website found</span><span class="pts bad">unverified</span></div>
+      <div class="sverdict"><span>Trust score — AVOID</span><span class="num"><span id="scoreNum">100</span>/100</span></div>
+      <div class="swarn">⚠️ Emploi's warning: never pay a fee or share bank/ID details to get a job. A real employer will never ask.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PRICING ============ -->
+<section class="block wrap" id="pricing">
+  <span class="sec-kicker rv">Pricing</span>
+  <h2 class="sec-title rv">Start free. <em class="grad-text">Upgrade when it pays off.</em></h2>
+  <div class="plans">
+    <div class="plan rv">
+      <span class="tag">Free</span>
+      <div class="price">₦0 <span>/ month</span></div>
+      <ul>
+        <li>10 tailored applications per month</li>
+        <li>Employer trust check on every job</li>
+        <li>Honest fit scores &amp; ranked matching</li>
+        <li>Application tracker</li>
+        <li>PDF &amp; Word downloads</li>
+      </ul>
+      <a class="btn ghost applink" href="https://app.emploihq.com" style="justify-content:center">Start free</a>
+    </div>
+    <div class="plan pro rv d1">
+      <span class="tag">Pro</span>
+      <div class="price">₦3,500 <span>/ month</span></div>
+      <ul>
+        <li>Everything in Free</li>
+        <li>Priority, higher-volume applications</li>
+        <li>Batch mode across whole job sheets</li>
+        <li>Full interview prep &amp; roleplay</li>
+        <li>Early access to new features</li>
+      </ul>
+      <a class="btn applink" href="https://app.emploihq.com" style="justify-content:center">Start free, upgrade in-app</a>
+      <p class="note">Pro billing is rolling out in-app — start free today.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FINAL CTA ============ -->
+<section class="block wrap" id="get-started">
+  <div class="cta-final rv">
+    <h2>Wake up to a career that moved overnight.</h2>
+    <p>Sign in with Google, drop your CV, and your Career Twin is ready in minutes — matching, verifying, and preparing applications from your real experience.</p>
+    <div class="cta-actions">
+      <a class="btn applink" href="https://app.emploihq.com">Create your Career Twin →</a>
+    </div>
+    <p class="fineprint">Free to start · No card required · Questions? <a href="mailto:hello@emploihq.com">hello@emploihq.com</a></p>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <span class="logo" aria-label="Emploi">
+          <svg viewBox="0 0 144 165" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Emploi mark">
+            <defs><linearGradient id="lg2" x1="0%" x2="78.801%" y1="61.566%" y2="0%"><stop offset="0%" stop-color="rgb(139,72,253)"/><stop offset="99%" stop-color="rgb(67,90,254)"/></linearGradient></defs>
+            <path fill="rgb(70,81,252)" d="M116.665,45.258 L15.894,45.258 C7.127,45.258 0.020,38.150 0.020,29.383 C0.020,20.616 7.127,13.509 15.894,13.509 L116.665,13.509 C125.432,13.509 132.540,20.616 132.540,29.383 C132.540,38.150 125.432,45.258 116.665,45.258 Z"/>
+            <path fill="url(#lg2)" d="M127.617,95.089 L15.894,95.089 C7.127,95.089 0.020,87.982 0.020,79.215 C0.020,70.448 7.127,63.340 15.894,63.340 L127.617,63.340 C136.385,63.340 143.492,70.448 143.492,79.215 C143.492,87.982 136.385,95.089 127.617,95.089 Z"/>
+            <path fill="rgb(70,81,252)" d="M119.951,144.921 L108.154,144.921 C108.149,144.925 108.144,144.929 108.139,144.933 L25.751,144.933 C16.984,144.933 9.876,152.040 9.876,160.807 C9.876,161.209 9.896,161.606 9.926,162.000 C4.137,159.808 0.020,154.216 0.020,147.659 L0.020,131.243 L0.174,131.243 C0.075,130.524 0.020,129.792 0.020,129.046 C0.020,120.279 7.127,113.172 15.894,113.172 L119.951,113.172 C128.718,113.172 135.825,120.279 135.825,129.046 C135.825,137.814 128.718,144.921 119.951,144.921 Z"/>
+          </svg>
+        </span>
+        <p style="max-width:280px">AI job applications with built-in scam protection. Starting in Africa, built for the world.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <a href="#how">How it works</a>
+        <a href="#trust">Scam protection</a>
+        <a href="#pricing">Pricing</a>
+        <a class="applink" href="https://app.emploihq.com">Log in</a>
+      </div>
+      <div>
+        <h4>Company</h4>
+        <a href="mailto:hello@emploihq.com">hello@emploihq.com</a>
+        <a href="mailto:support@emploihq.com">support@emploihq.com</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="terms.html">Terms</a>
+      </div>
+      <div>
+        <h4>Social</h4>
+        <a href="https://x.com/emploihq" rel="noopener">X / Twitter</a>
+        <a href="https://instagram.com/emploihq" rel="noopener">Instagram</a>
+        <a href="https://tiktok.com/@emploihq" rel="noopener">TikTok</a>
+        <a href="https://github.com/emploihq" rel="noopener">GitHub</a>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 Crost Limited · Emploi is a brand of Crost Limited, registered in Nigeria (RC 9526947) · emploihq.com<br>Verification reduces risk — it is not a guarantee. Never pay a fee to get a job.</span>
+      <span>Made with care in Lagos 🇳🇬 · Built for the world 🌍</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* duplicate marquee content for a seamless loop */
+  var track = document.getElementById("marqueeTrack");
+  if (track) track.innerHTML += track.innerHTML;
+
+  /* scroll reveal */
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      /* reveal when entering the viewport — or if already scrolled past (fast jumps) */
+      if (e.isIntersecting || e.boundingClientRect.top < 0){ e.target.classList.add("in"); io.unobserve(e.target); }
+    });
+  }, {threshold:.18});
+  document.querySelectorAll(".rv").forEach(function(el){ io.observe(el); });
+
+  /* hero mock: count-up + fit rings + job rows */
+  function countUp(el, target, ms){
+    if (reduced){ el.textContent = target; return; }
+    var start = null;
+    function tick(t){
+      if (!start) start = t;
+      var p = Math.min((t - start)/ms, 1);
+      el.textContent = Math.round(target * (1 - Math.pow(1-p, 3)));
+      if (p < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+  var mock = document.getElementById("mock");
+  if (mock){
+    var mio = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (!e.isIntersecting && e.boundingClientRect.top >= 0) return;
+        mock.classList.add("reveal-in");
+        mock.querySelectorAll("[data-count]").forEach(function(el){
+          countUp(el, parseInt(el.getAttribute("data-count"),10), 1200);
+        });
+        mock.querySelectorAll(".fit .bar").forEach(function(c){
+          var fit = parseInt(c.getAttribute("data-fit"),10);
+          var C = 2 * Math.PI * 18;
+          c.style.strokeDashoffset = C * (1 - fit/100);
+        });
+        mio.unobserve(mock);
+      });
+    }, {threshold:.3});
+    mio.observe(mock);
+  }
+
+  /* hero mock 3D tilt */
+  var card = document.getElementById("mockCard");
+  if (card && !reduced && matchMedia("(pointer:fine)").matches){
+    var zone = card.parentElement;
+    zone.addEventListener("mousemove", function(ev){
+      var r = zone.getBoundingClientRect();
+      var x = (ev.clientX - r.left)/r.width - .5;
+      var y = (ev.clientY - r.top)/r.height - .5;
+      card.style.transform = "rotateY(" + (x*6).toFixed(2) + "deg) rotateX(" + (-y*6).toFixed(2) + "deg)";
+    });
+    zone.addEventListener("mouseleave", function(){ card.style.transform = ""; });
+  }
+
+  /* trust demo: stagger rows in, count the score DOWN to 10 */
+  var sc = document.getElementById("scoreCard");
+  if (sc){
+    var sio = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (!e.isIntersecting && e.boundingClientRect.top >= 0) return;
+        var rows = sc.querySelectorAll(".srow");
+        rows.forEach(function(r,i){ setTimeout(function(){ r.classList.add("in"); }, reduced ? 0 : 250*i); });
+        var num = document.getElementById("scoreNum");
+        if (reduced){ num.textContent = "10"; }
+        else {
+          setTimeout(function(){
+            var start = null, ms = 1400;
+            function tick(t){
+              if (!start) start = t;
+              var p = Math.min((t-start)/ms, 1);
+              num.textContent = Math.round(100 - 90 * (1 - Math.pow(1-p,3)));
+              if (p < 1) requestAnimationFrame(tick);
+            }
+            requestAnimationFrame(tick);
+          }, 250*rows.length);
+        }
+        sio.unobserve(sc);
+      });
+    }, {threshold:.35});
+    sio.observe(sc);
+  }
+
+  /* mobile menu toggle */
+  var menuBtn = document.getElementById("menuBtn");
+  var mobileMenu = document.getElementById("mobileMenu");
+  if (menuBtn && mobileMenu){
+    menuBtn.addEventListener("click", function(){
+      var open = mobileMenu.classList.toggle("open");
+      menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      menuBtn.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+    });
+    mobileMenu.querySelectorAll("a").forEach(function(a){
+      a.addEventListener("click", function(){
+        mobileMenu.classList.remove("open");
+        menuBtn.setAttribute("aria-expanded", "false");
+      });
+    });
+  }
+
+  /* app links default to production; rewrite to the local Next.js dashboard
+     when browsing the page locally (file:// or localhost) so every link works
+     in dev. (The legacy Streamlit chat app runs separately on :8501.) */
+  var local = location.protocol === "file:" ||
+              location.hostname === "localhost" || location.hostname === "127.0.0.1";
+  if (local){
+    document.querySelectorAll("a.applink").forEach(function(a){
+      a.href = "http://localhost:3000";
+    });
+  }
+})();
+</script>
+</body>
+</html>

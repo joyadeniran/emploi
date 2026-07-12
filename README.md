@@ -26,7 +26,7 @@ A **reviewer pass** (second Gemini call that critiques and tightens the draft) i
 
 Every matched job gets a trust score (0–100) computed **in code, not by AI**, from real evidence: free-mail vs corporate contact domain, DNS + mail records, live website, company-name/domain consistency, and a scam-pattern lexicon (fee requests, WhatsApp-only contact, crypto salaries, unrealistic pay). Gemini's only role is one narrow judgment: does the fetched homepage describe a real business consistent with the role. Any red flag caps the score at 35; missing contact info means "unverified", never a guess. Chat: automatic on **match**, warning on **apply**, full evidence via **verify 2** or **verify info@company.com**.
 
-Honest limits (v1): no WHOIS/domain-age lookup, no LinkedIn/Glassdoor checks (blocked to automation), and a scammer with a real website and clean posting can still pass — the score reduces risk, it isn't a guarantee. Verified-employer results are cached per session; persisting them into a shared blacklist/whitelist is the roadmap moat.
+Honest limits (v1): no WHOIS/domain-age lookup, no LinkedIn/Glassdoor checks (blocked to automation), and a scammer with a real website and clean posting can still pass — the score reduces risk, it isn't a guarantee. Verified-employer results are cached per session. A **shared blacklist/whitelist** now ships in `data/blacklist.json`: blacklisted domains cap trust at 10 (Avoid); whitelisted domains get a boost but never override red flags.
 
 ## Testing
 
@@ -35,7 +35,10 @@ Core logic (intent routing, CV extraction, reviewer pass, batch ranking, PDF/DOC
 ```bash
 python3 test_e2e.py     # core: prompts, routing, extraction, exports
 python3 test_verify.py  # verification engine: all signals + scoring paths, offline
+python3 test_db.py      # persistence scaffold, in-memory SQLite
 ```
+
+CI runs all three suites on every push (`.github/workflows/test.yml`).
 
 ## Architecture
 
@@ -48,7 +51,16 @@ python3 test_verify.py  # verification engine: all signals + scoring paths, offl
 
 Edit a skill file and every subsequent generation uses it — no code changes needed. Rubric and style rules adapted from [MadsLorentzen/ai-job-search](https://github.com/MadsLorentzen/ai-job-search) (MIT).
 
+## Startup folders
+
+- `db.py` — SQLite persistence (profiles + tracker, keyed by user). Active only for signed-in users; anonymous sessions stay in-memory so a shared deployment can never leak one user's CV to another.
+- `data/blacklist.json` — shared employer blacklist/whitelist (ships empty)
+- `docs/` — privacy policy + terms **drafts for legal review** (NDPA/GDPR aware)
+- `business/` — one-pager and unit-economics model (`unit-economics.xlsx`, live formulas)
+- `landing/` — static landing page (`index.html`), deployable to any static host
+- `.env.example`, `LICENSE`, `.github/workflows/test.yml` — env template, proprietary license (with MIT attribution for adapted skill prompts), CI
+
 ## Notes
 
-- Data is session-only (v1) — closing the tab clears it
+- Anonymous data is session-only — closing the tab clears it. With Google Sign-In configured (see DEPLOY.md), signed-in users keep their profile and tracker across sessions.
 - Scanned/image-only CV PDFs can't be read (no OCR yet) — export a text-based PDF

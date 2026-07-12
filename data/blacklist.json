@@ -1,0 +1,5 @@
+{
+  "_doc": "Shared employer blacklist/whitelist for verify.py. Domains only, lowercase. A blacklisted domain caps trust at 10 (Avoid). A whitelisted domain adds +20 but NEVER overrides red flags (cap 35 still applies). Ships empty; add confirmed domains as reports come in.",
+  "blacklist": [],
+  "whitelist": []
+}

@@ -1,63 +1,21 @@
-# Emploi — Specification Document
+# Emploi — Engineering Specification
 
-**Version:** 1.0
-**Date:** July 04, 2026
-**Built with:** Streamlit + Google Gemini
-**Goal:** A single, easy-to-use web app that combines curated job lists with AI-powered application tailoring.
+**Version:** 2.0 · July 2026 · supersedes the v1 Streamlit-only spec
 
-## 1. Overview
+The specification is an AI-native document set under [`docs/engineering/`](docs/engineering/) — written so a coding agent (or engineer) can build any part of Emploi from it plus the repo. `CLAUDE.md` remains the canonical rulebook; where they disagree, the repo + CLAUDE.md win, then fix the spec.
 
-Emploi is an all-in-one personal job application assistant. It merges manual/curated job lists (e.g. Halo-style Google Sheets), professional profile management, AI-powered job analysis and tailoring (Gemini), and application tracking.
+| Section | Covers |
+|---|---|
+| [01 — Overview](docs/engineering/01-overview.md) | Purpose, vision, non-negotiable invariants, goals/non-goals, success criteria, architecture map |
+| [02 — Tech Stack](docs/engineering/02-stack.md) | As-built stack, approved-when-needed additions, hosting |
+| [03 — Database](docs/engineering/03-database.md) | Schema (as built + planned), access rules, Postgres migration path |
+| [04 — API](docs/engineering/04-api.md) | Every endpoint with contracts, auth model, degradation behavior |
+| [05 — Services & Workers](docs/engineering/05-services-and-workers.md) | Logical services, the four background workers, error/logging policy |
+| [06 — AI Layer](docs/engineering/06-ai-layer.md) | Models, skills/prompts, function surface, coupled contracts, injection posture, cost |
+| [07 — Frontend](docs/engineering/07-ui.md) | Design system, pages, components, data flow, UX conventions |
+| [08 — Auth & Security](docs/engineering/08-auth-and-security.md) | Google OAuth, service auth, secrets, security checklists |
+| [09 — Testing, Deployment & Roadmap](docs/engineering/09-deployment.md) | Suites/CI, local + production topology, launch checklist, v1→v3 roadmap |
 
-**Target users:** anyone looking for jobs — fresh graduates, career switchers, remote workers. Simple enough for non-technical users.
+## System in one paragraph
 
-## 2. Core Features
-
-### 2.1 Profile Management
-- Fields: Name, Title, Location/Remote Preference, Experience, Skills, Education, Career Goals
-- Persistent in Streamlit session state
-- Rich text areas for detailed input (more detail → better AI output)
-
-### 2.2 Job List Import
-- Upload CSV or Excel files (compatible with curated sheets)
-- Preview table; jobs stored in session for reference
-
-### 2.3 AI Application Generator (core)
-- Paste full job description + optional company name
-- Uses Google Gemini (model selectable; default `gemini-2.5-flash`)
-- Outputs: 1-page cover letter, 6–8 tailored CV bullets, fit score (0–100) with explanation
-- Human, keyword-optimized, non-fabricated content
-- PDF and text download of generated output
-
-### 2.4 Application Tracker
-- Logs every generated application: Date, Company, Status, Notes
-- DataFrame view + CSV export
-
-### 2.5 Settings
-- Gemini API key input (password field, or `GEMINI_API_KEY` env var)
-- Model selector, clear-all-data button, status indicators
-
-## 3. Technical Stack
-
-- **Frontend:** Streamlit (Python)
-- **AI:** Google Gemini API (`google-generativeai`)
-- **Data:** pandas, openpyxl
-- **Export:** fpdf2 (PDF), CSV
-- **Storage:** in-memory session state (v1); future: local JSON / SQLite
-
-## 4. File Structure
-
-```
-emploi/
-├── app.py            # entire app (single file, v1)
-├── requirements.txt
-├── README.md
-└── SPEC.md
-```
-
-## 5. Roadmap
-
-- Persistent storage (JSON/SQLite)
-- Auto-import jobs from curated posts
-- Batch generation across an imported job list
-- Formatted DOCX/PDF CV output
+A candidate signs in with Google at **app.emploihq.com** (`web/`, Next.js 16), uploads a CV, and gets a **Career Twin** — a living profile extracted by Gemini. The dashboard shows verified, honestly-scored job matches; one click creates a tracked application backed by the FastAPI service (`api/`) over the UI-free Python core (`core.py` generation/matching, `verify.py` deterministic trust engine, `db.py` persistence). Trust scores are computed in code from named signals — never by an LLM — and every generated document is grounded strictly in the candidate's real experience. The static landing site (`landing/`) sells it at **emploihq.com**; the Streamlit app (`app.py`) remains as the chat product and future internal admin console. Emploi is a brand of Crost Limited (RC 9526947), Nigeria.
