@@ -14,29 +14,44 @@ The "services" are logical seams inside the Python core, not microservices. Do n
 | Persistence | `db.py` | Profiles, applications, deletion right |
 | API | `api/main.py` | HTTP dispatch over all of the above (see 04-api.md) |
 
-## Background workers (planned — build in this order)
+## Background workers (as built)
 
-Each worker is a standalone script, runnable manually (`python3 workers/<name>.py`) and via Render Cron. Never wire workers into the web/API request cycle.
+Each worker is a standalone script (`workers/<name>.py`), runnable manually with `python3 workers/<name>.py [--dry-run]` against any SQLite file. Every `run()` function is also callable in-process — this is load-bearing (see "Scheduling" below) — so never give a worker's `run()` a side effect that only makes sense from a CLI entry point (argument parsing, `sys.exit`, etc. stay in `if __name__ == "__main__":`).
 
-### Worker 1 — Job ingestion
-- **Inputs:** Greenhouse public board API (`boards-api.greenhouse.io/v1/boards/{token}/jobs`, no key) and Lever (`api.lever.co/v0/postings/{company}`, no key) first; Jooble/Adzuna behind env keys.
+### Worker 1 — Job ingestion (`workers/ingest_jobs.py`)
+- **Inputs:** Greenhouse (`boards-api.greenhouse.io/v1/boards/{token}/jobs`), Lever (`api.lever.co/v0/postings/{company}`), and Ashby (`api.ashbyhq.com/posting-public/apiPostings/{token}`) public board APIs — no keys required. Source list comes from the `job_sources` DB table, seeded once from `data/job_sources.json`; add/disable sources via `/admin/job-sources` after that.
 - **Output:** rows in `ingested_jobs` (03-database.md), deduped on `(source, source_job_id)`; hash title+company+description when a source lacks stable ids.
-- **Schedule:** daily. **Retries:** per-source try/except — one dead source must not kill the run; log and continue.
+- **Schedule:** hourly for `priority >= 8` sources (`--min-priority 8`), full daily run for everything else. **Retries:** per-source try/except — one dead source never kills the run.
 
-### Worker 2 — Company verification refresh
-- **Inputs:** distinct domains in `ingested_jobs` + `employer_trust_records` older than 7 days.
-- **Output:** upserted `employer_trust_records`. Uses `verify.verify_employer` unchanged.
-- **Schedule:** daily, rate-limited (sleep between domains — be a polite scanner).
+### Worker 2 — Company verification refresh (`workers/verify_employers.py`)
+- **Inputs:** distinct `apply_url` domains in `ingested_jobs` whose `employer_trust_records` entry is missing or older than 7 days. Greenhouse/Lever/Ashby hostnames are deliberately skipped — verifying an ATS domain would mislabel it as the employer.
+- **Output:** upserted `employer_trust_records` via `verify.verify_employer`, unchanged trust-scoring code.
+- **Schedule:** daily, 3s sleep between domains (be a polite scanner).
 
-### Worker 3 — Matching
-- **Inputs:** users with profiles × fresh `ingested_jobs` in their categories.
-- **Output:** `matches` rows; feeds the dashboard's "I found N new job matches".
-- **Schedule:** nightly. **Cost guard:** batch prompts (`core.match_jobs` takes a job list); cap jobs/user/night; log Gemini call counts.
+### Worker 3 — Matching (`workers/match_users.py`)
+- **Inputs:** every user with `career_twins.data.onboarding_complete = true`, cross-joined against `ingested_jobs` fetched in the last `--days-fresh` days that the user hasn't already been matched against (SQL anti-join on `matches`).
+- **Output:** `matches` rows, best fit first; feeds the dashboard's "I found N new job matches" and `GET /matches`.
+- **Schedule:** nightly. **Cost guard:** `core.match_jobs` batches jobs per Gemini call (default 50/call); `--max-jobs` caps jobs scored per user per run.
 
-### Worker 4 — Notifications
-- **Inputs:** new `matches`, application status nudges.
-- **Output:** email via Brevo transactional API (template per event type). WhatsApp/push are future.
-- **Schedule:** after Worker 3. **Rule:** max one digest email per user per day.
+### Worker 4 — Notifications (`workers/notify_users.py`)
+- **Inputs:** `matches` rows with `notified = 0`, joined to the user's Career Twin for their captured email (set on `POST /career-twin/complete`).
+- **Output:** one digest email per user via the Brevo transactional API (`BREVO_API_KEY` + `BREVO_SENDER_EMAIL`); `notified`/`notified_at` set only after a confirmed send.
+- **Schedule:** nightly, after Worker 3. **Rule:** max one digest per user per scheduled run — never per new match.
+
+### Worker 5 — Backup (`workers/backup_db.py`)
+- **Inputs:** the live SQLite file.
+- **Output:** a `PRAGMA quick_check`-verified snapshot (via SQLite's online backup API, safe against concurrent writers) uploaded to Cloudflare R2 as `backups/emploi-YYYY-MM-DD.sqlite3`. Missing R2 config or a failed upload is a hard failure — nothing is ever reported as backed up that wasn't.
+- **Schedule:** nightly, after ingest/verify/match.
+
+## Scheduling: Render Cron Jobs can't touch the disk
+
+**Render Cron Jobs cannot mount a persistent disk at all** — not their own, and not one shared with another service ([Render docs](https://render.com/docs/disks): "Cron jobs can't provision or access a persistent disk"). Every worker above needs the same SQLite file the `emploi-api` service uses, so the cron services in `render.yaml` do **not** run `python3 workers/<name>.py` directly — that fails to deploy (a cron `disk:` block is invalid and silently breaks the whole blueprint sync, which is exactly what happened the first time this was wired up).
+
+Instead:
+- `api/main.py` exposes `POST /admin/run/{ingest,match,verify-employers,notify,backup}`, authenticated by `X-API-Key` only (no `X-User-Id` — there's no user in a scheduled run). Each endpoint calls the worker's `run()` function **in-process**, since the always-on API service already has the disk mounted.
+- Each cron service in `render.yaml` is just `curl -sf -X POST -H "X-API-Key: $EMPLOI_API_KEY" "$EMPLOI_API_URL/admin/run/<name>"` on its own schedule. `curl -f` exits non-zero on a 4xx/5xx response, so Render's cron success/failure reporting reflects whether the worker actually succeeded, not just whether the HTTP request was sent.
+- **Trade-off, stated plainly:** a scheduled run executes synchronously inside the one running API process, briefly tying it up for the duration of that worker's run (ingest/verify/notify/backup are fast; `match` calling Gemini repeatedly is the slowest). Acceptable at current traffic. If it ever becomes noticeable, move to a real task queue (Celery/RQ against Redis, or Render's own background workers with polling) instead of scaling this pattern further.
+- `test_api.py` covers the `/admin/run/*` endpoints fully offline by monkeypatching each imported worker module's `run()` — no real network, Gemini calls, or R2 upload in CI.
 
 ## Error handling policy (all services)
 

@@ -288,6 +288,60 @@ check("generation requires Career Twin",
       client.post("/applications/generate", headers={**AUTH, "X-User-Id": "no-twin"},
                   json={"job": {"description": "Build products"}}).status_code == 409)
 
+# ---------------- worker triggers (Render Cron -> HTTP, no disk on cron) ----------------
+# Render Cron Jobs can't mount the persistent disk the SQLite file lives on,
+# so scheduled workers run in-process here instead of as their own cron
+# services; render.yaml's crons just curl these endpoints. Monkeypatch the
+# imported worker modules' run() so this stays fully offline — no real
+# network, no real Gemini calls, no real R2 upload.
+import workers.ingest_jobs as _ingest_mod
+import workers.match_users as _match_mod
+import workers.verify_employers as _verify_mod
+import workers.notify_users as _notify_mod
+import workers.backup_db as _backup_mod
+
+_orig_ingest_run = _ingest_mod.run
+_orig_match_run = _match_mod.run
+_orig_verify_run = _verify_mod.run
+_orig_notify_run = _notify_mod.run
+_orig_backup_run = _backup_mod.run
+
+check("admin run without api key -> 401",
+      client.post("/admin/run/ingest").status_code == 401)
+
+_ingest_mod.run = lambda db_path, min_priority=1: {"ok": True, "min_priority": min_priority}
+r = client.post("/admin/run/ingest?min_priority=8", headers={"X-API-Key": "test-key"})
+check("admin run ingest -> 200 with correct key",
+      r.status_code == 200 and r.json()["min_priority"] == 8)
+
+_match_mod.run = lambda db_path, model=None: {"ok": True, "total_matches": 3}
+r = client.post("/admin/run/match", headers={"X-API-Key": "test-key"})
+check("admin run match -> 200", r.status_code == 200 and r.json()["total_matches"] == 3)
+
+_verify_mod.run = lambda db_path, model=None: {"ok": True, "verified": 2}
+r = client.post("/admin/run/verify-employers", headers={"X-API-Key": "test-key"})
+check("admin run verify-employers -> 200", r.status_code == 200 and r.json()["verified"] == 2)
+
+_notify_mod.run = lambda db_path, send_fn=None: {"ok": True, "sent": 1}
+r = client.post("/admin/run/notify", headers={"X-API-Key": "test-key"})
+check("admin run notify -> 200", r.status_code == 200 and r.json()["sent"] == 1)
+
+_backup_mod.run = lambda db_path: {"ok": True, "bytes": 4096}
+r = client.post("/admin/run/backup", headers={"X-API-Key": "test-key"})
+check("admin run backup -> 200", r.status_code == 200 and r.json()["bytes"] == 4096)
+
+_backup_mod.run = lambda db_path: {"ok": False, "error": "R2 not configured"}
+r = client.post("/admin/run/backup", headers={"X-API-Key": "test-key"})
+check("admin run backup surfaces worker failure as 500, never a false 200",
+      r.status_code == 500)
+
+# Restore real worker functions for any later test / import in this process.
+_ingest_mod.run = _orig_ingest_run
+_match_mod.run = _orig_match_run
+_verify_mod.run = _orig_verify_run
+_notify_mod.run = _orig_notify_run
+_backup_mod.run = _orig_backup_run
+
 # ---------------- user deletion (NDPA/GDPR) ----------------
 r = client.delete("/user", headers=AUTH)
 check("delete user ok", r.status_code == 200)

@@ -45,6 +45,11 @@ Deploy the API private to the web tier (Render private service / network rules).
 | `PATCH /admin/job-sources/{id}` | partial fields | `{ok}` | 404 |
 | `PATCH /admin/job-sources/{id}/toggle` | — | `{ok, active}` | 404 |
 | `POST /admin/job-sources/seed` | — | `{ok, seeded}` — no-op if table non-empty | 401 |
+| `POST /admin/run/ingest` | `?min_priority=` | Worker 1 result dict | 401, 500 on worker failure |
+| `POST /admin/run/match` | — | Worker 3 result dict | 401, 500 |
+| `POST /admin/run/verify-employers` | — | Worker 2 result dict | 401, 500 |
+| `POST /admin/run/notify` | — | Worker 4 result dict | 401, 500 |
+| `POST /admin/run/backup` | — | Worker 5 result dict | 401, 500 |
 
 ### Example — trust check
 
@@ -65,7 +70,8 @@ X-API-Key: ...  X-User-Id: google-sub-123
 - **Cost disclosure:** `/applications/generate` with `include_review` costs 3 Gemini calls (2 without). The web UI must disclose this before invoking — the generation dialog does.
 - **Verification caching:** per-process per-domain (`_verify_cache`); network probes run once per domain per process. Preserve when touching `/verify` (test asserts one probe).
 - **Injectable I/O:** `api.main.dns_fn / mx_fn / fetch_fn` and `app.state.model_factory` are the seams tests patch. Never call probes directly in endpoints.
-- **SQLite contention:** connections use a 30s busy timeout so nightly workers writing to the shared Render disk queue instead of 500ing the API.
+- **SQLite contention:** connections use a 30s busy timeout to absorb ordinary write contention.
+- **Worker triggers:** `/admin/run/*` run their worker's `run()` synchronously in-process and require only `X-API-Key` (no `X-User-Id` — there's no user in a scheduled run). This exists because Render Cron Jobs can't mount a persistent disk (05-services-and-workers.md) — the crons in `render.yaml` just curl these endpoints instead of running the worker scripts themselves. A worker failure surfaces as `500`, never a false `200`.
 
 ## Acceptance criteria
 

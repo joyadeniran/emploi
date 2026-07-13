@@ -14,119 +14,10 @@ services:
         sync: false
       - key: EMPLOI_DB_PATH
         value: /var/data/emploi.sqlite3
-      - key: PYTHON_VERSION
-        value: 3.12.0
-    disk:
-      name: emploi-data
-      mountPath: /var/data
-      sizeGB: 1
-
-  # Autonomous sourcing: high-priority boards hourly, then all boards daily.
-  # Each worker uses the same persistent DB path as the API.
-  - type: cron
-    name: emploi-ingest
-    runtime: python
-    plan: starter
-    schedule: "0 * * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python3 workers/ingest_jobs.py --db /var/data/emploi.sqlite3 --min-priority 8
-    envVars:
-      - key: EMPLOI_DB_PATH
-        value: /var/data/emploi.sqlite3
-      - key: PYTHON_VERSION
-        value: 3.12.0
-    disk:
-      name: emploi-data
-      mountPath: /var/data
-      sizeGB: 1
-
-  - type: cron
-    name: emploi-ingest-daily
-    runtime: python
-    plan: starter
-    schedule: "0 1 * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python3 workers/ingest_jobs.py --db /var/data/emploi.sqlite3
-    envVars:
-      - key: EMPLOI_DB_PATH
-        value: /var/data/emploi.sqlite3
-      - key: PYTHON_VERSION
-        value: 3.12.0
-    disk:
-      name: emploi-data
-      mountPath: /var/data
-      sizeGB: 1
-
-  - type: cron
-    name: emploi-match
-    runtime: python
-    plan: starter
-    schedule: "0 2 * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python3 workers/match_users.py --db /var/data/emploi.sqlite3
-    envVars:
-      - key: EMPLOI_DB_PATH
-        value: /var/data/emploi.sqlite3
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: PYTHON_VERSION
-        value: 3.12.0
-    disk:
-      name: emploi-data
-      mountPath: /var/data
-      sizeGB: 1
-
-  # Sends one digest email per user with unnotified matches (after Worker 3).
-  # Needs a verified Brevo sender; missing config = safe no-op, never a false "sent".
-  - type: cron
-    name: emploi-notify
-    runtime: python
-    plan: starter
-    schedule: "30 2 * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python3 workers/notify_users.py --db /var/data/emploi.sqlite3
-    envVars:
-      - key: EMPLOI_DB_PATH
-        value: /var/data/emploi.sqlite3
       - key: BREVO_API_KEY
         sync: false
       - key: BREVO_SENDER_EMAIL
         sync: false
-      - key: PYTHON_VERSION
-        value: 3.12.0
-    disk:
-      name: emploi-data
-      mountPath: /var/data
-      sizeGB: 1
-
-  - type: cron
-    name: emploi-verify-employers
-    runtime: python
-    plan: starter
-    schedule: "30 1 * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python3 workers/verify_employers.py --db /var/data/emploi.sqlite3
-    envVars:
-      - key: EMPLOI_DB_PATH
-        value: /var/data/emploi.sqlite3
-      - key: PYTHON_VERSION
-        value: 3.12.0
-    disk:
-      name: emploi-data
-      mountPath: /var/data
-      sizeGB: 1
-
-  # Nightly SQLite backup to Cloudflare R2 (runs after ingest/verify/match)
-  - type: cron
-    name: emploi-backup
-    runtime: python
-    plan: starter
-    schedule: "0 3 * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python3 workers/backup_db.py --db /var/data/emploi.sqlite3
-    envVars:
-      - key: EMPLOI_DB_PATH
-        value: /var/data/emploi.sqlite3
       - key: R2_ENDPOINT
         sync: false
       - key: R2_ACCESS_KEY
@@ -141,6 +32,123 @@ services:
       name: emploi-data
       mountPath: /var/data
       sizeGB: 1
+
+  # ---------------------------------------------------------------------------
+  # Scheduled workers — Render Cron Jobs cannot mount a persistent disk (a
+  # hard product limitation: https://render.com/docs/disks — "Cron jobs
+  # can't provision or access a persistent disk"). Since every worker needs
+  # the same SQLite file the API uses, these cron services don't run the
+  # worker scripts directly. Instead each one is a plain curl call that
+  # triggers a /admin/run/* endpoint on the always-on emploi-api service
+  # above, which already has the disk mounted and runs the worker in-process
+  # (see api/main.py). `--fail` makes curl exit non-zero on a 4xx/5xx
+  # response, so Render's cron success/failure reporting reflects the
+  # worker's real outcome, not just "the HTTP request was sent".
+  # ---------------------------------------------------------------------------
+
+  # High-priority boards, hourly.
+  - type: cron
+    name: emploi-ingest
+    runtime: python
+    plan: starter
+    schedule: "0 * * * *"
+    buildCommand: "true"
+    startCommand: >-
+      curl -sf --max-time 300 -X POST
+      -H "X-API-Key: $EMPLOI_API_KEY"
+      "$EMPLOI_API_URL/admin/run/ingest?min_priority=8"
+    envVars:
+      - key: EMPLOI_API_URL
+        value: https://emploi-api.onrender.com
+      - key: EMPLOI_API_KEY
+        sync: false          # must match emploi-api's EMPLOI_API_KEY
+
+  # All boards, daily.
+  - type: cron
+    name: emploi-ingest-daily
+    runtime: python
+    plan: starter
+    schedule: "0 1 * * *"
+    buildCommand: "true"
+    startCommand: >-
+      curl -sf --max-time 300 -X POST
+      -H "X-API-Key: $EMPLOI_API_KEY"
+      "$EMPLOI_API_URL/admin/run/ingest"
+    envVars:
+      - key: EMPLOI_API_URL
+        value: https://emploi-api.onrender.com
+      - key: EMPLOI_API_KEY
+        sync: false
+
+  # Worker 2 — refresh stale employer trust records.
+  - type: cron
+    name: emploi-verify-employers
+    runtime: python
+    plan: starter
+    schedule: "30 1 * * *"
+    buildCommand: "true"
+    startCommand: >-
+      curl -sf --max-time 600 -X POST
+      -H "X-API-Key: $EMPLOI_API_KEY"
+      "$EMPLOI_API_URL/admin/run/verify-employers"
+    envVars:
+      - key: EMPLOI_API_URL
+        value: https://emploi-api.onrender.com
+      - key: EMPLOI_API_KEY
+        sync: false
+
+  # Worker 3 — match fresh jobs against every completed Career Twin.
+  - type: cron
+    name: emploi-match
+    runtime: python
+    plan: starter
+    schedule: "0 2 * * *"
+    buildCommand: "true"
+    startCommand: >-
+      curl -sf --max-time 900 -X POST
+      -H "X-API-Key: $EMPLOI_API_KEY"
+      "$EMPLOI_API_URL/admin/run/match"
+    envVars:
+      - key: EMPLOI_API_URL
+        value: https://emploi-api.onrender.com
+      - key: EMPLOI_API_KEY
+        sync: false
+
+  # Worker 4 — one digest email per user with unnotified matches. Needs a
+  # verified Brevo sender on emploi-api; missing config = safe no-op there,
+  # never a false "sent" here.
+  - type: cron
+    name: emploi-notify
+    runtime: python
+    plan: starter
+    schedule: "30 2 * * *"
+    buildCommand: "true"
+    startCommand: >-
+      curl -sf --max-time 300 -X POST
+      -H "X-API-Key: $EMPLOI_API_KEY"
+      "$EMPLOI_API_URL/admin/run/notify"
+    envVars:
+      - key: EMPLOI_API_URL
+        value: https://emploi-api.onrender.com
+      - key: EMPLOI_API_KEY
+        sync: false
+
+  # Worker 5 — nightly SQLite backup to Cloudflare R2 (after ingest/verify/match).
+  - type: cron
+    name: emploi-backup
+    runtime: python
+    plan: starter
+    schedule: "0 3 * * *"
+    buildCommand: "true"
+    startCommand: >-
+      curl -sf --max-time 300 -X POST
+      -H "X-API-Key: $EMPLOI_API_KEY"
+      "$EMPLOI_API_URL/admin/run/backup"
+    envVars:
+      - key: EMPLOI_API_URL
+        value: https://emploi-api.onrender.com
+      - key: EMPLOI_API_KEY
+        sync: false
 
   # Legacy Streamlit chat app / future internal admin console
   - type: web

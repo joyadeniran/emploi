@@ -31,6 +31,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import core  # noqa: E402
 import db  # noqa: E402
 import verify  # noqa: E402
+import workers.ingest_jobs as ingest_worker  # noqa: E402
+import workers.match_users as match_worker  # noqa: E402
+import workers.verify_employers as verify_worker  # noqa: E402
+import workers.notify_users as notify_worker  # noqa: E402
+import workers.backup_db as backup_worker  # noqa: E402
 
 log = logging.getLogger("emploi.api")
 logging.basicConfig(level=logging.INFO)
@@ -94,6 +99,22 @@ def auth(x_api_key: str = Header(default=""),
     if not x_user_id:
         raise HTTPException(status_code=401, detail="missing X-User-Id")
     return x_user_id
+
+
+def admin_key_auth(x_api_key: str = Header(default="")) -> None:
+    """Auth for the /admin/run/* worker-trigger endpoints — API key only, no
+    X-User-Id. Render Cron Jobs cannot mount a persistent disk (a Render
+    product limitation, not a config mistake), so the nightly/hourly
+    workers can't run as their own cron services against the shared
+    SQLite file. Instead they run inside this always-on API process (which
+    already has the disk mounted) and Render Cron just fires the HTTP
+    trigger on schedule. See render.yaml and docs/engineering/05."""
+    if not API_KEY:
+        raise HTTPException(status_code=503,
+                            detail="EMPLOI_API_KEY must be configured before "
+                                   "worker-trigger endpoints can run")
+    if not secrets.compare_digest(x_api_key, API_KEY):
+        raise HTTPException(status_code=401, detail="invalid API key")
 
 
 def rate_limit(request: Request, user_id: str = Depends(auth)) -> str:
@@ -486,3 +507,59 @@ def admin_seed_sources(user_id: str = Depends(auth)):
     inserted = db.seed_job_sources(conn, SOURCES_PATH)
     total = conn.execute("SELECT COUNT(*) AS n FROM job_sources").fetchone()["n"]
     return {"inserted": inserted, "total": total}
+
+
+# ---------------------------------------------------------------------------
+# Worker triggers — Render Cron Jobs can't mount the persistent disk that
+# holds the SQLite file (a Render product limitation), so the scheduled
+# workers run in-process here instead; render.yaml's cron services just curl
+# these endpoints on schedule. Runs are synchronous and block the calling
+# request until the worker finishes, so a cron failure means the worker
+# genuinely failed — same honesty guarantee each worker already has on its
+# own CLI. This does mean a scheduled run briefly ties up this process; if
+# traffic ever makes that noticeable, move to a real queue instead.
+# ---------------------------------------------------------------------------
+
+@app.post("/admin/run/ingest")
+def admin_run_ingest(min_priority: int = 1, _: None = Depends(admin_key_auth)):
+    """Worker 1 — fetch jobs from Greenhouse/Lever/Ashby board APIs."""
+    result = ingest_worker.run(DB_PATH, min_priority=min_priority)
+    if not result["ok"]:
+        raise HTTPException(status_code=500, detail=result)
+    return result
+
+
+@app.post("/admin/run/match")
+def admin_run_match(_: None = Depends(admin_key_auth)):
+    """Worker 3 — score fresh unmatched jobs against every completed Career Twin."""
+    result = match_worker.run(DB_PATH, model=app.state.model_factory())
+    if not result["ok"]:
+        raise HTTPException(status_code=500, detail=result)
+    return result
+
+
+@app.post("/admin/run/verify-employers")
+def admin_run_verify_employers(_: None = Depends(admin_key_auth)):
+    """Worker 2 — refresh stale employer trust records for direct company domains."""
+    result = verify_worker.run(DB_PATH, model=app.state.model_factory())
+    if not result["ok"]:
+        raise HTTPException(status_code=500, detail=result)
+    return result
+
+
+@app.post("/admin/run/notify")
+def admin_run_notify(_: None = Depends(admin_key_auth)):
+    """Worker 4 — send one digest email per user with unnotified matches."""
+    result = notify_worker.run(DB_PATH, send_fn=notify_worker._get_send_fn())
+    if not result["ok"]:
+        raise HTTPException(status_code=500, detail=result)
+    return result
+
+
+@app.post("/admin/run/backup")
+def admin_run_backup(_: None = Depends(admin_key_auth)):
+    """Worker 5 — snapshot the SQLite file and upload it to Cloudflare R2."""
+    result = backup_worker.run(DB_PATH)
+    if not result["ok"]:
+        raise HTTPException(status_code=500, detail=result)
+    return result
