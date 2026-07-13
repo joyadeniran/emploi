@@ -5,6 +5,10 @@ All notable changes to this project. Format loosely follows [Keep a Changelog](h
 ## [Unreleased]
 Planned: fresh-listings agent (job APIs + monitored sources), WHOIS domain-age check, OCR for scanned CVs, curator partner pilot (Halo), BYOK option for users, per-user quotas (auth now makes this possible), Postgres migration when multi-instance is needed (SQLite on a Render Disk shipped in 0.11.1).
 
+## [0.11.4] — 2026-07-13 — Trust signal: bot-blocked sites no longer punished
+### Changed
+- **`fetch_site` 403 semantics resolved** (the 0.11.0 flagged item, decided with Joy): bot-defense statuses `{401, 403, 405, 429}` now count as "site exists" — a configured server/CDN answering proves the same infrastructure bar as a 200 (parked/dead domains can't produce them), so legitimate CDN-fronted employers (e.g. paystack.com) no longer swing 30 points down. The content-consistency LLM check is **skipped** for blocked sites (`site_content` stays absent — observed evidence only, never guessed), and the evidence line says so honestly: "website answers (bot protection blocked our content check)". 404/410/5xx and connection failures still count as no reachable website. Regression tests: 403 scores equal to a live site sans content judgment, the model is provably never called (exploding fake), 404/connection-failure semantics unchanged.
+
 ## [0.11.3] — 2026-07-13 — Gotcha sweep + branded loading (LoadingMark)
 ### Added
 - **`LoadingMark`** (`web/components/LoadingMark.tsx`): the animated Emploi logo loop from the design handoff — 3 mark bars pulsing in a cascading wave (1.15 s cycle, 0.16 s stagger, scaleY 1→1.16 + opacity 0.5→1, cosine curve), pure CSS keyframes, `prefers-reduced-motion` respected, `role="status"` for screen readers. Replaces the generic Sparkles pulse-circles in wizard steps 3/8; new route-level `loading.tsx` for the `(app)` group and the wizard show it during server-render waits. Synced to the claude.ai/design system project (11 components now).

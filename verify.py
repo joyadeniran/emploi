@@ -41,6 +41,11 @@ RED_FLAGS = [
 EMAIL_RE = re.compile(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)")
 DOMAIN_RE = re.compile(r"(?:https?://)?(?:www\.)?([\w-]+(?:\.[\w-]+)+)")
 
+# Statuses that prove a configured server answered but blocked our probe
+# (CDN/bot defense). Counts as "site exists"; content stays unverified.
+# 404/410/5xx are NOT here — those mean broken or absent.
+BOT_BLOCK_STATUSES = {401, 403, 405, 429}
+
 
 # ---------------- Shared blacklist / whitelist ----------------
 
@@ -214,7 +219,10 @@ def compute_trust(signals: dict):
 
     if signals.get("site_up") is True:
         score += 15
-        evidence.append("✅ company website is live")
+        evidence.append(
+            "✅ company website answers (bot protection blocked our content check)"
+            if signals.get("site_blocked") else
+            "✅ company website is live")
     elif signals.get("site_up") is False:
         score -= 15
         evidence.append("🔻 no reachable website")
@@ -296,9 +304,16 @@ def verify_employer(company: str, contact: str, job_text: str = "", role: str = 
             if signals["dns"]:
                 signals["mx"] = mx_fn(domain)
                 status, site_text = fetch_fn(domain)
-                signals["site_up"] = (status is not None and status < 400)
+                # Bot-defense statuses prove a configured server answered —
+                # the same legitimacy bar as a 200 (parked/dead domains can't
+                # produce them). Content stays unverifiable, so the LLM
+                # consistency check is skipped, never guessed.
+                blocked = status in BOT_BLOCK_STATUSES
+                signals["site_up"] = (status is not None
+                                      and (status < 400 or blocked))
+                signals["site_blocked"] = blocked
                 signals["name_match"] = name_matches_domain(company, domain)
-                if signals["site_up"]:
+                if signals["site_up"] and not blocked:
                     signals["site_content"] = check_site_content(
                         model, company, role, site_text)
 

@@ -165,6 +165,37 @@ v = verify_employer("Halo Jobs", "team@halojobs.co", "Nice role", "x",
 ok &= check("whitelisted employer end-to-end gets the boost",
             v["signals"].get("whitelisted") is True)
 
+# Bot-blocked sites (CDN 403 etc.) — a configured server answered, so the
+# site-exists signal holds; content is unverifiable, so the LLM is never asked.
+class ExplodingModel:
+    def generate_content(self, prompt):
+        raise AssertionError("content check must not run on a bot-blocked site")
+
+site_403 = lambda d, timeout=6: (403, "Access denied")
+v_blocked = verify_employer("Paystack", "careers@paystack.com", "", "Engineer",
+                            model=ExplodingModel(), dns_fn=dns_up, mx_fn=mx_yes,
+                            fetch_fn=site_403)
+v_live = verify_employer("Paystack", "careers@paystack.com", "", "Engineer",
+                         model=None, dns_fn=dns_up, mx_fn=mx_yes, fetch_fn=site_up)
+ok &= check("403 (bot defense) -> site_up True, content check skipped",
+            v_blocked["signals"]["site_up"] is True
+            and v_blocked["signals"]["site_blocked"] is True
+            and "site_content" not in v_blocked["signals"])
+ok &= check("403 scores same as a live site with no content judgment",
+            v_blocked["score"] == v_live["score"])
+ok &= check("403 evidence names the bot block honestly",
+            any("bot protection" in e for e in v_blocked["evidence"]))
+
+site_404 = lambda d, timeout=6: (404, "not found")
+v_404 = verify_employer("Ghost Co", "jobs@ghostco.dev", "", "",
+                        model=None, dns_fn=dns_up, mx_fn=mx_yes, fetch_fn=site_404)
+ok &= check("404 still counts as no reachable website",
+            v_404["signals"]["site_up"] is False)
+v_conn = verify_employer("Dead Co", "jobs@deadco.dev", "", "",
+                         model=None, dns_fn=dns_up, mx_fn=mx_yes, fetch_fn=site_down)
+ok &= check("connection failure still counts as no reachable website",
+            v_conn["signals"]["site_up"] is False)
+
 import json as _json, os as _os, tempfile as _tempfile
 with _tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
     _json.dump({"blacklist": ["  BadCo.COM "], "whitelist": ["good.co"]}, f)
