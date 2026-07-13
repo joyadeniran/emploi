@@ -377,6 +377,9 @@ export default function CreateCareerTwinPage() {
   useEffect(() => {
     const meta = document.querySelector('meta[name="x-user-name"]');
     if (meta) setUserName(meta.getAttribute("content") ?? "");
+    // Wake up the Render API in the background so it's ready by the time the
+    // user reaches the CV upload step (Render free tier sleeps after 15 min idle).
+    fetch("/api/ping").catch(() => {});
   }, []);
 
   // Step 3 auto-advance — only when no file is being uploaded (skip case)

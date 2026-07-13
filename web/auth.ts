@@ -48,7 +48,7 @@ if (devLoginEnabled) {
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers,
   session: { strategy: "jwt" },
-  pages: { signIn: "/login" },
+  pages: { signIn: "/login", signOut: "/signout" },
   callbacks: {
     session({ session, token }) {
       if (token.sub) session.user.id = token.sub;
