@@ -3,7 +3,18 @@
 All notable changes to this project. Format loosely follows [Keep a Changelog](https://keepachangelog.com); dates are when the work shipped.
 
 ## [Unreleased]
-Planned: matching worker (Worker 3 — nightly ranking against ingested_jobs → matches table), verification refresh worker (Worker 2), notifications worker (Worker 4, Resend), WHOIS domain-age check, OCR for scanned CVs, curator partner pilot (Halo), BYOK option for users, per-user quotas, Postgres migration when multi-instance is needed.
+Planned: verification refresh worker (Worker 2), notifications worker (Worker 4, Resend), WHOIS domain-age check, OCR for scanned CVs, curator partner pilot (Halo), BYOK option for users, per-user quotas, Postgres migration when multi-instance is needed.
+
+## [0.12.1] — 2026-07-13 — Worker 3 (matching), job source registry, 130-company seed
+### Added
+- **`workers/match_users.py`** — Worker 3 (the product feature): for every user with a completed Career Twin, fetches fresh unmatched jobs (SQL anti-join on `matches`, configurable `--days-fresh` window), batches them through `core.match_jobs` (one Gemini call per batch of 50), and upserts ranked results into `matches`. A single user failure never stops the run. `--dry-run` prints what would be scored without calling Gemini or writing. `--min-priority` and `--batch-size` flags. Returns `{ok, users_processed, total_matches, total_calls, errors, dry_run}`. Designed to run nightly on Render Cron after Worker 1.
+- **`db.py` — `job_sources` table + admin functions**: `seed_job_sources(conn, path)` — idempotent seed from JSON (no-op if table is already populated; DB is source of truth after first seed). `list_job_sources`, `upsert_job_source`, `set_job_source_active`, `get_job_source` for admin-API-managed source registry.
+- **`data/job_sources.json` rewritten** — 130 companies across 8 categories (`african_tech`, `remote_global`, `ai`, `developer_tools`, `enterprise_saas`, `fintech`, `large_tech`, `nigerian_companies`). Each entry carries `{company, ats, token, priority, region, active}`. Priority 10=hourly, 7=every 3h, 5=twice daily, 1=daily. Nigerian banks and large tech (no public ATS APIs) marked `active: false` so they're seeded but idle until we add custom scrapers.
+- **`api/main.py` — admin job-source endpoints**: `GET/POST /admin/job-sources`, `PATCH /admin/job-sources/{id}`, `PATCH /admin/job-sources/{id}/toggle`, `POST /admin/job-sources/seed`. Auto-seeds from JSON on first `GET`. Allows adding/disabling sources and changing priority without redeployment.
+- **`workers/ingest_jobs.py` updated** — now reads source list from `job_sources` DB table (seeded on first run from JSON). `--min-priority N` flag to run only high-priority sources on frequent schedules. `_ATS_HANDLERS` dict for extensible ATS support (Greenhouse + Lever live; others skip gracefully).
+- **`test_ingest.py` rewritten** — now covers both Worker 1 (ingest) and Worker 3 (match): 37 checks total. New tests: rich JSON seed format, `job_sources` seeding idempotency, `min_priority` filter, Worker 3 match production, idempotency (anti-join), `onboarding_complete` guard, dry-run no-write, `batch_size=1` multiple-call validation.
+
+All 5 suites green (`test_e2e`, `test_verify`, `test_db`, `test_api`, `test_ingest`).
 
 ## [0.12.0] — 2026-07-13 — Job sourcing: ingestion worker + sourcing API
 ### Added

@@ -359,3 +359,72 @@ def get_user_matches(limit: int = 50, user_id: str = Depends(auth)):
     if limit < 1 or limit > 200:
         raise HTTPException(status_code=422, detail="limit must be 1–200")
     return {"matches": db.list_matches(get_conn(), user_id, limit=limit)}
+
+
+# ---------------------------------------------------------------------------
+# Admin — job source registry
+# ---------------------------------------------------------------------------
+
+SOURCES_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "job_sources.json")
+
+
+class JobSourceIn(BaseModel):
+    company: str
+    ats: str = "greenhouse"
+    token: str
+    priority: int = Field(default=5, ge=1, le=10)
+    category: Optional[str] = None
+    region: Optional[str] = None
+    active: bool = True
+
+
+@app.get("/admin/job-sources")
+def admin_list_sources(active_only: bool = False,
+                       ats: Optional[str] = None,
+                       user_id: str = Depends(auth)):
+    """List all job source records."""
+    conn = get_conn()
+    db.seed_job_sources(conn, SOURCES_PATH)
+    return {"sources": db.list_job_sources(conn, active_only=active_only, ats=ats)}
+
+
+@app.post("/admin/job-sources", status_code=201)
+def admin_add_source(body: JobSourceIn, user_id: str = Depends(auth)):
+    """Add or update a job source (upsert on ats+token)."""
+    conn = get_conn()
+    source_id = db.upsert_job_source(
+        conn, body.company, body.ats, body.token,
+        body.priority, body.category, body.region, body.active)
+    return {"id": source_id}
+
+
+@app.patch("/admin/job-sources/{source_id}")
+def admin_patch_source(source_id: int, body: JobSourceIn,
+                       user_id: str = Depends(auth)):
+    """Update a job source by id."""
+    conn = get_conn()
+    if not db.get_job_source(conn, source_id):
+        raise HTTPException(status_code=404, detail="source not found")
+    db.upsert_job_source(conn, body.company, body.ats, body.token,
+                         body.priority, body.category, body.region, body.active)
+    return {"ok": True}
+
+
+@app.patch("/admin/job-sources/{source_id}/toggle")
+def admin_toggle_source(source_id: int, active: bool,
+                        user_id: str = Depends(auth)):
+    """Enable or disable a job source."""
+    if not db.set_job_source_active(get_conn(), source_id, active):
+        raise HTTPException(status_code=404, detail="source not found")
+    return {"ok": True, "active": active}
+
+
+@app.post("/admin/job-sources/seed")
+def admin_seed_sources(user_id: str = Depends(auth)):
+    """Seed job_sources table from data/job_sources.json if empty."""
+    conn = get_conn()
+    inserted = db.seed_job_sources(conn, SOURCES_PATH)
+    total = conn.execute("SELECT COUNT(*) AS n FROM job_sources").fetchone()["n"]
+    return {"inserted": inserted, "total": total}

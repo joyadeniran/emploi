@@ -80,6 +80,25 @@ CREATE INDEX IF NOT EXISTS idx_matches_user    ON matches(user_id);
 CREATE INDEX IF NOT EXISTS idx_matches_job     ON matches(job_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_unique ON matches(user_id, job_id);
 
+-- Job source registry — seeded from data/job_sources.json; DB is source of truth after.
+-- ats: greenhouse | lever | ashby | workday | career_page (future)
+-- priority: 10=hourly, 7=every 3h, 5=twice daily, 1=daily
+CREATE TABLE IF NOT EXISTS job_sources (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    company     TEXT NOT NULL,
+    ats         TEXT NOT NULL,
+    token       TEXT NOT NULL,
+    priority    INTEGER NOT NULL DEFAULT 5,
+    category    TEXT,
+    region      TEXT,
+    active      INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(ats, token)
+);
+CREATE INDEX IF NOT EXISTS idx_sources_active   ON job_sources(active);
+CREATE INDEX IF NOT EXISTS idx_sources_priority ON job_sources(priority);
+
 -- Structured audit / analytics events (stdout now; queried later).
 CREATE TABLE IF NOT EXISTS events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -355,3 +374,99 @@ def log_event(conn, event_type: str, payload: dict,
         conn.commit()
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Job source registry — job_sources table
+# ---------------------------------------------------------------------------
+
+def seed_job_sources(conn, sources_path: str) -> int:
+    """Seed the job_sources table from a JSON file if the table is empty.
+
+    Returns the number of rows inserted (0 if already seeded or file missing).
+    The DB is the source of truth after first seed — the file is not re-read.
+    """
+    existing = conn.execute("SELECT COUNT(*) AS n FROM job_sources").fetchone()["n"]
+    if existing > 0:
+        return 0
+    try:
+        data = json.loads(open(sources_path).read())
+    except Exception:
+        return 0
+    inserted = 0
+    for category, entries in data.items():
+        if category.startswith("_"):
+            continue
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict) or not entry.get("token"):
+                continue
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO job_sources "
+                    "(company, ats, token, priority, category, region, active) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (entry.get("company", ""),
+                     entry.get("ats", "greenhouse"),
+                     entry["token"],
+                     int(entry.get("priority", 5)),
+                     category,
+                     entry.get("region", "global"),
+                     1 if entry.get("active", True) else 0))
+                inserted += 1
+            except Exception:
+                pass
+    conn.commit()
+    return inserted
+
+
+def list_job_sources(conn, *, active_only: bool = False,
+                     ats: Optional[str] = None) -> list:
+    """Return job source records, highest priority first."""
+    clauses, params = [], []
+    if active_only:
+        clauses.append("active = 1")
+    if ats:
+        clauses.append("ats = ?")
+        params.append(ats)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = conn.execute(
+        f"SELECT * FROM job_sources {where} ORDER BY priority DESC, company ASC",
+        params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def upsert_job_source(conn, company: str, ats: str, token: str,
+                      priority: int = 5, category: Optional[str] = None,
+                      region: Optional[str] = None, active: bool = True) -> int:
+    """Insert or update a job source record. Returns the row id."""
+    cur = conn.execute(
+        "INSERT INTO job_sources (company, ats, token, priority, category, region, active, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now')) "
+        "ON CONFLICT(ats, token) DO UPDATE SET "
+        "  company=excluded.company, priority=excluded.priority, "
+        "  category=excluded.category, region=excluded.region, "
+        "  active=excluded.active, updated_at=excluded.updated_at",
+        (company, ats, token, priority, category, region, 1 if active else 0))
+    conn.commit()
+    if cur.lastrowid:
+        return cur.lastrowid
+    row = conn.execute("SELECT id FROM job_sources WHERE ats=? AND token=?",
+                       (ats, token)).fetchone()
+    return row["id"] if row else -1
+
+
+def set_job_source_active(conn, source_id: int, active: bool) -> bool:
+    """Enable or disable a job source. Returns True if the row existed."""
+    cur = conn.execute(
+        "UPDATE job_sources SET active=?, updated_at=datetime('now') WHERE id=?",
+        (1 if active else 0, source_id))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def get_job_source(conn, source_id: int) -> Optional[dict]:
+    row = conn.execute("SELECT * FROM job_sources WHERE id=?",
+                       (source_id,)).fetchone()
+    return dict(row) if row else None
