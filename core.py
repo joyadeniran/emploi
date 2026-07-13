@@ -243,6 +243,80 @@ def extract_profile(model, cv_text: str) -> dict:
     return parse_profile_json(resp.text)
 
 
+# ---------------- Career Twin extraction (dashboard onboarding) ----------------
+# The wizard's schema, NOT the legacy PROFILE_KEYS shape. String fields default
+# to ""; skills is always a list. experience_years is one of EXPERIENCE_BUCKETS
+# so the wizard's <select> always has a matching option.
+
+EXPERIENCE_BUCKETS = ["1 year", "2 years", "3 years", "4 years", "5 years",
+                      "6–10 years", "10+ years"]
+
+CAREER_TWIN_TEXT_KEYS = ["name", "headline", "current_role", "location", "bio"]
+
+
+def build_career_twin_extraction_prompt(cv_text: str) -> str:
+    return f"""Extract a candidate profile from this CV text. Return ONLY a JSON object with exactly these keys:
+{{"name": "", "headline": "", "current_role": "", "experience_years": 0, "location": "", "skills": [], "bio": ""}}
+
+Guidance:
+- "headline": the candidate's professional identity in a few words (e.g. "Product Designer", "Backend Engineer").
+- "current_role": their most recent role and company (e.g. "Designer at Paystack").
+- "experience_years": total years of professional experience as an integer.
+- "skills": JSON array of individual skill strings.
+- "bio": 2-3 sentence first-person professional summary grounded ONLY in the CV.
+- Use "" (or 0 / []) when unknown. Never invent facts not present in the CV.
+
+CV text:
+{cv_text}"""
+
+
+def normalize_experience_years(value) -> str:
+    """Map an int/str year count onto the wizard's bucket labels."""
+    try:
+        years = int(float(str(value).strip().split()[0].rstrip("+")))
+    except (ValueError, IndexError):
+        return ""
+    if years <= 0:
+        return ""
+    if years <= 5:
+        return "1 year" if years == 1 else f"{years} years"
+    if years <= 10:
+        return "6–10 years"
+    return "10+ years"
+
+
+def normalize_skills(value) -> list:
+    """Skills as a clean list of strings, whether the model sent a list or a
+    comma/semicolon-separated string."""
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, str):
+        items = re.split(r"[,;]", value)
+    else:
+        return []
+    return [s for s in (str(i).strip() for i in items) if s]
+
+
+def parse_career_twin_json(text: str) -> dict:
+    """Parse and normalize the model's career-twin JSON. Returns {} on garbage;
+    every field is type-safe for the wizard (strings, list, bucket label)."""
+    raw = _extract_json(text, "{", "}")
+    if not isinstance(raw, dict):
+        return {}
+    twin = {k: str(raw.get(k, "") or "").strip() for k in CAREER_TWIN_TEXT_KEYS}
+    twin["skills"] = normalize_skills(raw.get("skills"))
+    twin["experience_years"] = normalize_experience_years(raw.get("experience_years"))
+    # A JSON object with nothing usable in it is a failed extraction, not a twin.
+    return twin if any(twin.values()) else {}
+
+
+def extract_career_twin(model, cv_text: str) -> dict:
+    """CV text → wizard-schema Career Twin dict. Empty dict when the model
+    output is unusable (caller decides how to surface that)."""
+    resp = model.generate_content(build_career_twin_extraction_prompt(cv_text))
+    return parse_career_twin_json(resp.text)
+
+
 def classify_document(model, text: str) -> str:
     """Return 'cv', 'jobs', or 'other'."""
     resp = model.generate_content(build_classification_prompt(text))

@@ -5,11 +5,15 @@ import { DEMO_MODE } from "@/lib/api";
 const API_URL = process.env.EMPLOI_API_URL ?? "http://localhost:8000";
 const API_KEY = process.env.EMPLOI_API_KEY ?? "";
 
+// Gemini extraction takes 10-30s; without this Vercel kills the function at
+// its default limit and the wizard sees a failed upload.
+export const maxDuration = 60;
+
 const DEMO_CAREER_TWIN = {
   name: "Joy Adesola",
   headline: "Product Designer",
   current_role: "Product Designer at Paystack",
-  experience_years: "4",
+  experience_years: "4 years",
   location: "Lagos, Nigeria",
   skills: ["Product Design", "UI/UX", "Figma", "User Research", "Prototyping", "Design Systems"],
   bio: "Product designer with 4 years of experience building user-centered digital products. I specialize in SaaS, fintech, and platforms.",

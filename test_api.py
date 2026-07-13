@@ -87,9 +87,19 @@ class FakeModel:
 
 
 m.app.state.model_factory = lambda: FakeModel(
-    '```json\n{"name": "Ada Obi", "skills": "Python, SQL"}\n```')
+    '```json\n{"name": "Ada Obi", "headline": "Data Analyst", '
+    '"current_role": "Analyst at Flutterwave", "experience_years": 4, '
+    '"skills": "Python, SQL", "location": "Abuja", "bio": "Data analyst."}\n```')
 r = client.post("/career-twin/extract", headers=AUTH, json={"cv_text": "x" * 60})
-check("extract parses fenced JSON", r.json()["career_twin"]["name"] == "Ada Obi")
+tw = r.json()["career_twin"]
+check("extract parses fenced JSON", tw["name"] == "Ada Obi")
+check("extract returns wizard schema (headline)", tw["headline"] == "Data Analyst")
+check("extract returns wizard schema (current_role)",
+      tw["current_role"] == "Analyst at Flutterwave")
+check("skills normalized: comma string -> list",
+      tw["skills"] == ["Python", "SQL"])
+check("experience_years normalized to wizard bucket",
+      tw["experience_years"] == "4 years")
 check("extracted data persisted",
       client.get("/career-twin", headers=AUTH).json()["career_twin"]["name"] == "Ada Obi")
 

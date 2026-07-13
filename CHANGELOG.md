@@ -5,6 +5,20 @@ All notable changes to this project. Format loosely follows [Keep a Changelog](h
 ## [Unreleased]
 Planned: fresh-listings agent (job APIs + monitored sources), WHOIS domain-age check, OCR for scanned CVs, curator partner pilot (Halo), BYOK option for users, per-user quotas (auth now makes this possible), Postgres migration when multi-instance is needed (SQLite on a Render Disk shipped in 0.11.1).
 
+## [0.11.2] — 2026-07-13 — Onboarding extraction fixed end-to-end (launch blockers cleared)
+### Fixed
+- **CV extraction returned the wrong schema — the wizard form opened blank.** The API extracted legacy `PROFILE_KEYS` (`title`, `experience`, `skills` as a comma-string) while the wizard expects `headline`/`current_role`/`experience_years`/`skills[]`/`bio` — only `name` and `location` ever matched, so users saw an empty form with just their name. New `core.extract_career_twin()` (own prompt + `parse_career_twin_json`) returns the wizard's exact schema with deterministic normalization: skills always a clean list (comma/semicolon strings split), `experience_years` mapped onto the wizard's `<select>` buckets (`normalize_experience_years`), all-empty objects rejected as failed extractions. Both `/career-twin/extract` and `/career-twin/upload` use it. 17 new offline checks in `test_e2e.py`, API contract checks updated in `test_api.py`.
+- **Latent crash: comma-string skills would `tags.map()`-crash step 5.** The wizard now merges extracted data defensively (`mergeExtracted`): only known CareerTwin keys, only non-empty values, list fields coerced to arrays even if an older API build sends strings — verified in-browser (mock upload with comma-string skills renders three chips, no crash).
+- **Fake progress: the extraction checklist checked off items on a 450 ms timer**, reporting success while Gemini was still generating. `AnimatedChecklist` reworked: the current stage always shows a spinner, a checkmark only means "moved past this stage", and the final stage can never complete on a timer — the step advances only when the fetch actually resolves. The skip path no longer plays extraction theater at all: no file → straight to a "Tell us about yourself" manual form (no "AI Extracted" badge, no resume-reading animation). All timers on the upload path are gone — no race is possible.
+- **"All set" shown even when the profile save failed** (step 8 swallowed errors), which then bounced the user back to the wizard on next login. Activation now verifies both the PATCH and `/complete` responses and shows a branded retry screen on failure.
+- **Vercel could kill the upload mid-extraction**: `/api/career-twin/upload` now sets `maxDuration = 60` (Gemini takes 10–30 s; the default function limit is shorter).
+- **`python-multipart` added to requirements.txt** — required by FastAPI's `UploadFile`; was only present transitively.
+- **Demo data drift**: `experience_years: "4"` didn't match any wizard select option (renders blank) — now `"4 years"` in all three demo payloads.
+### Added
+- **Branded sign-out page** (`/signout`, wired via NextAuth `pages.signOut`): matches the login page design (logo, brand orbs, glass card), shows the signed-in user's name, confirm + go-back actions — replaces NextAuth's unbranded default.
+### Notes
+- The 0.11.1-era race-condition fix (`cc46fd9`) had never been pushed — production was still running the old timer code, which is why the bug appeared "unfixed". This release ships everything.
+
 ## [0.11.1] — 2026-07-12 — Production deploy fixes (app.emploihq.com live)
 ### Fixed
 - **`emploi-api` 500s on every DB endpoint in production**: `render.yaml` set `EMPLOI_DB_PATH=/var/data/emploi.sqlite3` but the disk block was commented out, so `/var/data` never existed and `db.connect()` raised on each request (surfaced as 500 on `/applications`). Disk block is now active (1 GB at `/var/data`) — running on a paid Render plan.

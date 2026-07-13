@@ -154,7 +154,7 @@ def patch_career_twin(body: CareerTwinIn, user_id: str = Depends(auth)):
 def career_twin_extract(body: ResumeIn, user_id: str = Depends(auth)):
     """CV text → structured Career Twin data (Gemini), merged into the store."""
     model = require_model()
-    profile = core.extract_profile(model, body.cv_text)
+    profile = core.extract_career_twin(model, body.cv_text)
     if not profile:
         raise HTTPException(status_code=422,
                             detail="could not extract a profile from that text")
@@ -180,7 +180,7 @@ async def career_twin_upload(
     if len(cv_text.strip()) < 50:
         raise HTTPException(status_code=422,
                             detail="PDF appears to be image-only or too short to extract text")
-    profile = core.extract_profile(model, cv_text)
+    profile = core.extract_career_twin(model, cv_text)
     if not profile:
         raise HTTPException(status_code=422,
                             detail="could not extract a profile from that PDF")

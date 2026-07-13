@@ -113,20 +113,22 @@ function ProgressDots({ step }: { step: number }) {
 
 // ─── Animated checklist ────────────────────────────────────────────────────
 
+// Honest progress: the CURRENT stage always shows a spinner; a checkmark only
+// appears when the list advances past a stage. The final stage never completes
+// on a timer — the parent unmounts this list when the real work resolves, so
+// "all done" is never displayed while work is still generating.
 function AnimatedChecklist({
   items,
-  delayMs = 500,
-  lastSpinner = true,
+  delayMs = 2000,
 }: {
   items: string[];
   delayMs?: number;
-  lastSpinner?: boolean;
 }) {
-  const [visible, setVisible] = useState(0);
+  const [visible, setVisible] = useState(1);
 
   useEffect(() => {
-    setVisible(0);
-    let i = 0;
+    setVisible(1);
+    let i = 1;
     const interval = setInterval(() => {
       i++;
       setVisible(i);
@@ -139,11 +141,10 @@ function AnimatedChecklist({
     <ul className="space-y-3">
       {items.map((item, idx) => {
         if (idx >= visible) return null;
-        const isLast = idx === items.length - 1;
-        const spinner = lastSpinner && isLast && visible === items.length;
+        const current = idx === visible - 1;
         return (
           <li key={item} className="flex items-center gap-3 text-sm font-semibold animate-fade-in">
-            {spinner ? (
+            {current ? (
               <Loader2 size={18} className="shrink-0 animate-spin text-brand" />
             ) : (
               <CheckCircle2 size={18} className="shrink-0 text-good" />
@@ -364,6 +365,7 @@ export default function CreateCareerTwinPage() {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [extractionFailed, setExtractionFailed] = useState(false);
+  const [activateError, setActivateError] = useState(false);
   const [newSkill, setNewSkill] = useState("");
   const [newRole, setNewRole] = useState("");
   const [newIndustry, setNewIndustry] = useState("");
@@ -382,57 +384,83 @@ export default function CreateCareerTwinPage() {
     fetch("/api/ping").catch(() => {});
   }, []);
 
-  // Step 3 auto-advance — only when no file is being uploaded (skip case)
-  useEffect(() => {
-    if (step !== 3) return;
-    if (uploading) return; // wait for upload to finish; handleUploadContinue advances step
-    const timer = setTimeout(() => setStep(4), 2200);
-    return () => clearTimeout(timer);
-  }, [step, uploading]);
+  // Step 3 has NO timer: it renders only while a real upload is in flight and
+  // handleUploadContinue advances to 4 when the extraction actually resolves.
+  // Skipping the upload bypasses step 3 entirely.
 
-  // Step 8 — save & complete, then advance
+  // Step 8 — save & complete, then advance. "All set" is only shown when the
+  // save actually succeeded; otherwise the user gets a retry, not a lie.
   const doActivate = useCallback(async () => {
+    setActivateError(false);
+    const started = Date.now();
     try {
-      await fetch("/api/career-twin", {
+      const saved = await fetch("/api/career-twin", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data: twin }),
       });
-      await fetch("/api/career-twin/complete", { method: "POST" });
+      const completed = await fetch("/api/career-twin/complete", { method: "POST" });
+      if (!saved.ok || !completed.ok) throw new Error("save failed");
+      // keep the activation animation on screen for at least 2.5s
+      const remaining = Math.max(0, 2500 - (Date.now() - started));
+      setTimeout(() => setStep(9), remaining);
     } catch {
-      /* best-effort — advance anyway */
+      setActivateError(true);
     }
-    setTimeout(() => setStep(9), 2500);
   }, [twin]);
 
   useEffect(() => {
     if (step === 8) doActivate();
   }, [step, doActivate]);
 
+  // Merge extracted data defensively: only known CareerTwin keys, only
+  // non-empty values (so defaults survive), and skills coerced to an array
+  // even if an older API build sends a comma-separated string.
+  function mergeExtracted(data: Record<string, unknown>) {
+    setTwin((prev) => {
+      const next = { ...prev };
+      for (const key of Object.keys(EMPTY_TWIN) as (keyof CareerTwin)[]) {
+        const v = data[key];
+        if (v === undefined || v === null || v === "") continue;
+        if (key === "skills" || key === "preferred_roles" || key === "preferred_industries" ||
+            key === "preferred_locations" || key === "career_goals") {
+          const arr = Array.isArray(v)
+            ? v.map((s) => String(s).trim()).filter(Boolean)
+            : typeof v === "string"
+              ? v.split(",").map((s) => s.trim()).filter(Boolean)
+              : [];
+          if (arr.length) (next[key] as string[]) = arr;
+        } else if (typeof v === "string" || typeof v === "number") {
+          (next[key] as string | number) = v as string | number;
+        }
+      }
+      return next;
+    });
+  }
+
   async function handleUploadContinue() {
-    if (!file) { setStep(3); return; } // no file → skip → 2.2s timer advances
+    if (!file) { setStep(4); return; } // skip → straight to the manual form
     setExtractionFailed(false);
     setUploading(true);
     setStep(3);
+    let gotData = false;
     try {
       const formData = new FormData();
       formData.append("file", file);
       const res = await fetch("/api/career-twin/upload", { method: "POST", body: formData });
       if (res.ok) {
         const json = await res.json();
-        if (json.career_twin) {
-          setTwin((prev) => ({ ...prev, ...json.career_twin }));
-        } else {
-          setExtractionFailed(true);
+        if (json.career_twin && Object.keys(json.career_twin).length > 0) {
+          mergeExtracted(json.career_twin);
+          gotData = true;
         }
-      } else {
-        setExtractionFailed(true);
       }
     } catch {
-      setExtractionFailed(true);
+      /* network/timeout — handled below */
     } finally {
+      if (!gotData) setExtractionFailed(true);
       setUploading(false);
-      setStep(4); // advance only after upload resolves (success or failure)
+      setStep(4); // advance only after extraction actually resolves
     }
   }
 
@@ -582,7 +610,7 @@ export default function CreateCareerTwinPage() {
                   "Extracting skills",
                   "Building your profile",
                 ]}
-                delayMs={450}
+                delayMs={2500}
               />
             </div>
 
@@ -597,15 +625,19 @@ export default function CreateCareerTwinPage() {
           <div className="space-y-5">
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-2xl font-extrabold tracking-tight">Review &amp; edit your information</h2>
-                {!extractionFailed && <span className="rounded-full bg-brand-soft px-2.5 py-0.5 text-xs font-bold text-brand">AI Extracted</span>}
+                <h2 className="text-2xl font-extrabold tracking-tight">
+                  {file ? "Review & edit your information" : "Tell us about yourself"}
+                </h2>
+                {file && !extractionFailed && <span className="rounded-full bg-brand-soft px-2.5 py-0.5 text-xs font-bold text-brand">AI Extracted</span>}
               </div>
               {extractionFailed ? (
                 <p className="mt-2 rounded-xl border border-amber/30 bg-amber-soft px-4 py-2.5 text-xs font-semibold text-ink">
                   We couldn&apos;t extract text from your CV — it may be image-only or password-protected. Please fill in your details below.
                 </p>
-              ) : (
+              ) : file ? (
                 <p className="mt-1.5 text-sm text-muted">We extracted the details below. Please review and make any changes.</p>
+              ) : (
+                <p className="mt-1.5 text-sm text-muted">Fill in your details — your Career Twin uses them to find and rank matches.</p>
               )}
             </div>
 
@@ -842,32 +874,52 @@ export default function CreateCareerTwinPage() {
         {/* ── Step 8: Activating ─────────────────────────────────────────── */}
         {step === 8 && (
           <div className="space-y-8 text-center">
-            <div>
-              <h2 className="text-2xl font-extrabold tracking-tight">Creating your Career Twin</h2>
-              <p className="mt-1.5 text-sm text-muted">Almost there! We&apos;re personalising your experience and getting to work.</p>
-            </div>
-
-            <div className="flex justify-center">
-              <div className="relative flex h-24 w-24 items-center justify-center">
-                <div className="absolute inset-0 animate-ping rounded-full bg-brand-violet/20" />
-                <div className="absolute inset-2 animate-pulse rounded-full bg-brand-violet/30" />
-                <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-brand-violet to-brand-indigo shadow-pop">
-                  <Sparkles size={28} className="text-white" />
+            {activateError ? (
+              <>
+                <div>
+                  <h2 className="text-2xl font-extrabold tracking-tight">We couldn&apos;t save your profile</h2>
+                  <p className="mt-1.5 text-sm text-muted">
+                    Something went wrong while saving. Your answers are still here — try again.
+                  </p>
                 </div>
-              </div>
-            </div>
+                <button
+                  onClick={doActivate}
+                  className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-brand-violet to-brand-indigo px-8 py-3.5 text-sm font-bold text-white shadow-pop transition-transform hover:-translate-y-0.5"
+                >
+                  <Sparkles size={16} />
+                  Try again
+                </button>
+              </>
+            ) : (
+              <>
+                <div>
+                  <h2 className="text-2xl font-extrabold tracking-tight">Creating your Career Twin</h2>
+                  <p className="mt-1.5 text-sm text-muted">Almost there! We&apos;re personalising your experience and getting to work.</p>
+                </div>
 
-            <div className="text-left">
-              <AnimatedChecklist
-                items={[
-                  "Saving your profile",
-                  "Understanding your goals",
-                  "Setting your preferences",
-                  "Starting your Career Twin",
-                ]}
-                delayMs={600}
-              />
-            </div>
+                <div className="flex justify-center">
+                  <div className="relative flex h-24 w-24 items-center justify-center">
+                    <div className="absolute inset-0 animate-ping rounded-full bg-brand-violet/20" />
+                    <div className="absolute inset-2 animate-pulse rounded-full bg-brand-violet/30" />
+                    <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-brand-violet to-brand-indigo shadow-pop">
+                      <Sparkles size={28} className="text-white" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-left">
+                  <AnimatedChecklist
+                    items={[
+                      "Saving your profile",
+                      "Understanding your goals",
+                      "Setting your preferences",
+                      "Starting your Career Twin",
+                    ]}
+                    delayMs={600}
+                  />
+                </div>
+              </>
+            )}
           </div>
         )}
 

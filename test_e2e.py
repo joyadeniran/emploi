@@ -237,5 +237,48 @@ ok &= check("strip_evaluation survives None/empty", strip_evaluation("") == "")
 docx = make_docx(CANNED.format(score=88), title="Application - Acme")
 ok &= check("DOCX bytes valid (zip magic)", docx[:2] == b"PK" and len(docx) > 1000)
 
+# 11. Career Twin extraction (wizard-schema, normalized)
+from core import (parse_career_twin_json, normalize_skills,
+                  normalize_experience_years, build_career_twin_extraction_prompt,
+                  extract_career_twin)
+
+ok &= check("twin: fenced JSON parsed + normalized",
+            parse_career_twin_json(
+                '```json\n{"name":"Ada","headline":"Designer",'
+                '"experience_years":4,"skills":["Figma","UX"]}\n```')
+            == {"name": "Ada", "headline": "Designer", "current_role": "",
+                "location": "", "bio": "", "skills": ["Figma", "UX"],
+                "experience_years": "4 years"})
+ok &= check("twin: garbage -> {}", parse_career_twin_json("not json") == {})
+ok &= check("twin: empty object -> {} (failed extraction, not a twin)",
+            parse_career_twin_json('{"name":"","skills":[]}') == {})
+ok &= check("twin: skills comma string -> list",
+            normalize_skills("Python, SQL; Excel") == ["Python", "SQL", "Excel"])
+ok &= check("twin: skills list passthrough + cleanup",
+            normalize_skills([" Figma ", "", 42]) == ["Figma", "42"])
+ok &= check("twin: skills garbage -> []", normalize_skills({"a": 1}) == [])
+ok &= check("twin: years 1 -> '1 year'", normalize_experience_years(1) == "1 year")
+ok &= check("twin: years 4 -> '4 years'", normalize_experience_years("4") == "4 years")
+ok &= check("twin: years '7 years' -> bucket", normalize_experience_years("7 years") == "6–10 years")
+ok &= check("twin: years 12 -> '10+ years'", normalize_experience_years(12) == "10+ years")
+ok &= check("twin: years garbage -> ''", normalize_experience_years("unknown") == "")
+ok &= check("twin: years 0 -> ''", normalize_experience_years(0) == "")
+ok &= check("twin prompt: carries ground-truth constraint",
+            "Never invent" in build_career_twin_extraction_prompt("cv"))
+ok &= check("twin prompt: asks for wizard keys",
+            all(k in build_career_twin_extraction_prompt("cv")
+                for k in ["headline", "current_role", "experience_years", "bio"]))
+
+class _TwinModel:
+    def generate_content(self, prompt):
+        class R: text = '{"name":"Tolu","skills":"Go, Rust","experience_years":6}'
+        return R()
+
+ok &= check("extract_career_twin: end-to-end with fake model",
+            extract_career_twin(_TwinModel(), "cv text")
+            == {"name": "Tolu", "headline": "", "current_role": "",
+                "location": "", "bio": "", "skills": ["Go", "Rust"],
+                "experience_years": "6–10 years"})
+
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

@@ -5,7 +5,7 @@ const DEMO_CAREER_TWIN = {
   name: "Joy Adesola",
   headline: "Product Designer",
   current_role: "Product Designer at Paystack",
-  experience_years: "4",
+  experience_years: "4 years",
   location: "Lagos, Nigeria",
   skills: ["Product Design", "UI/UX", "Figma", "User Research", "Prototyping", "Design Systems"],
   bio: "Product designer with 4 years of experience building user-centered digital products. I specialize in SaaS, fintech, and platforms.",
