@@ -1,0 +1,23 @@
+{
+  "projectId": "b58c7932-c6f8-4d03-8644-81ef32fbe1da",
+  "pkg": "..",
+  "globalName": "Emploi",
+  "shape": "package",
+  "srcDir": "components",
+  "tsconfig": "tsconfig.design-sync.json",
+  "cssEntry": "design-sync-stubs/globals.ds.css",
+  "runtimeFontPrefixes": ["Plus Jakarta Sans"],
+  "readmeHeader": ".design-sync/conventions.md",
+  "componentSrcMap": {
+    "AppShell": "components/AppShell.tsx",
+    "ApplyButton": "components/ApplyButton.tsx",
+    "CareerTwinBot": "components/CareerTwinBot.tsx",
+    "Logo": "components/Logo.tsx",
+    "LogoMark": "components/Logo.tsx",
+    "PagePlaceholder": "components/PagePlaceholder.tsx",
+    "ProgressRing": "components/ProgressRing.tsx",
+    "FitRing": "components/ProgressRing.tsx",
+    "Sidebar": "components/Sidebar.tsx",
+    "Topbar": "components/Topbar.tsx"
+  }
+}
