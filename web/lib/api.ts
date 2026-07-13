@@ -23,7 +23,11 @@ export async function apiFetch<T>(
   const session = await auth();
   const userId =
     (session?.user as { id?: string } | undefined)?.id ?? session?.user?.email;
-  if (!userId) throw new Error("not authenticated");
+  if (!userId) {
+    const err = new Error("not authenticated") as Error & { status?: number };
+    err.status = 401;
+    throw err;
+  }
 
   let res: Response;
   try {
@@ -36,8 +40,12 @@ export async function apiFetch<T>(
         ...init.headers,
       },
       cache: "no-store",
+      // A hung backend must not hang the server render with it. Long AI calls
+      // (extract/upload) go through their route handlers' own fetches, not this.
+      signal: init.signal ?? AbortSignal.timeout(10_000),
     });
   } catch {
+    // network refusal and timeout both mean "backend not answering right now"
     throw new ApiUnavailableError(`Emploi API unreachable at ${API_URL}`);
   }
 

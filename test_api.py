@@ -117,6 +117,34 @@ m.app.state.model_factory = lambda: FakeModel(
 r = client.post("/resume/extract", headers=AUTH, json={"cv_text": "x" * 60})
 check("legacy /resume/extract alias still responds 200", r.status_code == 200)
 
+
+# ---------------- provider-failure and payload guards ----------------
+class RaisingModel:
+    def generate_content(self, prompt):
+        raise RuntimeError("simulated Gemini outage / rate limit")
+
+
+m.app.state.model_factory = lambda: RaisingModel()
+r = client.post("/career-twin/extract", headers=AUTH, json={"cv_text": "x" * 60})
+check("model exception -> clean 502, never a raw 500",
+      r.status_code == 502 and "temporarily unavailable" in r.json()["detail"])
+r = client.post("/matches", headers=AUTH, json={"jobs": [{"title": "PM"}]})
+check("matches with failing model -> 502 (twin exists from earlier test)",
+      r.status_code == 502)
+
+r = client.patch("/career-twin", headers=AUTH,
+                 json={"data": {"blob": "x" * 70_000}})
+check("oversized career-twin PATCH -> 413", r.status_code == 413)
+
+# upload cap: shrink the module bound so the test stays fast
+_orig_max = m.MAX_UPLOAD_BYTES
+m.MAX_UPLOAD_BYTES = 100
+m.app.state.model_factory = lambda: FakeModel('{"name": "X"}')
+r = client.post("/career-twin/upload", headers=AUTH,
+                files={"file": ("cv.pdf", b"%PDF" + b"x" * 200, "application/pdf")})
+check("oversized upload -> 413", r.status_code == 413)
+m.MAX_UPLOAD_BYTES = _orig_max
+
 # ---------------- deterministic trust verification ----------------
 m.app.state.model_factory = lambda: None
 m.dns_fn = lambda d: True

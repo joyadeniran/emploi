@@ -12,6 +12,7 @@
     "AppShell": "components/AppShell.tsx",
     "ApplyButton": "components/ApplyButton.tsx",
     "CareerTwinBot": "components/CareerTwinBot.tsx",
+    "LoadingMark": "components/LoadingMark.tsx",
     "Logo": "components/Logo.tsx",
     "LogoMark": "components/Logo.tsx",
     "PagePlaceholder": "components/PagePlaceholder.tsx",

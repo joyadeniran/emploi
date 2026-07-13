@@ -5,6 +5,18 @@ All notable changes to this project. Format loosely follows [Keep a Changelog](h
 ## [Unreleased]
 Planned: fresh-listings agent (job APIs + monitored sources), WHOIS domain-age check, OCR for scanned CVs, curator partner pilot (Halo), BYOK option for users, per-user quotas (auth now makes this possible), Postgres migration when multi-instance is needed (SQLite on a Render Disk shipped in 0.11.1).
 
+## [0.11.3] — 2026-07-13 — Gotcha sweep + branded loading (LoadingMark)
+### Added
+- **`LoadingMark`** (`web/components/LoadingMark.tsx`): the animated Emploi logo loop from the design handoff — 3 mark bars pulsing in a cascading wave (1.15 s cycle, 0.16 s stagger, scaleY 1→1.16 + opacity 0.5→1, cosine curve), pure CSS keyframes, `prefers-reduced-motion` respected, `role="status"` for screen readers. Replaces the generic Sparkles pulse-circles in wizard steps 3/8; new route-level `loading.tsx` for the `(app)` group and the wizard show it during server-render waits. Synced to the claude.ai/design system project (11 components now).
+- **Branded error surfaces**: root `error.tsx` (glass card matching login), `(app)/error.tsx` (in-shell retry, sidebar keeps working), `not-found.tsx` (branded 404) — no user ever sees Next.js's unstyled error screen.
+### Fixed
+- **`apiFetch` had no timeout** — a hung backend request stalled server renders indefinitely. Now 10 s `AbortSignal.timeout`, with timeout mapped to `ApiUnavailableError` (demo-data fallback paths already handle it). "not authenticated" now carries status 401 instead of surfacing as 500.
+- **Applications page: a network throw during a status change skipped the optimistic-update revert** and surfaced as an unhandled rejection — now caught and reverted.
+- **Gemini provider failures returned raw 500s**: `run_extraction()` in `api/main.py` wraps every model-backed endpoint (extract, upload, matches, legacy) — rate limits/outages now return a clean 502 "temporarily unavailable" (regression-tested with a raising fake model).
+- **No upload size ceiling on the API**: `/career-twin/upload` reads at most 15 MB and 413s beyond it (client caps at 10 MB, but the API must not trust callers). Career-twin PATCH payloads capped at 64 KB (JSON-in-SQLite protection). Tests for both.
+- **API key comparison is now timing-safe** (`secrets.compare_digest`).
+- Application id path segment URL-encoded in the web PATCH proxy.
+
 ## [0.11.2] — 2026-07-13 — Onboarding extraction fixed end-to-end (launch blockers cleared)
 ### Fixed
 - **CV extraction returned the wrong schema — the wizard form opened blank.** The API extracted legacy `PROFILE_KEYS` (`title`, `experience`, `skills` as a comma-string) while the wizard expects `headline`/`current_role`/`experience_years`/`skills[]`/`bio` — only `name` and `location` ever matched, so users saw an empty form with just their name. New `core.extract_career_twin()` (own prompt + `parse_career_twin_json`) returns the wizard's exact schema with deterministic normalization: skills always a clean list (comma/semicolon strings split), `experience_years` mapped onto the wizard's `<select>` buckets (`normalize_experience_years`), all-empty objects rejected as failed extractions. Both `/career-twin/extract` and `/career-twin/upload` use it. 17 new offline checks in `test_e2e.py`, API contract checks updated in `test_api.py`.

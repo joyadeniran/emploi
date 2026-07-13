@@ -45,6 +45,31 @@ body {
   border-radius: 99px;
 }
 
+/* Emploi loading loop: cascading bar pulse (design handoff spec — 1.15s cycle,
+   scaleY 1→1.16→1 + opacity .5→1→.5, cosine curve ≈ ease-in-out over 0→50→100%,
+   each bar from its own center via fill-box) */
+@keyframes loading-mark-pulse {
+  0%, 100% {
+    transform: scaleY(1);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scaleY(1.16);
+    opacity: 1;
+  }
+}
+.loading-mark-bar {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: loading-mark-pulse 1.15s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-mark-bar {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 @keyframes rise-in {
   from {
     opacity: 0;

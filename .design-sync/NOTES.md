@@ -25,6 +25,9 @@ node .ds-sync/package-build.mjs --config .design-sync/config.json --node-modules
 node .ds-sync/package-validate.mjs ./ds-bundle --no-render-check
 ```
 
+## Component notes
+- **LoadingMark** (added 2026-07-13): its animation keyframes (`loading-mark-pulse`, `.loading-mark-bar`) live in `app/globals.css` — the design-sync CSS must be regenerated (see build command) whenever they change, or DS previews render the mark static.
+
 ## Known render warns
 - `[RENDER_SKIPPED]`: playwright not installed. Accepted by user on first sync.
 

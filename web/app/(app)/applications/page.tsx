@@ -104,13 +104,15 @@ export default function ApplicationsPage() {
       rs ? rs.map((r) => (r.id === row.id ? { ...r, status } : r)) : rs,
     );
     if (!live) return; // demo data: local-only change
-    const res = await fetch(`/api/applications/${row.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
-    if (!res.ok) {
-      // revert on failure
+    try {
+      const res = await fetch(`/api/applications/${row.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      // network failure or API error — revert the optimistic update
       setRows((rs) =>
         rs ? rs.map((r) => (r.id === row.id ? { ...r, status: prev } : r)) : rs,
       );

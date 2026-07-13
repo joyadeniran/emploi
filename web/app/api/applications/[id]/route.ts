@@ -8,7 +8,7 @@ export async function PATCH(
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
   try {
-    const data = await apiFetch<{ ok: boolean }>(`/applications/${id}`, {
+    const data = await apiFetch<{ ok: boolean }>(`/applications/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: JSON.stringify({ status: String(body.status ?? "") }),
     });

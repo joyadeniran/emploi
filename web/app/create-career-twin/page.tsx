@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { LogoMark } from "@/components/Logo";
+import { LoadingMark } from "@/components/LoadingMark";
 import {
   FileText,
   X,
@@ -592,14 +593,8 @@ export default function CreateCareerTwinPage() {
               <p className="mt-1.5 text-sm text-muted">This usually takes less than a minute.</p>
             </div>
 
-            <div className="flex justify-center">
-              <div className="relative flex h-24 w-24 items-center justify-center">
-                <div className="absolute inset-0 animate-ping rounded-full bg-brand-violet/20" />
-                <div className="absolute inset-2 animate-pulse rounded-full bg-brand-violet/30" />
-                <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-brand-violet to-brand-indigo shadow-pop">
-                  <Sparkles size={28} className="text-white" />
-                </div>
-              </div>
+            <div className="flex justify-center py-2">
+              <LoadingMark size={88} label="Extracting your information" />
             </div>
 
             <div className="text-left">
@@ -897,14 +892,8 @@ export default function CreateCareerTwinPage() {
                   <p className="mt-1.5 text-sm text-muted">Almost there! We&apos;re personalising your experience and getting to work.</p>
                 </div>
 
-                <div className="flex justify-center">
-                  <div className="relative flex h-24 w-24 items-center justify-center">
-                    <div className="absolute inset-0 animate-ping rounded-full bg-brand-violet/20" />
-                    <div className="absolute inset-2 animate-pulse rounded-full bg-brand-violet/30" />
-                    <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-brand-violet to-brand-indigo shadow-pop">
-                      <Sparkles size={28} className="text-white" />
-                    </div>
-                  </div>
+                <div className="flex justify-center py-2">
+                  <LoadingMark size={88} label="Creating your Career Twin" />
                 </div>
 
                 <div className="text-left">

@@ -14,7 +14,9 @@ Auth model (service-to-service): the Next.js server calls this API with
 
 Run: python3 -m uvicorn api.main:app --port 8000
 """
+import json
 import os
+import secrets
 import sys
 import logging
 
@@ -75,11 +77,30 @@ def require_model():
 
 def auth(x_api_key: str = Header(default=""),
          x_user_id: str = Header(default="")) -> str:
-    if API_KEY and x_api_key != API_KEY:
+    if API_KEY and not secrets.compare_digest(x_api_key, API_KEY):
         raise HTTPException(status_code=401, detail="invalid API key")
     if not x_user_id:
         raise HTTPException(status_code=401, detail="missing X-User-Id")
     return x_user_id
+
+
+# Upload / payload bounds — the wizard caps uploads at 10 MB client-side; the
+# API enforces its own ceiling so a direct caller can't exhaust memory, and
+# career-twin blobs stay small enough for the JSON-in-SQLite design.
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+MAX_TWIN_BYTES = 64 * 1024
+
+
+def run_extraction(fn, *args):
+    """Call a Gemini-backed core function; a provider failure (rate limit,
+    network, safety block) becomes a clean 502 instead of a raw 500."""
+    try:
+        return fn(*args)
+    except Exception:
+        log.exception("model call failed in %s", getattr(fn, "__name__", fn))
+        raise HTTPException(
+            status_code=502,
+            detail="The AI service is temporarily unavailable — try again in a moment.")
 
 
 app = FastAPI(title="Emploi API", version="1.0.0")
@@ -143,6 +164,8 @@ def get_career_twin(user_id: str = Depends(auth)):
 @app.patch("/career-twin")
 def patch_career_twin(body: CareerTwinIn, user_id: str = Depends(auth)):
     """Merge incoming fields into the stored Career Twin (partial update)."""
+    if len(json.dumps(body.data)) > MAX_TWIN_BYTES:
+        raise HTTPException(status_code=413, detail="career twin payload too large")
     conn = get_conn()
     existing = db.load_career_twin(conn, user_id)
     existing.update(body.data)
@@ -154,7 +177,7 @@ def patch_career_twin(body: CareerTwinIn, user_id: str = Depends(auth)):
 def career_twin_extract(body: ResumeIn, user_id: str = Depends(auth)):
     """CV text → structured Career Twin data (Gemini), merged into the store."""
     model = require_model()
-    profile = core.extract_career_twin(model, body.cv_text)
+    profile = run_extraction(core.extract_career_twin, model, body.cv_text)
     if not profile:
         raise HTTPException(status_code=422,
                             detail="could not extract a profile from that text")
@@ -172,7 +195,9 @@ async def career_twin_upload(
 ):
     """PDF binary → extracted Career Twin (Gemini), merged into the store."""
     model = require_model()
-    pdf_bytes = await file.read()
+    pdf_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(pdf_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="PDF too large (max 15 MB)")
     try:
         cv_text = core.pdf_to_text(pdf_bytes)
     except Exception:
@@ -180,7 +205,7 @@ async def career_twin_upload(
     if len(cv_text.strip()) < 50:
         raise HTTPException(status_code=422,
                             detail="PDF appears to be image-only or too short to extract text")
-    profile = core.extract_career_twin(model, cv_text)
+    profile = run_extraction(core.extract_career_twin, model, cv_text)
     if not profile:
         raise HTTPException(status_code=422,
                             detail="could not extract a profile from that PDF")
@@ -213,7 +238,7 @@ def _legacy_get_profile(user_id: str = Depends(auth)):
 def _legacy_resume_extract(body: ResumeIn, user_id: str = Depends(auth)):
     """Deprecated — use POST /career-twin/extract."""
     model = require_model()
-    profile = core.extract_profile(model, body.cv_text)
+    profile = run_extraction(core.extract_profile, model, body.cv_text)
     if not profile:
         raise HTTPException(status_code=422,
                             detail="could not extract a profile from that text")
@@ -277,7 +302,7 @@ def matches_endpoint(body: MatchIn, user_id: str = Depends(auth)):
                             detail="no Career Twin yet — complete setup first")
     if not body.jobs:
         raise HTTPException(status_code=422, detail="no jobs provided")
-    return {"matches": core.match_jobs(model, profile, body.jobs)}
+    return {"matches": run_extraction(core.match_jobs, model, profile, body.jobs)}
 
 
 @app.delete("/user")
