@@ -3,7 +3,20 @@
 All notable changes to this project. Format loosely follows [Keep a Changelog](https://keepachangelog.com); dates are when the work shipped.
 
 ## [Unreleased]
-Planned: fresh-listings agent (job APIs + monitored sources), WHOIS domain-age check, OCR for scanned CVs, curator partner pilot (Halo), BYOK option for users, per-user quotas (auth now makes this possible), Postgres migration when multi-instance is needed (SQLite on a Render Disk shipped in 0.11.1).
+Planned: matching worker (Worker 3 — nightly ranking against ingested_jobs → matches table), verification refresh worker (Worker 2), notifications worker (Worker 4, Resend), WHOIS domain-age check, OCR for scanned CVs, curator partner pilot (Halo), BYOK option for users, per-user quotas, Postgres migration when multi-instance is needed.
+
+## [0.12.0] — 2026-07-13 — Job sourcing: ingestion worker + sourcing API
+### Added
+- **`db.py` — 4 new tables** (`ingested_jobs`, `employer_trust_records`, `matches`, `events`) with full index set and `UNIQUE` dedup constraints. New functions: `upsert_job`, `list_jobs`, `count_jobs`, `upsert_trust_record`, `get_trust_record`, `upsert_match`, `list_matches`, `log_event`. `clear_user` extended to wipe `matches` and `events` for the deleted user (NDPA/GDPR). All type annotations backported to `Optional[…]` for Python 3.9 compatibility.
+- **`workers/ingest_jobs.py`** — Worker 1: fetches jobs from public Greenhouse board API (`/v1/boards/{token}/jobs?content=true`) and Lever postings API (`/v0/postings/{slug}?mode=json`), normalises to the shared job dict shape, upserts into `ingested_jobs` with dedup on `(source, source_job_id)`. Per-source `try/except` — one dead board never kills the run. Polite `0.5s` rate-limit sleep between requests. `--dry-run` flag prints what would be written, touches nothing. Injectable `fetch_fn` seam for offline tests.
+- **`data/job_sources.json`** — curated company board tokens: 24 Greenhouse + 16 Lever, remote-friendly companies known to hire in Africa/EMEA (Andela, Deel, Flutterwave, Paystack, Stripe, GitLab, Automattic, etc.). Edit freely — the worker reads this file each run.
+- **`GET /jobs`** — list ingested jobs with optional `?remote_only=true`, `?category=`, `?limit=`, `?offset=` filters. Returns `{jobs, total, limit, offset}`. Limit capped at 200. **`GET /jobs/{id}`** — single job by id (404 if not found). **`GET /matches`** — user's pre-computed match rankings from the matches table (empty until the matching worker runs), best fit first.
+- **`web/app/api/jobs/route.ts`**, **`web/app/api/matches/route.ts`** — Next.js proxy routes forwarding to the FastAPI backend with the standard `apiFetch` auth and error handling.
+- **`test_ingest.py`** — 15 offline tests: utility helpers, fake Greenhouse/Lever HTTP responses, 3-job write, idempotency, `--dry-run` leaves DB empty, missing sources file graceful error.
+- **`test_db.py`** extended with 6 new checks for all new table functions.
+- **`test_api.py`** extended with 10 new checks for `/jobs` and `/matches` endpoints (filtering, 404, limit validation, match roundtrip).
+
+All 5 suites green (`test_e2e`, `test_verify`, `test_db`, `test_api`, `test_ingest`). Next.js production build clean (27 pages).
 
 ## [0.11.4] — 2026-07-13 — Trust signal: bot-blocked sites no longer punished
 ### Changed

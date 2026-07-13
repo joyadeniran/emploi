@@ -19,6 +19,7 @@ import os
 import secrets
 import sys
 import logging
+from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
@@ -310,3 +311,51 @@ def delete_user(user_id: str = Depends(auth)):
     """NDPA/GDPR deletion right — removes everything stored for the user."""
     db.clear_user(get_conn(), user_id)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Job sourcing — read endpoints (writes happen via the ingest worker only)
+# ---------------------------------------------------------------------------
+
+class JobsQuery(BaseModel):
+    remote_only: bool = False
+    category: Optional[str] = None
+    limit: int = Field(default=50, ge=1, le=200)
+    offset: int = Field(default=0, ge=0)
+
+
+@app.get("/jobs")
+def list_ingested_jobs(
+    remote_only: bool = False,
+    category: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    user_id: str = Depends(auth),
+):
+    """Return ingested jobs with optional filters. Newest first."""
+    if limit < 1 or limit > 200:
+        raise HTTPException(status_code=422, detail="limit must be 1–200")
+    conn = get_conn()
+    jobs = db.list_jobs(conn, remote_only=remote_only, category=category,
+                        limit=limit, offset=offset)
+    total = db.count_jobs(conn, remote_only=remote_only, category=category)
+    return {"jobs": jobs, "total": total, "limit": limit, "offset": offset}
+
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: int, user_id: str = Depends(auth)):
+    """Return a single ingested job by id."""
+    row = get_conn().execute(
+        "SELECT * FROM ingested_jobs WHERE id = ?", (job_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="job not found")
+    return {"job": dict(row)}
+
+
+@app.get("/matches")
+def get_user_matches(limit: int = 50, user_id: str = Depends(auth)):
+    """Return the user's pre-computed match rankings (populated by the matching
+    worker). Returns empty list if the worker hasn't run yet."""
+    if limit < 1 or limit > 200:
+        raise HTTPException(status_code=422, detail="limit must be 1–200")
+    return {"matches": db.list_matches(get_conn(), user_id, limit=limit)}

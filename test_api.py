@@ -216,6 +216,48 @@ check("invalid transition status rejected",
       client.patch(f"/applications/{app_id}", headers=AUTH,
                    json={"status": "nope"}).status_code == 422)
 
+# ---------------- job sourcing: GET /jobs + GET /matches ----------------
+# Seed a job directly via db so we can test the read endpoints without running the worker
+import db as _db
+_conn = m.get_conn()
+_db.upsert_job(_conn, "greenhouse/test", "api-test-1",
+               {"title": "API Test Engineer", "company_name": "TestCo",
+                "is_remote": True, "category": "Engineering"})
+_db.upsert_job(_conn, "lever/test", "api-test-2",
+               {"title": "Designer", "company_name": "TestCo",
+                "is_remote": False, "category": "Design"})
+
+r = client.get("/jobs", headers=AUTH)
+check("GET /jobs returns job list", r.status_code == 200 and "jobs" in r.json())
+check("GET /jobs returns total count", r.json()["total"] >= 2)
+
+r = client.get("/jobs?remote_only=true", headers=AUTH)
+check("GET /jobs?remote_only filters", all(j["is_remote"] for j in r.json()["jobs"]))
+
+r = client.get("/jobs?category=Engineering", headers=AUTH)
+check("GET /jobs?category filters", all(j["category"] == "Engineering"
+                                        for j in r.json()["jobs"]))
+
+job_id = r.json()["jobs"][0]["id"]
+r = client.get(f"/jobs/{job_id}", headers=AUTH)
+check("GET /jobs/{id} returns single job", r.status_code == 200
+      and r.json()["job"]["id"] == job_id)
+check("GET /jobs/99999 → 404", client.get("/jobs/99999", headers=AUTH).status_code == 404)
+
+r = client.get("/jobs?limit=300", headers=AUTH)
+check("GET /jobs limit > 200 → 422", r.status_code == 422)
+
+# Matches: empty until worker populates; endpoint must still return 200
+r = client.get("/matches", headers=AUTH)
+check("GET /matches returns 200 + empty list for new user",
+      r.status_code == 200 and r.json()["matches"] == [])
+
+# Seed a match and verify it comes back
+_db.upsert_match(_conn, AUTH["X-User-Id"], job_id, 88, "Strong fit")
+r = client.get("/matches", headers=AUTH)
+check("GET /matches returns seeded match",
+      len(r.json()["matches"]) == 1 and r.json()["matches"][0]["fit_score"] == 88)
+
 # ---------------- user deletion (NDPA/GDPR) ----------------
 r = client.delete("/user", headers=AUTH)
 check("delete user ok", r.status_code == 200)

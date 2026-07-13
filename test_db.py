@@ -5,7 +5,10 @@ import sys
 
 from db import (connect, save_career_twin, load_career_twin,
                 add_application, list_applications,
-                update_application_status, clear_user)
+                update_application_status, clear_user,
+                upsert_job, list_jobs, count_jobs,
+                upsert_trust_record, get_trust_record,
+                upsert_match, list_matches, log_event)
 
 
 def check(label, cond):
@@ -98,6 +101,70 @@ mconn = connect(_dbfile2)
 ok &= check("legacy profiles table migrated to career_twins",
             load_career_twin(mconn, "migrated-user") == {"name": "Legacy"})
 mconn.close(); _os2.unlink(_dbfile2)
+
+# ---------------------------------------------------------------------------
+# New tables: ingested_jobs, employer_trust_records, matches, events
+# ---------------------------------------------------------------------------
+jconn = connect(":memory:")
+
+# 12. upsert_job roundtrip + dedup
+fields1 = {"title": "Backend Engineer", "company_name": "Acme", "description": "Build APIs",
+            "location": "Remote", "is_remote": True, "apply_url": "https://acme.co/jobs/1"}
+id1 = upsert_job(jconn, "greenhouse/acme", "gh-101", fields1)
+ok &= check("upsert_job returns a row id", id1 > 0)
+jobs = list_jobs(jconn)
+ok &= check("one job in the pool", len(jobs) == 1)
+ok &= check("job fields round-trip", jobs[0]["title"] == "Backend Engineer"
+            and jobs[0]["is_remote"] == 1)
+
+# Re-upsert same key → updates, not duplicates
+fields1b = {**fields1, "title": "Senior Backend Engineer"}
+id1b = upsert_job(jconn, "greenhouse/acme", "gh-101", fields1b)
+ok &= check("re-upsert same source+id updates in place (no duplicate)",
+            len(list_jobs(jconn)) == 1 and list_jobs(jconn)[0]["title"] == "Senior Backend Engineer")
+
+# 13. Filtering
+upsert_job(jconn, "lever/stripe", "lv-001",
+           {"title": "PM", "company_name": "Stripe", "is_remote": False,
+            "category": "Product"})
+upsert_job(jconn, "lever/stripe", "lv-002",
+           {"title": "Designer", "company_name": "Stripe", "is_remote": True,
+            "category": "Design"})
+ok &= check("list_jobs remote_only filters correctly",
+            all(j["is_remote"] for j in list_jobs(jconn, remote_only=True)))
+ok &= check("list_jobs category filter works",
+            [j["title"] for j in list_jobs(jconn, category="Product")] == ["PM"])
+ok &= check("count_jobs total", count_jobs(jconn) == 3)
+ok &= check("count_jobs remote_only", count_jobs(jconn, remote_only=True) == 2)
+
+# 14. clear_user also wipes matches (and events)
+upsert_match(jconn, "u1", id1, 85, "Strong match on backend skills")
+upsert_match(jconn, "u1", id1b, 72, "Good match")
+log_event(jconn, "TestEvent", {"x": 1}, user_id="u1")
+ok &= check("matches listed for user", len(list_matches(jconn, "u1")) >= 1)
+clear_user(jconn, "u1")
+ok &= check("clear_user wipes matches", list_matches(jconn, "u1") == [])
+
+# 15. upsert_match: ON CONFLICT updates score
+upsert_match(jconn, "u2", id1, 60, "ok fit")
+upsert_match(jconn, "u2", id1, 90, "revised fit")  # same user+job
+ok &= check("upsert_match deduplicates on user+job",
+            len(list_matches(jconn, "u2")) == 1
+            and list_matches(jconn, "u2")[0]["fit_score"] == 90)
+
+# 16. employer_trust_records roundtrip
+fake_result = {"score": 78, "level": "High trust",
+               "signals": {"dns": True, "mx": True}, "evidence": ["✅ domain resolves"]}
+upsert_trust_record(jconn, "acme.co", "Acme Corp", fake_result)
+record = get_trust_record(jconn, "acme.co")
+ok &= check("trust record round-trips domain+score",
+            record is not None and record["trust_score"] == 78)
+ok &= check("trust record signals decoded", record["signals"]["dns"] is True)
+ok &= check("unknown domain -> None", get_trust_record(jconn, "unknowndomain.io") is None)
+
+# 17. log_event never raises (even on bad payload)
+log_event(jconn, "CrashTest", {"x": object()}, user_id="u3")  # non-serialisable
+ok &= check("log_event swallows serialisation errors (never raises)", True)
 
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)
