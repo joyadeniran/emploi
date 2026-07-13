@@ -186,6 +186,17 @@ check("verification cached per domain (one probe)", calls["n"] == 1)
 check("verify with no company/contact -> 422",
       client.post("/verify", headers=AUTH, json={}).status_code == 422)
 
+# Isolate this probe-heavy guard from the checks above. The eleventh request
+# from one user must fail cleanly instead of consuming unlimited DNS/HTTP work.
+m._rate_counters.clear()
+RATE_AUTH = {**AUTH, "X-User-Id": "rate-limit-user"}
+for _ in range(10):
+    client.post("/verify", headers=RATE_AUTH,
+                json={"company": "Rate Test", "contact": "jobs@ratetest.com"})
+r = client.post("/verify", headers=RATE_AUTH,
+                json={"company": "Rate Test", "contact": "jobs@ratetest.com"})
+check("verify rate limit returns 429 after 10 requests", r.status_code == 429)
+
 # ---------------- applications CRUD ----------------
 r = client.post("/applications", headers=AUTH, json={
     "company": "Paystack", "role": "Senior PM", "status": "applied",
@@ -257,6 +268,25 @@ _db.upsert_match(_conn, AUTH["X-User-Id"], job_id, 88, "Strong fit")
 r = client.get("/matches", headers=AUTH)
 check("GET /matches returns seeded match",
       len(r.json()["matches"]) == 1 and r.json()["matches"][0]["fit_score"] == 88)
+
+# ---------------- application generation ----------------
+m.app.state.model_factory = lambda: None
+r = client.post("/applications/generate", headers=AUTH,
+                json={"job": {"company_name": "TestCo", "description": "Build products"}})
+check("generation without key -> 503", r.status_code == 503)
+
+m.app.state.model_factory = lambda: FakeModel("Dear TestCo,\n\nFit Score: 85/100")
+r = client.post("/applications/generate", headers=AUTH,
+                json={"job": {"company_name": "TestCo", "description": "Build products"},
+                      "include_review": False})
+generated = r.json().get("generated", {})
+check("generation returns application and fit score",
+      r.status_code == 200 and generated.get("fit_score") == 85 and generated.get("result"))
+check("generation rejects a job without description",
+      client.post("/applications/generate", headers=AUTH, json={"job": {"company": "TestCo"}}).status_code == 422)
+check("generation requires Career Twin",
+      client.post("/applications/generate", headers={**AUTH, "X-User-Id": "no-twin"},
+                  json={"job": {"description": "Build products"}}).status_code == 409)
 
 # ---------------- user deletion (NDPA/GDPR) ----------------
 r = client.delete("/user", headers=AUTH)

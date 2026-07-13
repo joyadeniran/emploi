@@ -9,6 +9,7 @@ type LinkProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & {
   children?: React.ReactNode;
 };
 
-export default function Link({ href, prefetch: _p, replace: _r, scroll: _s, shallow: _sh, ...rest }: LinkProps) {
+export default function Link({ href, prefetch, replace, scroll, shallow, ...rest }: LinkProps) {
+  void prefetch; void replace; void scroll; void shallow;
   return <a href={href} {...rest} />;
 }

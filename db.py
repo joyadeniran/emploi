@@ -114,6 +114,19 @@ CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
 _APP_COLUMNS = ("company", "role", "status")
 
 
+def _migrate(conn) -> None:
+    """Additive migrations; each statement is safe when run repeatedly."""
+    for statement in (
+        "ALTER TABLE matches ADD COLUMN notified INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE matches ADD COLUMN notified_at TEXT",
+    ):
+        try:
+            conn.execute(statement)
+        except sqlite3.OperationalError:
+            pass
+    conn.commit()
+
+
 def connect(path: str, check_same_thread: bool = True) -> sqlite3.Connection:
     """Open (or create) the database and ensure the schema exists.
 
@@ -121,7 +134,9 @@ def connect(path: str, check_same_thread: bool = True) -> sqlite3.Connection:
     (Streamlit runs session code in worker threads and a cached connection
     crosses them; sqlite serializes writes internally).
     """
-    conn = sqlite3.connect(path, check_same_thread=check_same_thread)
+    # Workers and the API share the Render Disk. Wait briefly for the other
+    # writer instead of turning ordinary SQLite serialization into a 500.
+    conn = sqlite3.connect(path, check_same_thread=check_same_thread, timeout=30)
     conn.row_factory = sqlite3.Row
     # migrate legacy `profiles` table before schema creation so the
     # CREATE TABLE IF NOT EXISTS career_twins becomes a no-op after the rename
@@ -131,6 +146,7 @@ def connect(path: str, check_same_thread: bool = True) -> sqlite3.Connection:
     except Exception:
         pass  # already renamed, or old table never existed
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     return conn
 
 
@@ -351,7 +367,7 @@ def list_matches(conn, user_id: str, *, limit: int = 50) -> list:
     """Return a user's matches, best fit first, with job detail joined."""
     rows = conn.execute(
         "SELECT m.id, m.fit_score, m.reason, m.created_at, "
-        "       j.id AS job_id, j.title, j.company_name, j.location, "
+        "       j.id AS job_id, j.title, j.company_name, j.description, j.location, "
         "       j.is_remote, j.salary_text, j.apply_url, j.category, "
         "       j.source "
         "FROM matches m JOIN ingested_jobs j ON m.job_id = j.id "

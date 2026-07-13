@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 import google.generativeai as genai
 
-from core import (PROFILE_KEYS, batch_generate, chat_turn,
+from core import (PROFILE_KEYS, admin_allowed, batch_generate, chat_turn,
                   classify_document, detect_intent, extract_jobs,
                   extract_profile, generate_application, guess_columns,
                   generate_cv, make_docx, make_pdf, match_jobs, pdf_to_text,
@@ -44,6 +44,42 @@ if AUTH_ENABLED and not st.user.is_logged_in:
     st.stop()
 
 USER_ID = (getattr(st.user, "sub", None) or st.user.email) if AUTH_ENABLED else None
+
+
+# ---------------- Admin guard (opt-in — HANDOVER §14) ----------------
+# The public Render instance must not be an anonymous Gemini wrapper.
+# Two independent, opt-in locks; unset = behavior unchanged (local dev):
+#   EMPLOI_ADMIN_CODE   — access code required before the app renders
+#   EMPLOI_ADMIN_EMAILS — with Google sign-in, only these emails may enter
+def _conf(name):
+    val = os.getenv(name, "")
+    if not val:
+        try:
+            val = st.secrets.get(name, "")
+        except Exception:
+            val = ""
+    return val
+
+_ADMIN_EMAILS = _conf("EMPLOI_ADMIN_EMAILS")
+if AUTH_ENABLED and not admin_allowed(getattr(st.user, "email", None), _ADMIN_EMAILS):
+    st.title("💼 Emploi")
+    st.error("This console is restricted to Emploi administrators.")
+    if st.button("Sign out"):
+        st.logout()
+    st.stop()
+
+_ADMIN_CODE = _conf("EMPLOI_ADMIN_CODE")
+if _ADMIN_CODE and not st.session_state.get("admin_unlocked"):
+    st.title("💼 Emploi")
+    st.caption("Internal console — enter the access code to continue.")
+    code = st.text_input("Access code", type="password")
+    if st.button("Unlock", type="primary"):
+        if __import__("hmac").compare_digest(code or "", _ADMIN_CODE):
+            st.session_state["admin_unlocked"] = True
+            st.rerun()
+        else:
+            st.error("Incorrect access code.")
+    st.stop()
 
 
 @st.cache_resource

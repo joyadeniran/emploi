@@ -128,7 +128,6 @@ function AnimatedChecklist({
   const [visible, setVisible] = useState(1);
 
   useEffect(() => {
-    setVisible(1);
     let i = 1;
     const interval = setInterval(() => {
       i++;
@@ -136,7 +135,7 @@ function AnimatedChecklist({
       if (i >= items.length) clearInterval(interval);
     }, delayMs);
     return () => clearInterval(interval);
-  }, [items, delayMs]);
+  }, [items.length, delayMs]);
 
   return (
     <ul className="space-y-3">
@@ -368,9 +367,7 @@ export default function CreateCareerTwinPage() {
   const [extractionFailed, setExtractionFailed] = useState(false);
   const [activateError, setActivateError] = useState(false);
   const [newSkill, setNewSkill] = useState("");
-  const [newRole, setNewRole] = useState("");
   const [newIndustry, setNewIndustry] = useState("");
-  const [newLocation, setNewLocation] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function set<K extends keyof CareerTwin>(key: K, value: CareerTwin[K]) {

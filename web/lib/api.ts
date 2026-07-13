@@ -7,6 +7,7 @@
  */
 import "server-only";
 import { auth } from "@/auth";
+import type { JobMatch } from "@/lib/data";
 
 const API_URL = process.env.EMPLOI_API_URL ?? "http://localhost:8000";
 const API_KEY = process.env.EMPLOI_API_KEY ?? "";
@@ -15,6 +16,49 @@ const API_KEY = process.env.EMPLOI_API_KEY ?? "";
 export const DEMO_MODE = process.env.DEMO_MODE === "true";
 
 export class ApiUnavailableError extends Error {}
+
+export interface ApiMatch {
+  id: number;
+  job_id: number;
+  title?: string | null;
+  company_name?: string | null;
+  description?: string | null;
+  location?: string | null;
+  is_remote?: number | boolean | null;
+  salary_text?: string | null;
+  apply_url?: string | null;
+  fit_score?: number | null;
+  reason?: string | null;
+}
+
+const COMPANY_COLORS = ["#04114d", "#5b4ffd", "#f79009", "#0e9f6e", "#1570ef", "#d92d20"];
+
+function stableNumber(value: string): number {
+  let result = 0;
+  for (let i = 0; i < value.length; i += 1) result = (result << 5) - result + value.charCodeAt(i);
+  return Math.abs(result);
+}
+
+/** Convert the database/API shape into the presentation-only match-card shape. */
+export function toMatchCard(row: ApiMatch): JobMatch {
+  const company = row.company_name?.trim() || "Unknown company";
+  const fit = Math.max(0, Math.min(100, Number(row.fit_score) || 0));
+  const remote = Boolean(row.is_remote);
+  return {
+    id: String(row.id), jobId: Number(row.job_id), applyUrl: row.apply_url || undefined,
+    description: row.description || undefined,
+    title: row.title?.trim() || "Untitled role", company,
+    companyInitial: (company[0] || "?").toUpperCase(),
+    companyColor: COMPANY_COLORS[stableNumber(company) % COMPANY_COLORS.length],
+    location: row.location?.trim() || (remote ? "Remote" : "Location not listed"),
+    workMode: remote ? "Remote" : "On-site", employment: "Employment type not listed",
+    salary: row.salary_text?.trim() || "Salary not listed", fit,
+    level: fit >= 85 ? "great" : fit >= 60 ? "good" : "fair",
+    reason: row.reason?.trim() || "Your Career Twin found a relevant overlap to review.",
+    // Never claim verification until a trust record has actually been joined.
+    verified: false, isNew: true,
+  };
+}
 
 export async function apiFetch<T>(
   path: string,

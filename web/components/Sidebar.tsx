@@ -13,6 +13,7 @@ import {
   BarChart3,
   ShieldCheck,
   Users,
+  Settings,
   X,
 } from "lucide-react";
 import { Logo } from "./Logo";
@@ -28,6 +29,7 @@ const mainNav = [
   { href: "/interview-prep", label: "Interview Prep", icon: Mic },
   { href: "/insights", label: "Career Insights", icon: BarChart3 },
   { href: "/trust-check", label: "Trust Check", icon: ShieldCheck },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 const recruiterNav = [

@@ -1,13 +1,15 @@
 # 03 — Database
 
-**Current engine:** SQLite via `db.py` (the only file allowed to contain SQL). **Target:** Supabase Postgres when multi-instance or file storage demands it — the schema below is written to survive that migration.
+**Current engine:** SQLite via `db.py` (the only file allowed to contain SQL). **Target:** Postgres when multi-instance or file storage demands it — the schema below is written to survive that migration.
 
-## As-built schema (db.py)
+## As-built schema (db.py, v0.12+)
+
+Seven tables. Everything user-owned is keyed by `user_id` (Google `sub` claim).
 
 ```sql
-CREATE TABLE profiles (
-    user_id    TEXT PRIMARY KEY,      -- Google `sub` claim (stable), else email
-    data       TEXT NOT NULL,         -- profile JSON blob (schema-flexible)
+CREATE TABLE career_twins (              -- renamed from profiles (migration in connect())
+    user_id    TEXT PRIMARY KEY,          -- Google `sub` claim (stable), else email
+    data       TEXT NOT NULL,             -- Career Twin JSON blob (schema-flexible; includes email)
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -16,41 +18,91 @@ CREATE TABLE applications (
     user_id    TEXT NOT NULL,
     company    TEXT,
     role       TEXT,
-    status     TEXT,                  -- applied|interview|offer|rejected|withdrawn
-    extra      TEXT NOT NULL DEFAULT '{}',  -- JSON: fit_score, source, next_step...
+    status     TEXT,                      -- applied|interview|offer|rejected|withdrawn
+    extra      TEXT NOT NULL DEFAULT '{}',-- JSON: fit_score, source, next_step...
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX idx_applications_user ON applications(user_id);
+
+-- Normalised job pool written by Worker 1 (ingest_jobs.py).
+CREATE TABLE ingested_jobs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    source        TEXT NOT NULL,          -- greenhouse | lever | ashby
+    source_job_id TEXT NOT NULL,
+    title TEXT, company_name TEXT, description TEXT, location TEXT,
+    is_remote     INTEGER NOT NULL DEFAULT 0,
+    salary_text TEXT, apply_url TEXT, category TEXT,
+    fetched_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(source, source_job_id)         -- dedup key across repeat runs
+);
+-- indexes: category, is_remote, fetched_at
+
+-- Cached employer trust results, refreshed by Worker 2 (verify_employers.py).
+CREATE TABLE employer_trust_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_name TEXT,
+    domain       TEXT UNIQUE,
+    trust_score  INTEGER,                 -- computed in code (verify.py), never by an LLM
+    trust_level  TEXT,
+    signals      TEXT NOT NULL DEFAULT '{}',
+    evidence     TEXT NOT NULL DEFAULT '[]',
+    community_reports INTEGER NOT NULL DEFAULT 0,
+    last_checked_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Pre-computed rankings written by Worker 3 (match_users.py).
+CREATE TABLE matches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    TEXT NOT NULL,
+    job_id     INTEGER NOT NULL REFERENCES ingested_jobs(id),
+    fit_score  INTEGER,
+    reason     TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    notified    INTEGER NOT NULL DEFAULT 0,  -- additive ALTER migration; Worker 4
+    notified_at TEXT
+);
+CREATE UNIQUE INDEX idx_matches_unique ON matches(user_id, job_id);  -- anti-join idempotency
+
+-- Source registry — seeded once from data/job_sources.json; DB is source of
+-- truth after (manage via /admin/job-sources, not the JSON).
+CREATE TABLE job_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company TEXT NOT NULL,
+    ats     TEXT NOT NULL,                -- greenhouse | lever | ashby | career_page (idle)
+    token   TEXT NOT NULL,
+    priority INTEGER NOT NULL DEFAULT 5,  -- 10=hourly, 7=3h, 5=twice daily, 1=daily
+    category TEXT, region TEXT,
+    active  INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(ats, token)
+);
+
+-- Structured audit / analytics events (worker runs, deletions, ...).
+CREATE TABLE events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT, type TEXT NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 ```
 
 Design choices, deliberate:
-- **Profile is a JSON blob**, not columns — the extracted-profile shape evolves with the prompt. Only key it by user.
+- **Career Twin is a JSON blob**, not columns — the extracted shape evolves with the prompt. Only key it by user.
 - **`extra` JSON on applications** — known fields are columns (filter/sort), everything else rides along. `list_applications()` flattens extra into the returned dicts.
-- **Status set** is enforced at the API layer (`api/main.py StatusIn`), not by a CHECK constraint, so adding a status is a one-line change + test.
+- **Status set** is enforced at the API layer (`api/main.py StatusIn`), not by a CHECK constraint.
+- **Additive migrations only** — new columns arrive via `ALTER TABLE ... ADD COLUMN` guarded in `connect()` (see `notified`); never destructive.
+- **`sqlite3.connect(..., timeout=30)`** so API/worker write contention queues instead of erroring.
 
 ## Access rules
 
-- Every query filters by `user_id`. There are no cross-user reads. The PATCH ownership check in `api/main.py` is the pattern: verify `user_id` owns the row before mutating.
-- `db.clear_user()` implements the NDPA/GDPR deletion right and must delete from **every** table that gains a `user_id` column in the future.
+- Every user query filters by `user_id`. There are no cross-user reads. The PATCH ownership check in `api/main.py` is the pattern: verify `user_id` owns the row before mutating.
+- `db.clear_user()` implements the NDPA/GDPR deletion right and deletes from **every** user-keyed table (`career_twins`, `applications`, `matches`, `events`). Any new table with a `user_id` column must be added there in the same commit.
+- `ingested_jobs`, `employer_trust_records`, `job_sources` are shared (not user-keyed); only workers and admin endpoints write them.
 
-## Planned tables (build when the feature lands, not before)
+## Backups
 
-```sql
--- employer trust records: compounding verification results
-employer_trust_records(id, company_name, domain UNIQUE, trust_score,
-                       signals JSON, community_reports INT, last_checked_at)
-
--- ingested jobs: normalized pool from ingestion workers
-ingested_jobs(id, source, source_job_id, title, company_name, description,
-              location, is_remote, salary_text, apply_url, category,
-              fetched_at, UNIQUE(source, source_job_id))
-
--- matches: cached ranking output per user
-matches(id, user_id, job_id, fit_score, reason, created_at)
-
--- events: analytics/audit log (see 17-logging in 08-auth.md/05-services.md)
-events(id, user_id, type, payload JSON, created_at)
-```
+Worker 5 (`workers/backup_db.py`, nightly Render cron) snapshots the file with SQLite's online backup API, integrity-checks it, and uploads to Cloudflare R2 (`R2_*` env vars). A missing configuration is a loud non-zero exit, never a silent skip.
 
 ## Migration to Postgres (when triggered)
 
@@ -61,15 +113,15 @@ events(id, user_id, type, payload JSON, created_at)
 ## Acceptance criteria
 
 - `python3 test_db.py` and `python3 test_api.py` pass offline (in-memory SQLite).
-- No SQL exists outside `db.py` (grep check: `grep -rn "SELECT\|INSERT\|UPDATE " --include="*.py" .` hits only `db.py` and `api/main.py`'s ownership check).
+- No SQL exists outside `db.py`, the workers, and `api/main.py`'s ownership checks.
 - Deleting a user removes every row keyed to them.
 
 ## Edge cases
 
 - Malformed `extra` JSON → `list_applications` skips it silently (never raises).
-- Two writes from different threads → sqlite serializes; `check_same_thread=False` is required for shared connections (Streamlit/uvicorn threads).
+- Two writes from different threads → sqlite serializes; `check_same_thread=False` is required for shared connections (Streamlit/uvicorn threads); the 30s busy timeout absorbs worker/API contention.
 
 ## Future extensions
 
 - Soft-delete + retention window before hard delete.
-- `resumes` table + Supabase Storage when raw file retention is approved (privacy policy must be updated first).
+- `resumes` table + object storage when raw file retention is approved (privacy policy must be updated first).

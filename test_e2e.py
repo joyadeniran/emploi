@@ -280,5 +280,16 @@ ok &= check("extract_career_twin: end-to-end with fake model",
                 "location": "", "bio": "", "skills": ["Go", "Rust"],
                 "experience_years": "6–10 years"})
 
+from core import admin_allowed
+ok &= check("admin_allowed: no allowlist configured = unrestricted",
+            admin_allowed("anyone@x.com", "") and admin_allowed("anyone@x.com", None))
+ok &= check("admin_allowed: listed email passes (case/space-insensitive)",
+            admin_allowed("Joy@EmploiHQ.com", " joy@emploihq.com , ops@emploihq.com "))
+ok &= check("admin_allowed: unlisted email blocked",
+            not admin_allowed("attacker@evil.com", "joy@emploihq.com"))
+ok &= check("admin_allowed: empty email blocked when allowlist set",
+            not admin_allowed("", "joy@emploihq.com")
+            and not admin_allowed(None, "joy@emploihq.com"))
+
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

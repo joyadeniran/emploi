@@ -21,6 +21,104 @@ services:
       mountPath: /var/data
       sizeGB: 1
 
+  # Autonomous sourcing: high-priority boards hourly, then all boards daily.
+  # Each worker uses the same persistent DB path as the API.
+  - type: cron
+    name: emploi-ingest
+    runtime: python
+    plan: starter
+    schedule: "0 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 workers/ingest_jobs.py --db /var/data/emploi.sqlite3 --min-priority 8
+    envVars:
+      - key: EMPLOI_DB_PATH
+        value: /var/data/emploi.sqlite3
+      - key: PYTHON_VERSION
+        value: 3.12.0
+    disk:
+      name: emploi-data
+      mountPath: /var/data
+      sizeGB: 1
+
+  - type: cron
+    name: emploi-ingest-daily
+    runtime: python
+    plan: starter
+    schedule: "0 1 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 workers/ingest_jobs.py --db /var/data/emploi.sqlite3
+    envVars:
+      - key: EMPLOI_DB_PATH
+        value: /var/data/emploi.sqlite3
+      - key: PYTHON_VERSION
+        value: 3.12.0
+    disk:
+      name: emploi-data
+      mountPath: /var/data
+      sizeGB: 1
+
+  - type: cron
+    name: emploi-match
+    runtime: python
+    plan: starter
+    schedule: "0 2 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 workers/match_users.py --db /var/data/emploi.sqlite3
+    envVars:
+      - key: EMPLOI_DB_PATH
+        value: /var/data/emploi.sqlite3
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.12.0
+    disk:
+      name: emploi-data
+      mountPath: /var/data
+      sizeGB: 1
+
+  - type: cron
+    name: emploi-verify-employers
+    runtime: python
+    plan: starter
+    schedule: "30 1 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 workers/verify_employers.py --db /var/data/emploi.sqlite3
+    envVars:
+      - key: EMPLOI_DB_PATH
+        value: /var/data/emploi.sqlite3
+      - key: PYTHON_VERSION
+        value: 3.12.0
+    disk:
+      name: emploi-data
+      mountPath: /var/data
+      sizeGB: 1
+
+  # Nightly SQLite backup to Cloudflare R2 (runs after ingest/verify/match)
+  - type: cron
+    name: emploi-backup
+    runtime: python
+    plan: starter
+    schedule: "0 3 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 workers/backup_db.py --db /var/data/emploi.sqlite3
+    envVars:
+      - key: EMPLOI_DB_PATH
+        value: /var/data/emploi.sqlite3
+      - key: R2_ENDPOINT
+        sync: false
+      - key: R2_ACCESS_KEY
+        sync: false
+      - key: R2_SECRET_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.12.0
+    disk:
+      name: emploi-data
+      mountPath: /var/data
+      sizeGB: 1
+
   # Legacy Streamlit chat app / future internal admin console
   - type: web
     name: emploi
@@ -31,5 +129,7 @@ services:
     envVars:
       - key: GEMINI_API_KEY
         sync: false
+      - key: EMPLOI_ADMIN_CODE
+        sync: false          # REQUIRED in prod — without it the console is public
       - key: PYTHON_VERSION
         value: 3.12.0

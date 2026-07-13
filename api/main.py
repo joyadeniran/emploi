@@ -19,9 +19,11 @@ import os
 import secrets
 import sys
 import logging
+from collections import defaultdict
+from time import time
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File
+from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File, Request
 from pydantic import BaseModel, Field
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -47,6 +49,15 @@ mx_fn = verify.has_mx
 fetch_fn = verify.fetch_site
 
 _verify_cache: dict = {}
+_rate_counters: dict[str, list[float]] = defaultdict(list)
+RATE_LIMITS = {
+    "default": (60, 60),
+    "/verify": (10, 60),
+    "/career-twin/extract": (5, 300),
+    "/career-twin/upload": (5, 300),
+    "/matches": (30, 60),
+    "/applications/generate": (10, 3600),
+}
 
 
 def get_conn():
@@ -83,6 +94,25 @@ def auth(x_api_key: str = Header(default=""),
     if not x_user_id:
         raise HTTPException(status_code=401, detail="missing X-User-Id")
     return x_user_id
+
+
+def rate_limit(request: Request, user_id: str = Depends(auth)) -> str:
+    """Small in-process per-user guard for costly and probe-heavy endpoints.
+
+    The deployment intentionally uses one API process today. Counters reset on
+    restart; that limitation is preferable to leaving Gemini and DNS calls
+    unlimited until shared rate-limit infrastructure is warranted.
+    """
+    limit, window = RATE_LIMITS.get(request.url.path, RATE_LIMITS["default"])
+    now = time()
+    key = f"{user_id}:{request.url.path}"
+    calls = [stamp for stamp in _rate_counters[key] if now - stamp < window]
+    if len(calls) >= limit:
+        raise HTTPException(status_code=429,
+                            detail=f"Rate limit: {limit} requests per {window}s")
+    calls.append(now)
+    _rate_counters[key] = calls
+    return user_id
 
 
 # Upload / payload bounds — the wizard caps uploads at 10 MB client-side; the
@@ -146,6 +176,11 @@ class MatchIn(BaseModel):
     jobs: list[dict]
 
 
+class GenerateIn(BaseModel):
+    job: dict
+    include_review: bool = True
+
+
 # ---------------- endpoints ----------------
 @app.get("/health")
 def health():
@@ -175,7 +210,7 @@ def patch_career_twin(body: CareerTwinIn, user_id: str = Depends(auth)):
 
 
 @app.post("/career-twin/extract")
-def career_twin_extract(body: ResumeIn, user_id: str = Depends(auth)):
+def career_twin_extract(body: ResumeIn, user_id: str = Depends(rate_limit)):
     """CV text → structured Career Twin data (Gemini), merged into the store."""
     model = require_model()
     profile = run_extraction(core.extract_career_twin, model, body.cv_text)
@@ -192,7 +227,7 @@ def career_twin_extract(body: ResumeIn, user_id: str = Depends(auth)):
 @app.post("/career-twin/upload")
 async def career_twin_upload(
     file: UploadFile = File(...),
-    user_id: str = Depends(auth),
+    user_id: str = Depends(rate_limit),
 ):
     """PDF binary → extracted Career Twin (Gemini), merged into the store."""
     model = require_model()
@@ -251,7 +286,7 @@ def _legacy_resume_extract(body: ResumeIn, user_id: str = Depends(auth)):
 
 
 @app.post("/verify")
-def verify_endpoint(body: VerifyIn, user_id: str = Depends(auth)):
+def verify_endpoint(body: VerifyIn, user_id: str = Depends(rate_limit)):
     """Deterministic employer trust check. The only AI involvement is the
     narrow site-content consistency judgment, which degrades to None without
     a model — scores never come from an LLM."""
@@ -280,6 +315,29 @@ def create_app_row(body: ApplicationIn, user_id: str = Depends(auth)):
     return {"id": app_id}
 
 
+@app.post("/applications/generate")
+def generate_application_endpoint(body: GenerateIn,
+                                  user_id: str = Depends(rate_limit)):
+    """Generate an honest tailored draft from a stored Career Twin.
+
+    Reviewer mode costs one additional model call; the web UI must disclose
+    that before invoking this endpoint.
+    """
+    model = require_model()
+    profile = db.load_career_twin(get_conn(), user_id)
+    if not profile:
+        raise HTTPException(status_code=409,
+                            detail="complete Career Twin setup first")
+    job = body.job if isinstance(body.job, dict) else {}
+    job_text = str(job.get("description") or job.get("job_text") or "").strip()
+    if not job_text:
+        raise HTTPException(status_code=422, detail="job description is required")
+    company = str(job.get("company") or job.get("company_name") or "")
+    result = run_extraction(core.generate_application, model, profile, job_text,
+                            company, body.include_review)
+    return {"generated": result}
+
+
 @app.patch("/applications/{app_id}")
 def set_app_status(app_id: int, body: StatusIn, user_id: str = Depends(auth)):
     status = body.validated()
@@ -294,7 +352,7 @@ def set_app_status(app_id: int, body: StatusIn, user_id: str = Depends(auth)):
 
 
 @app.post("/matches")
-def matches_endpoint(body: MatchIn, user_id: str = Depends(auth)):
+def matches_endpoint(body: MatchIn, user_id: str = Depends(rate_limit)):
     """Rank jobs against the stored profile (Gemini)."""
     model = require_model()
     profile = db.load_career_twin(get_conn(), user_id)
@@ -353,7 +411,7 @@ def get_job(job_id: int, user_id: str = Depends(auth)):
 
 
 @app.get("/matches")
-def get_user_matches(limit: int = 50, user_id: str = Depends(auth)):
+def get_user_matches(limit: int = 50, user_id: str = Depends(rate_limit)):
     """Return the user's pre-computed match rankings (populated by the matching
     worker). Returns empty list if the worker hasn't run yet."""
     if limit < 1 or limit > 200:

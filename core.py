@@ -23,6 +23,20 @@ def load_skill(name: str) -> str:
     return _skill_cache[name]
 
 
+def admin_allowed(email, allowlist) -> bool:
+    """Admin-console access policy for the Streamlit app.
+
+    `allowlist` is a comma-separated email string (EMPLOI_ADMIN_EMAILS).
+    Empty/None allowlist = no restriction (open, as before). When an
+    allowlist is configured, only listed emails pass; a missing email fails
+    closed. Comparison is case- and whitespace-insensitive.
+    """
+    allowed = [e.strip().lower() for e in (allowlist or "").split(",") if e.strip()]
+    if not allowed:
+        return True
+    return (email or "").strip().lower() in allowed
+
+
 # ---------------- Prompts ----------------
 
 def _profile_block(profile: dict) -> str:

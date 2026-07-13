@@ -44,6 +44,7 @@ SOURCES_PATH = os.path.join(
 
 GREENHOUSE_BASE = "https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true"
 LEVER_BASE = "https://api.lever.co/v0/postings/{slug}?mode=json"
+ASHBY_BASE = "https://api.ashbyhq.com/posting-public/apiPostings/{token}"
 REQUEST_TIMEOUT = 15
 RATE_SLEEP = 0.5
 
@@ -180,9 +181,41 @@ def _ingest_lever(source: dict, conn, dry_run: bool):
     return len(postings), written
 
 
+def _ingest_ashby(source: dict, conn, dry_run: bool):
+    """Fetch public Ashby postings. The API has varied between a top-level
+    list and {jobs: [...]}; support both without coupling to optional fields."""
+    token = source["token"]
+    data = _fetch(ASHBY_BASE.format(token=token))
+    postings = data.get("jobs", []) if isinstance(data, dict) else data
+    if not isinstance(postings, list):
+        return 0, 0
+    written = 0
+    for posting in postings:
+        if not isinstance(posting, dict):
+            continue
+        job_id = str(posting.get("id") or posting.get("jobUrl") or _stable_id(token, posting.get("title", "")))
+        location = str(posting.get("location") or posting.get("locationName") or "")
+        description = _strip_html(str(posting.get("descriptionHtml") or posting.get("descriptionPlain") or posting.get("description") or ""))
+        fields = {"title": posting.get("title", ""),
+                  "company_name": source.get("company", token.replace("-", " ").title()),
+                  "description": description, "location": location,
+                  "is_remote": _is_remote(location) or _is_remote(description),
+                  "salary_text": None,
+                  "apply_url": posting.get("jobUrl") or posting.get("applyUrl") or "",
+                  "category": posting.get("department") or posting.get("team") or ""}
+        source_key = f"ashby/{token}"
+        if dry_run:
+            print(f"  [dry-run] {source_key} job {job_id}: {fields['title']}")
+        else:
+            db.upsert_job(conn, source_key, job_id, fields)
+        written += 1
+    return len(postings), written
+
+
 _ATS_HANDLERS = {
     "greenhouse": _ingest_greenhouse,
     "lever": _ingest_lever,
+    "ashby": _ingest_ashby,
 }
 
 

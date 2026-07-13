@@ -49,12 +49,19 @@ LEVER_RESPONSE = [
      "workplaceType": "remote", "categories": {"location": "Remote", "team": "Engineering"}},
 ]
 
+ASHBY_RESPONSE = {"jobs": [{"id": "ashby-1", "title": "ML Engineer",
+    "descriptionHtml": "<p>Build AI systems. Remote worldwide.</p>",
+    "location": "Remote", "jobUrl": "https://jobs.ashbyhq.com/test/ashby-1",
+    "department": "Engineering"}]}
+
 
 def fake_fetch(url: str):
     if "greenhouse.io" in url and "testco" in url:
         return GREENHOUSE_RESPONSE
     if "lever.co" in url and "stripe" in url:
         return LEVER_RESPONSE
+    if "ashbyhq.com" in url and "ashbyco" in url:
+        return ASHBY_RESPONSE
     # deadco / any unknown → simulated failure
     return None
 
@@ -68,6 +75,8 @@ SOURCES_JSON = json.dumps({
         {"company": "Dead Co", "ats": "greenhouse", "token": "deadco",
          "priority": 5, "region": "global", "active": True},
         {"company": "Stripe", "ats": "lever", "token": "stripe",
+         "priority": 7, "region": "global", "active": True},
+        {"company": "Ashby Co", "ats": "ashby", "token": "ashbyco",
          "priority": 7, "region": "global", "active": True},
         # career_page ATS: skipped gracefully
         {"company": "Career Page Co", "ats": "career_page", "token": "cpc",
@@ -102,23 +111,23 @@ with tempfile.TemporaryDirectory() as tmpdir:
 
     conn = db.connect(db_path)
     all_jobs = db.list_jobs(conn)
-    ok &= check("3 jobs written (2 greenhouse testco + 1 lever stripe)",
-                len(all_jobs) == 3)
+    ok &= check("4 jobs written (Greenhouse, Lever, and Ashby)", len(all_jobs) == 4)
     titles = [j["title"] for j in all_jobs]
     ok &= check("greenhouse job 'Senior Engineer' present", "Senior Engineer" in titles)
     ok &= check("lever job 'Backend Developer' present", "Backend Developer" in titles)
+    ok &= check("Ashby job is normalized", "ML Engineer" in titles)
     ok &= check("job_sources table seeded on first run",
                 len(db.list_job_sources(conn)) >= 3)
 
     remote_jobs = db.list_jobs(conn, remote_only=True)
     ok &= check("remote jobs correctly flagged", all(j["is_remote"] for j in remote_jobs))
-    ok &= check("at least 2 remote jobs", len(remote_jobs) >= 2)
+    ok &= check("at least 3 remote jobs", len(remote_jobs) >= 3)
 
     # Idempotency — second run must not grow the job count
     worker.SOURCES_PATH = sources_path
     ingest_run(db_path, dry_run=False, fetch_fn=fake_fetch)
     worker.SOURCES_PATH = _orig_sources
-    ok &= check("second run is idempotent (no duplicates)", db.count_jobs(conn) == 3)
+    ok &= check("second run is idempotent (no duplicates)", db.count_jobs(conn) == 4)
 
     # job_sources not re-seeded on second run (DB is source of truth)
     source_count = len(db.list_job_sources(conn))

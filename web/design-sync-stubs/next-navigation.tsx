@@ -1,11 +1,11 @@
 export function useRouter() {
   return {
-    push: (_url: string) => {},
-    replace: (_url: string) => {},
+    push: (url: string) => { void url; },
+    replace: (url: string) => { void url; },
     back: () => {},
     forward: () => {},
     refresh: () => {},
-    prefetch: (_url: string) => {},
+    prefetch: (url: string) => { void url; },
   };
 }
 
@@ -17,7 +17,8 @@ export function useSearchParams() {
   return new URLSearchParams();
 }
 
-export function redirect(_url: string): never {
+export function redirect(url: string): never {
+  void url;
   throw new Error("redirect() called in design-sync stub");
 }
 

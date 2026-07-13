@@ -101,11 +101,11 @@ export default async function LoginPage() {
 
         <p className="mt-6 text-center text-xs leading-relaxed text-faint">
           By continuing you agree to our{" "}
-          <a href="https://emploihq.com/terms.html" className="font-semibold text-muted hover:text-brand">
+          <a href="/terms" className="font-semibold text-muted hover:text-brand">
             Terms
           </a>{" "}
           and{" "}
-          <a href="https://emploihq.com/privacy.html" className="font-semibold text-muted hover:text-brand">
+          <a href="/privacy" className="font-semibold text-muted hover:text-brand">
             Privacy Policy
           </a>
           .<br />© 2026 Crost Limited · Emploi is a brand of Crost Limited (RC 9526947)

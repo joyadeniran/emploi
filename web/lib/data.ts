@@ -10,6 +10,10 @@ export type MatchLevel = "great" | "good" | "fair";
 
 export interface JobMatch {
   id: string;
+  /** Present for real matches returned by the job-ingestion API. */
+  jobId?: number;
+  applyUrl?: string;
+  description?: string;
   title: string;
   company: string;
   companyInitial: string;

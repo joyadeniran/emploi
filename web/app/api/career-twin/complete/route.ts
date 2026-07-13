@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { apiFetch, ApiUnavailableError, DEMO_MODE } from "@/lib/api";
+import { auth } from "@/auth";
 
 export async function POST() {
   if (DEMO_MODE) {
@@ -7,6 +8,10 @@ export async function POST() {
   }
 
   try {
+    const session = await auth();
+    if (session?.user?.email) {
+      await apiFetch("/career-twin", { method: "PATCH", body: JSON.stringify({ data: { email: session.user.email } }) });
+    }
     const data = await apiFetch<{ ok: boolean }>("/career-twin/complete", {
       method: "POST",
     });

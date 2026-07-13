@@ -14,20 +14,37 @@ The API is **not** browser-facing. The Next.js server calls it with:
 
 Deploy the API private to the web tier (Render private service / network rules). If it must be public, add per-user JWT verification (see 08-auth.md future work).
 
+## Rate limiting (in-process, per user per path)
+
+`rate_limit` dependency; counters reset on restart (single-process deployment, deliberate). Current limits: default 60/min; `/verify` 10/min; `/career-twin/extract` and `/career-twin/upload` 5 per 5 min; `/matches` 30/min; `/applications/generate` 10/hour. Exceeding returns `429`.
+
 ## Endpoints
 
 | Method & path | Body | Returns | Errors |
 |---|---|---|---|
 | `GET /health` | — | `{ok, version, ai, auth}` — `ai`: Gemini key present; `auth`: API key set | — |
-| `GET /profile` | — | `{profile: {...}}` (empty object if none) | 401 |
-| `PUT /profile` | `{profile: {...}}` | `{ok: true}` | 401 |
-| `POST /resume/extract` | `{cv_text}` (≥50 chars) | `{profile}` — extracted via Gemini AND persisted | 422 short/garbage, 503 no key |
-| `POST /verify` | `{company?, contact?, job_text?, role?}` (at least one of company/contact) | verify.py result: `{company, domain, score, level, evidence[], signals}` | 422, 401 |
+| `GET /career-twin` | — | `{career_twin: {...}}` (empty object if none) | 401 |
+| `PATCH /career-twin` | `{data: {...}}` | `{ok}` — partial merge into stored twin | 413 >64KB |
+| `POST /career-twin/extract` | `{cv_text}` (≥50 chars) | `{career_twin}` — Gemini extraction, merged + persisted | 422, 502, 503 no key, 429 |
+| `POST /career-twin/upload` | multipart PDF | `{career_twin}` — PDF→text→extraction | 413 >15MB, 422 image-only, 502/503, 429 |
+| `POST /career-twin/complete` | — | `{ok}` — sets `onboarding_complete` (workers gate on it) | 401 |
+| `GET /profile` | — | legacy alias for `GET /career-twin` | 401 |
+| `POST /resume/extract` | `{cv_text}` | legacy alias for extract | as above |
+| `POST /verify` | `{company?, contact?, job_text?, role?}` (≥1 of company/contact) | verify.py result: `{company, domain, score, level, evidence[], signals}` | 422, 401, 429 |
 | `GET /applications` | — | `{applications: [...]}` newest first, extra JSON flattened | 401 |
 | `POST /applications` | `{company, role, status, extra?}` | `{id}` (201) | 422 bad status |
+| `POST /applications/generate` | `{job: {description|job_text, company?}, include_review?}` | `{generated: {text, fit_score, ...}}` from stored twin | 409 no twin, 422 no description, 502/503, 429 |
 | `PATCH /applications/{id}` | `{status}` | `{ok}` | 404 not owner, 422 bad status |
-| `POST /matches` | `{jobs: [...]}` | `{matches: [...]}` ranked by fit | 409 no profile, 422 no jobs, 503 no key |
-| `DELETE /user` | — | `{ok}` — full NDPA/GDPR erasure | 401 |
+| `POST /matches` | `{jobs: [...]}` | `{matches: [...]}` ranked by fit (ad-hoc ranking) | 409 no twin, 422 no jobs, 503, 429 |
+| `GET /matches` | `?limit=` | `{matches: [...]}` pre-computed by Worker 3, best fit first, joined with job fields incl. description | 401 |
+| `GET /jobs` | `?remote_only&category&limit&offset` | `{jobs, total, limit, offset}` (limit ≤ 200) | 422 bad limit |
+| `GET /jobs/{id}` | — | single ingested job | 404 |
+| `DELETE /user` | — | `{ok}` — full NDPA/GDPR erasure across all user-keyed tables | 401 |
+| `GET /admin/job-sources` | — | source registry (auto-seeds from JSON on first call) | 401 |
+| `POST /admin/job-sources` | `{company, ats, token, priority?, ...}` | `{id}` (201) | 422 |
+| `PATCH /admin/job-sources/{id}` | partial fields | `{ok}` | 404 |
+| `PATCH /admin/job-sources/{id}/toggle` | — | `{ok, active}` | 404 |
+| `POST /admin/job-sources/seed` | — | `{ok, seeded}` — no-op if table non-empty | 401 |
 
 ### Example — trust check
 
@@ -44,13 +61,15 @@ X-API-Key: ...  X-User-Id: google-sub-123
 
 ## Behavior contracts
 
-- **AI degradation:** every Gemini-backed endpoint returns `503` with a message naming `GEMINI_API_KEY` when no key is configured. `/verify` still works fully (its only AI use — site-content consistency — degrades to "unknown").
+- **AI degradation:** every Gemini-backed endpoint returns `503` with a message naming `GEMINI_API_KEY` when no key is configured; a provider failure mid-call becomes a clean `502` (`run_extraction`), never a raw 500. `/verify` still works fully (its only AI use — site-content consistency — degrades to "unknown").
+- **Cost disclosure:** `/applications/generate` with `include_review` costs 3 Gemini calls (2 without). The web UI must disclose this before invoking — the generation dialog does.
 - **Verification caching:** per-process per-domain (`_verify_cache`); network probes run once per domain per process. Preserve when touching `/verify` (test asserts one probe).
 - **Injectable I/O:** `api.main.dns_fn / mx_fn / fetch_fn` and `app.state.model_factory` are the seams tests patch. Never call probes directly in endpoints.
+- **SQLite contention:** connections use a 30s busy timeout so nightly workers writing to the shared Render disk queue instead of 500ing the API.
 
 ## Acceptance criteria
 
-- `python3 test_api.py` — all checks pass offline (33 at time of writing: auth, round-trips, degradation, caching, ownership, deletion).
+- `python3 test_api.py` — all checks pass offline (auth, round-trips, degradation, caching, ownership, deletion, rate limits, generation paths).
 - OpenAPI docs render at `/docs` and match this table.
 
 ## Edge cases
@@ -60,6 +79,5 @@ X-API-Key: ...  X-User-Id: google-sub-123
 
 ## Future extensions
 
-- `POST /applications/generate` (cover letter + CV via `core.generate_application`) — endpoint shape is ready; ship with quota guards (reviewer pass doubles calls; UI must disclose call counts).
-- Rate limiting per user id (see 08-auth.md security).
-- `/jobs` read endpoints once the ingestion worker lands (05-services.md).
+- Per-user JWT verification if the API is ever exposed publicly.
+- Shared rate-limit store (Redis) when multi-instance; the in-process guard is a single-process design.
