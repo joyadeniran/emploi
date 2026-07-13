@@ -39,8 +39,52 @@ def admin_allowed(email, allowlist) -> bool:
 
 # ---------------- Prompts ----------------
 
+def _entries_or_text(value, fallback="") -> str:
+    """Normalize an experience/education field for prompt injection. Accepts
+    either a plain string (legacy profile schema) or a list of
+    {"summary": "..."} dicts (Career Twin wizard schema, see
+    build_career_twin_extraction_prompt). Falls back to `fallback`
+    (e.g. bio) when nothing structured is present, rather than rendering
+    a blank "None" line into the generation prompt."""
+    if isinstance(value, list) and value:
+        parts = []
+        for item in value:
+            s = str(item.get("summary", "")).strip() if isinstance(item, dict) else str(item).strip()
+            if s:
+                parts.append(s)
+        if parts:
+            return "; ".join(parts)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return str(fallback or "")
+
+
 def _profile_block(profile: dict) -> str:
-    return "\n".join(f"- {k.title()}: {profile.get(k)}" for k in PROFILE_KEYS)
+    """Render a candidate profile for prompt injection (generation, review,
+    CV, interview prep). Supports both the legacy flat profile schema
+    (name/title/location/experience/skills/education/goals, all strings)
+    and the Career Twin wizard schema (headline/current_role/bio/
+    career_goals, skills as a list, structured experience/education
+    entries) — a Career Twin dict must never silently render "None" for
+    fields that exist under a different key."""
+    skills = profile.get("skills", "")
+    if isinstance(skills, list):
+        skills = ", ".join(str(s) for s in skills)
+    goals = profile.get("goals")
+    if not goals:
+        goals = profile.get("career_goals", "")
+    if isinstance(goals, list):
+        goals = ", ".join(str(g) for g in goals)
+    lines = [
+        f"- Name: {profile.get('name', '')}",
+        f"- Title: {profile.get('title') or profile.get('headline') or profile.get('current_role', '')}",
+        f"- Location: {profile.get('location', '')}",
+        f"- Experience: {_entries_or_text(profile.get('experience'), profile.get('bio'))}",
+        f"- Skills: {skills}",
+        f"- Education: {_entries_or_text(profile.get('education'))}",
+        f"- Goals: {goals}",
+    ]
+    return "\n".join(lines)
 
 
 def build_prompt(profile: dict, job_text: str, company: str = "") -> str:
@@ -268,9 +312,12 @@ EXPERIENCE_BUCKETS = ["1 year", "2 years", "3 years", "4 years", "5 years",
 CAREER_TWIN_TEXT_KEYS = ["name", "headline", "current_role", "location", "bio"]
 
 
+MAX_TWIN_ENTRIES = 15  # defensive cap on experience/education list length
+
+
 def build_career_twin_extraction_prompt(cv_text: str) -> str:
     return f"""Extract a candidate profile from this CV text. Return ONLY a JSON object with exactly these keys:
-{{"name": "", "headline": "", "current_role": "", "experience_years": 0, "location": "", "skills": [], "bio": ""}}
+{{"name": "", "headline": "", "current_role": "", "experience_years": 0, "location": "", "skills": [], "bio": "", "experience": [], "education": []}}
 
 Guidance:
 - "headline": the candidate's professional identity in a few words (e.g. "Product Designer", "Backend Engineer").
@@ -278,6 +325,11 @@ Guidance:
 - "experience_years": total years of professional experience as an integer.
 - "skills": JSON array of individual skill strings.
 - "bio": 2-3 sentence first-person professional summary grounded ONLY in the CV.
+- "experience": JSON array of past roles, most recent first. Each item is
+  {{"summary": "one line: role, company, dates, and the single biggest
+  achievement or responsibility"}}. One item per distinct role.
+- "education": JSON array of qualifications. Each item is
+  {{"summary": "one line: degree/certification, institution, year"}}.
 - Use "" (or 0 / []) when unknown. Never invent facts not present in the CV.
 
 CV text:
@@ -311,6 +363,22 @@ def normalize_skills(value) -> list:
     return [s for s in (str(i).strip() for i in items) if s]
 
 
+def normalize_entries(value) -> list:
+    """Normalize an experience/education field into [{"summary": "..."}],
+    whatever shape the model sent it in (list of dicts, list of strings, or
+    a single string). Drops empty entries; caps length defensively."""
+    if isinstance(value, str):
+        value = [value] if value.strip() else []
+    if not isinstance(value, list):
+        return []
+    out = []
+    for item in value[:MAX_TWIN_ENTRIES]:
+        s = str(item.get("summary", "")).strip() if isinstance(item, dict) else str(item).strip()
+        if s:
+            out.append({"summary": s})
+    return out
+
+
 def parse_career_twin_json(text: str) -> dict:
     """Parse and normalize the model's career-twin JSON. Returns {} on garbage;
     every field is type-safe for the wizard (strings, list, bucket label)."""
@@ -320,6 +388,8 @@ def parse_career_twin_json(text: str) -> dict:
     twin = {k: str(raw.get(k, "") or "").strip() for k in CAREER_TWIN_TEXT_KEYS}
     twin["skills"] = normalize_skills(raw.get("skills"))
     twin["experience_years"] = normalize_experience_years(raw.get("experience_years"))
+    twin["experience"] = normalize_entries(raw.get("experience"))
+    twin["education"] = normalize_entries(raw.get("education"))
     # A JSON object with nothing usable in it is a failed extraction, not a twin.
     return twin if any(twin.values()) else {}
 

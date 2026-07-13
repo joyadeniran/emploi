@@ -21,6 +21,10 @@ import {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+interface TwinEntry {
+  summary: string;
+}
+
 interface CareerTwin {
   name: string;
   headline: string;
@@ -29,6 +33,8 @@ interface CareerTwin {
   location: string;
   skills: string[];
   bio: string;
+  experience: TwinEntry[];
+  education: TwinEntry[];
   preferred_roles: string[];
   preferred_industries: string[];
   employment_type: string;
@@ -49,6 +55,8 @@ const EMPTY_TWIN: CareerTwin = {
   location: "",
   skills: [],
   bio: "",
+  experience: [],
+  education: [],
   preferred_roles: [],
   preferred_industries: [],
   employment_type: "Full-time",
@@ -428,6 +436,15 @@ export default function CreateCareerTwinPage() {
               ? v.split(",").map((s) => s.trim()).filter(Boolean)
               : [];
           if (arr.length) (next[key] as string[]) = arr;
+        } else if (key === "experience" || key === "education") {
+          // core.normalize_entries always sends [{"summary": "..."}]; guard
+          // defensively in case an older API build sends plain strings.
+          const entries = Array.isArray(v)
+            ? v
+                .map((item) => (typeof item === "string" ? { summary: item } : item as TwinEntry))
+                .filter((item) => item && typeof item.summary === "string" && item.summary.trim().length > 0)
+            : [];
+          if (entries.length) (next[key] as TwinEntry[]) = entries;
         } else if (typeof v === "string" || typeof v === "number") {
           (next[key] as string | number) = v as string | number;
         }
@@ -874,13 +891,22 @@ export default function CreateCareerTwinPage() {
                     Something went wrong while saving. Your answers are still here — try again.
                   </p>
                 </div>
-                <button
-                  onClick={doActivate}
-                  className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-brand-violet to-brand-indigo px-8 py-3.5 text-sm font-bold text-white shadow-pop transition-transform hover:-translate-y-0.5"
-                >
-                  <Sparkles size={16} />
-                  Try again
-                </button>
+                <div className="flex items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { setActivateError(false); setStep(7); }}
+                    className="rounded-full border border-line px-6 py-3.5 text-sm font-bold text-muted transition hover:border-brand/40 hover:text-brand"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={doActivate}
+                    className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-brand-violet to-brand-indigo px-8 py-3.5 text-sm font-bold text-white shadow-pop transition-transform hover:-translate-y-0.5"
+                  >
+                    <Sparkles size={16} />
+                    Try again
+                  </button>
+                </div>
               </>
             ) : (
               <>

@@ -238,9 +238,9 @@ docx = make_docx(CANNED.format(score=88), title="Application - Acme")
 ok &= check("DOCX bytes valid (zip magic)", docx[:2] == b"PK" and len(docx) > 1000)
 
 # 11. Career Twin extraction (wizard-schema, normalized)
-from core import (parse_career_twin_json, normalize_skills,
+from core import (parse_career_twin_json, normalize_skills, normalize_entries,
                   normalize_experience_years, build_career_twin_extraction_prompt,
-                  extract_career_twin)
+                  extract_career_twin, _profile_block)
 
 ok &= check("twin: fenced JSON parsed + normalized",
             parse_career_twin_json(
@@ -248,7 +248,7 @@ ok &= check("twin: fenced JSON parsed + normalized",
                 '"experience_years":4,"skills":["Figma","UX"]}\n```')
             == {"name": "Ada", "headline": "Designer", "current_role": "",
                 "location": "", "bio": "", "skills": ["Figma", "UX"],
-                "experience_years": "4 years"})
+                "experience_years": "4 years", "experience": [], "education": []})
 ok &= check("twin: garbage -> {}", parse_career_twin_json("not json") == {})
 ok &= check("twin: empty object -> {} (failed extraction, not a twin)",
             parse_career_twin_json('{"name":"","skills":[]}') == {})
@@ -267,7 +267,31 @@ ok &= check("twin prompt: carries ground-truth constraint",
             "Never invent" in build_career_twin_extraction_prompt("cv"))
 ok &= check("twin prompt: asks for wizard keys",
             all(k in build_career_twin_extraction_prompt("cv")
-                for k in ["headline", "current_role", "experience_years", "bio"]))
+                for k in ["headline", "current_role", "experience_years", "bio",
+                          "experience", "education"]))
+
+# 11a. Structured experience/education entries (HANDOVER §gap: these were
+# never extracted at all before; the wizard's Career Twin page has always
+# expected [{"summary": "..."}] but nothing produced it).
+ok &= check("normalize_entries: dicts with summary kept",
+            normalize_entries([{"summary": "PM at Acme (2020-2023)"}, {"summary": ""}])
+            == [{"summary": "PM at Acme (2020-2023)"}])
+ok &= check("normalize_entries: plain strings coerced to {summary}",
+            normalize_entries(["BSc Physics, UNILAG"]) == [{"summary": "BSc Physics, UNILAG"}])
+ok &= check("normalize_entries: single string -> one-item list",
+            normalize_entries("Just one line") == [{"summary": "Just one line"}])
+ok &= check("normalize_entries: garbage -> []", normalize_entries(42) == [])
+ok &= check("normalize_entries: caps at MAX_TWIN_ENTRIES",
+            len(normalize_entries([{"summary": f"role {i}"} for i in range(30)])) == 15)
+
+ok &= check("twin: experience/education parsed from fenced JSON",
+            parse_career_twin_json(
+                '{"name":"Ada","experience":[{"summary":"Designer at Acme"}],'
+                '"education":[{"summary":"BSc Design"}]}')
+            == {"name": "Ada", "headline": "", "current_role": "", "location": "",
+                "bio": "", "skills": [], "experience_years": "",
+                "experience": [{"summary": "Designer at Acme"}],
+                "education": [{"summary": "BSc Design"}]})
 
 class _TwinModel:
     def generate_content(self, prompt):
@@ -278,7 +302,39 @@ ok &= check("extract_career_twin: end-to-end with fake model",
             extract_career_twin(_TwinModel(), "cv text")
             == {"name": "Tolu", "headline": "", "current_role": "",
                 "location": "", "bio": "", "skills": ["Go", "Rust"],
-                "experience_years": "6–10 years"})
+                "experience_years": "6–10 years", "experience": [], "education": []})
+
+# 11b. _profile_block must render a Career Twin (wizard schema) correctly —
+# regression for the bug where PROFILE_KEYS (title/experience/education/goals)
+# silently rendered "None" for every wizard-onboarded user's generated
+# applications, since the wizard uses headline/current_role/bio/career_goals
+# and structured experience/education entries instead.
+TWIN_PROFILE = {
+    "name": "Joy Adeniran", "headline": "Marketing Manager", "current_role": "MM at Acme",
+    "location": "Lagos", "bio": "8 years building brands and driving demand.",
+    "skills": ["Brand Building", "Demand Generation"],
+    "experience": [{"summary": "Marketing Manager at Acme (2019-2023)"}],
+    "education": [{"summary": "BSc Marketing, UNILAG"}],
+    "career_goals": ["Career Growth", "Remote work"],
+}
+twin_block = _profile_block(TWIN_PROFILE)
+ok &= check("_profile_block: wizard headline used as title", "Marketing Manager" in twin_block)
+ok &= check("_profile_block: wizard skills list joined", "Brand Building" in twin_block and "Demand Generation" in twin_block)
+ok &= check("_profile_block: structured experience entry rendered",
+            "Marketing Manager at Acme (2019-2023)" in twin_block)
+ok &= check("_profile_block: structured education entry rendered", "BSc Marketing, UNILAG" in twin_block)
+ok &= check("_profile_block: career_goals rendered as goals", "Career Growth" in twin_block and "Remote work" in twin_block)
+ok &= check("_profile_block: no field silently renders 'None'", "None" not in twin_block)
+
+# When a wizard twin has no structured experience, fall back to bio rather
+# than an empty "Experience:" line.
+BIO_ONLY_TWIN = {"name": "Ada", "headline": "Designer", "bio": "Ships pixel-perfect UI.", "skills": []}
+ok &= check("_profile_block: falls back to bio when no structured experience",
+            "Ships pixel-perfect UI." in _profile_block(BIO_ONLY_TWIN))
+
+# The legacy flat-string profile schema (still used by the Streamlit
+# extract_profile path) must keep working unchanged.
+ok &= check("_profile_block: legacy flat-string schema unaffected", "None" not in _profile_block(PROFILE))
 
 from core import admin_allowed
 ok &= check("admin_allowed: no allowlist configured = unrestricted",
