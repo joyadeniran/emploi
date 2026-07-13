@@ -35,7 +35,7 @@ Each worker is a standalone script, runnable manually (`python3 workers/<name>.p
 
 ### Worker 4 — Notifications
 - **Inputs:** new `matches`, application status nudges.
-- **Output:** email via Resend (template per event type). WhatsApp/push are future.
+- **Output:** email via Brevo transactional API (template per event type). WhatsApp/push are future.
 - **Schedule:** after Worker 3. **Rule:** max one digest email per user per day.
 
 ## Error handling policy (all services)

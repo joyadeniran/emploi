@@ -57,7 +57,7 @@ Deployment order: API → verify `/health` shows `{"ai": true, "auth": true}` �
 ## Roadmap
 
 - **v1 — Candidates (now):** everything above; then job-ingestion worker → real matches on the dashboard; CV upload in web; generation endpoint with quota guards; Settings page with data deletion.
-- **v1.x — Ops:** turn `app.py` into the internal admin console (trust review queue, prompt testing, ingestion monitoring); PostHog; Resend notifications.
+- **v1.x — Ops:** turn `app.py` into the internal admin console (trust review queue, prompt testing, ingestion monitoring); PostHog; Brevo notifications.
 - **v2 — Recruiters:** shortlisting workspace over verified, interview-ready candidates (sidebar section already reserved).
 - **v3 — Employers:** verified-employer program; the trust ledger becomes the network moat.
 

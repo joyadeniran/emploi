@@ -76,6 +76,29 @@ services:
       mountPath: /var/data
       sizeGB: 1
 
+  # Sends one digest email per user with unnotified matches (after Worker 3).
+  # Needs a verified Brevo sender; missing config = safe no-op, never a false "sent".
+  - type: cron
+    name: emploi-notify
+    runtime: python
+    plan: starter
+    schedule: "30 2 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 workers/notify_users.py --db /var/data/emploi.sqlite3
+    envVars:
+      - key: EMPLOI_DB_PATH
+        value: /var/data/emploi.sqlite3
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.12.0
+    disk:
+      name: emploi-data
+      mountPath: /var/data
+      sizeGB: 1
+
   - type: cron
     name: emploi-verify-employers
     runtime: python

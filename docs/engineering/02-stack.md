@@ -23,7 +23,7 @@
 | Need | Choice | Trigger |
 |---|---|---|
 | Managed Postgres + storage | Supabase | Multi-instance API, resume file storage, or RLS needs |
-| Email | Resend | Notification worker (14-notifications in 05-services.md) |
+| Email | Brevo | Notification worker (14-notifications in 05-services.md) |
 | Analytics | PostHog | Post-launch funnel measurement |
 | Embeddings/search | Gemini Embedding + pgvector | Matching v2 |
 | Queue/cron | Render Cron Jobs first; a real queue only if cron is insufficient | Job ingestion worker |

@@ -265,13 +265,11 @@ The ATS-domain problem is a real constraint. Document it honestly. The Trust Che
 
 ---
 
-## 5. Worker 4 — Notifications (MISSING ENTIRELY)
+## 5. Worker 4 — Notifications (BUILT — sender is Brevo, not Resend)
 
-**Gap:** Users have no way to know when new matches arrive unless they log in. This is the feature that makes the platform feel alive between sessions.
+**Status update:** `workers/notify_users.py` is now built and tested (`test_notify_worker.py`), the `notified`/`notified_at` columns exist on `matches`, the Career Twin captures `email` on activation, and `render.yaml` has a nightly `emploi-notify` cron. The provider decision below was changed from Resend to **Brevo** — the rest of this section is left as the original design narrative for context; read "Brevo" wherever it says "Resend".
 
-**What to build:** `workers/notify_users.py`
-
-**Dependencies:** Resend account at resend.com (`pip install resend`). API key in env as `RESEND_API_KEY`. Email domain must be `emploihq.com` with DNS records verified in Resend.
+**Dependencies:** Brevo account at brevo.com. Set `BREVO_API_KEY` and `BREVO_SENDER_EMAIL` (a verified sender) as env vars on the `emploi-notify` cron. `workers/notify_users.py` posts directly to `https://api.brevo.com/v3/smtp/email` using `requests` (already a dependency) — no SDK needed. Email domain must be `emploihq.com` with DNS records (SPF/DKIM) verified in Brevo before real sending will land in inboxes rather than spam.
 
 **Logic:**
 
@@ -322,7 +320,7 @@ ALTER TABLE matches ADD COLUMN notified_at TEXT;
 
 Add to `_SCHEMA` in `db.py` as separate `CREATE INDEX IF NOT EXISTS` + the columns above via a migration helper function. Do NOT add `ALTER TABLE` inside `_SCHEMA` (it runs on every connect and will error on the second run). Instead add `db._migrate(conn)` called from `connect()` that does `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` using a try/except.
 
-**Email template:** Plain text is fine for v1. Resend supports React Email for rich templates — that's v1.x. For now:
+**Email template:** Plain text is fine for v1 (the shipped `notify_users.py` sends `textContent` only). Brevo supports rich HTML templates via its template API — that's v1.x. For now:
 
 ```
 Subject: Your Career Twin found {N} new jobs for you
@@ -689,34 +687,34 @@ The API logs a loud `WARNING: EMPLOI_API_KEY not set — API running in OPEN DEV
 From `docs/engineering/09-deployment.md` and the gaps above:
 
 ### Technical (Developer)
-- [ ] Wire real matches into dashboard and matches page (§1)
-- [ ] Wire real Career Twin data into career-twin page (§1c)
-- [ ] Fix ApplyButton to use real job data (§2)
-- [ ] Add cron services to `render.yaml` for Worker 1 + Worker 3 (§3)
-- [ ] Build Worker 2 — verify employers (§4)
-- [ ] Build Worker 4 — email notifications, requires Resend account (§5)
-- [ ] Build application generation endpoint + UI (§6)
-- [ ] Build Settings page with data deletion (§7)
-- [ ] Add rate limiting to the API (§8)
-- [ ] Add CI workflow (§12)
-- [ ] Implement DB backup (§13)
-- [ ] Add Ashby ATS handler (§16)
-- [ ] Remove `AUTH_DEV_LOGIN=true` from production Vercel env
-- [ ] Confirm `EMPLOI_API_KEY` is set in Render
-- [ ] Update `docs/engineering/03-database.md` and `04-api.md` to reflect current state
+- [x] Wire real matches into dashboard and matches page (§1)
+- [x] Wire real Career Twin data into career-twin page (§1c)
+- [x] Fix ApplyButton to use real job data (§2)
+- [x] Add cron services to `render.yaml` for Worker 1 + Worker 3 (§3)
+- [x] Build Worker 2 — verify employers (§4)
+- [x] Build Worker 4 — email notifications (Brevo, not Resend — decision changed) (§5)
+- [x] Build application generation endpoint + UI (§6)
+- [x] Build Settings page with data deletion (§7)
+- [x] Add rate limiting to the API (§8)
+- [x] Add CI workflow (§12)
+- [x] Implement DB backup (§13)
+- [x] Add Ashby ATS handler (§16)
+- [ ] Remove `AUTH_DEV_LOGIN=true` from production Vercel env — verify in the Vercel dashboard, not committed here
+- [ ] Confirm `EMPLOI_API_KEY` is set in Render — verify in the Render dashboard
+- [x] Update `docs/engineering/03-database.md` and `04-api.md` to reflect current state
 
 ### Legal / Business
-- [ ] Draft privacy policy covering CV/profile storage, NDPA/GDPR rights, email notifications (§9)
-- [ ] Draft terms of service
-- [ ] Add privacy + terms links to app footer and login page
-- [ ] Publish Google OAuth consent screen (requires privacy policy URL) (§11)
+- [x] Draft privacy policy covering CV/profile storage, NDPA/GDPR rights, email notifications (§9)
+- [x] Draft terms of service
+- [x] Add privacy + terms links to app footer and login page
+- [ ] Publish Google OAuth consent screen (privacy policy URL now exists — submit the form) (§11)
 - [ ] Domain emploihq.com → static landing page live (Hostinger)
 - [ ] Verify HTTPS on all three tiers
 
 ### Operational
-- [ ] Resend account created, emploihq.com domain verified for email sending
-- [ ] Cloudflare R2 bucket created for DB backups (or Litestream configured)
-- [ ] First manual worker run verified end-to-end (jobs → matches → visible on dashboard)
+- [ ] Brevo account created, `BREVO_API_KEY`/`BREVO_SENDER_EMAIL` set on the `emploi-notify` cron, emploihq.com domain SPF/DKIM verified in Brevo for real sending
+- [ ] Cloudflare R2 bucket created for DB backups (`R2_*` env vars set on `emploi-backup`) — `workers/backup_db.py` is built and tested but has no live bucket configured yet
+- [ ] First manual worker run verified end-to-end in production (jobs → matches → visible on dashboard) — built and offline-tested, not yet confirmed against the live Render disk
 - [ ] PostHog (or equivalent) installed for usage analytics
 - [ ] Alert/monitor on the API health endpoint (UptimeRobot is free)
 
@@ -755,7 +753,7 @@ These were deliberate choices. The context for each is in `CLAUDE.md` and the sp
 | Render Cron (Worker 1 + 3) | $7–14 | 1–2 starter cron services at $7 each |
 | Vercel (web tier) | $0 | Hobby tier; upgrade at $20/mo if team needed |
 | Gemini API | ~$0.02/application, ~$0.001/match batch | 2.5-flash pricing; monitor at scale |
-| Resend (email) | $0 for 3k/mo | Sufficient for early users |
+| Brevo (email) | $0 for 300/day (~9k/mo) | Sufficient for early users; upgrade if digest volume grows |
 | Cloudflare R2 (DB backups) | $0 for <10GB | |
 | **Total** | **~$15–30/mo** | Before significant user volume |
 
