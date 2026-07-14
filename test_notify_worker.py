@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory() as d:
 
 # ---- Brevo sender (mocked HTTP, no real network/API key) -------------------
 with patch("requests.post") as mock_post:
-    mock_post.return_value = MagicMock(status_code=201, raise_for_status=lambda: None)
+    mock_post.return_value = MagicMock(status_code=201, ok=True)
     send = brevo_send_fn("fake-key", "hello@emploihq.com")
     send("user@example.com", "subject", "body")
     args, kwargs = mock_post.call_args
@@ -37,14 +37,17 @@ with patch("requests.post") as mock_post:
           and kwargs["json"]["textContent"] == "body")
 
 with patch("requests.post") as mock_post:
-    mock_post.return_value = MagicMock(status_code=401)
-    mock_post.return_value.raise_for_status.side_effect = Exception("401 unauthorized")
+    mock_post.return_value = MagicMock(
+        status_code=401, ok=False,
+        text='{"code":"unauthorized","message":"Key not found"}')
     send = brevo_send_fn("bad-key", "hello@emploihq.com")
     try:
         send("user@example.com", "s", "b")
         check("brevo_send_fn raises on a failed send", False)
-    except Exception:
+    except RuntimeError as exc:
         check("brevo_send_fn raises on a failed send", True)
+        check("brevo_send_fn surfaces Brevo's actual error body, not just the status code",
+              "Key not found" in str(exc))
 
 check("_get_send_fn returns None when BREVO_API_KEY/SENDER_EMAIL unset",
       _get_send_fn() is None)

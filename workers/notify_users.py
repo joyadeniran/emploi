@@ -28,7 +28,12 @@ def brevo_send_fn(api_key: str, sender_email: str, sender_name: str = "Emploi Ca
             },
             timeout=10,
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            # Brevo's error body names the real cause (invalid key, IP not
+            # whitelisted, unverified sender, ...) — raise_for_status()
+            # alone discards it, leaving only a generic "401 Unauthorized"
+            # that's useless for diagnosing which of those it actually is.
+            raise RuntimeError(f"Brevo {resp.status_code}: {resp.text[:300]}")
     return _send
 
 
