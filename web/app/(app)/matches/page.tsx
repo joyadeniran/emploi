@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { BadgeCheck, Bookmark, Info } from "lucide-react";
 import { FitRing } from "@/components/ProgressRing";
 import { ApplyButton } from "@/components/ApplyButton";
@@ -27,10 +28,18 @@ export default async function MatchesPage() {
 
   return (
     <div className="mx-auto max-w-5xl">
-      <h1 className="rise-in text-2xl font-extrabold tracking-tight sm:text-3xl">Job Matches</h1>
-      <p className="mt-1 text-sm text-muted">
-        Every opportunity is scored honestly against your real experience. Trust checks remain visible evidence, never an assumption.
-      </p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="rise-in text-2xl font-extrabold tracking-tight sm:text-3xl">Job Matches</h1>
+          <p className="mt-1 text-sm text-muted">
+            Every opportunity is scored honestly against your real experience. Trust checks remain visible evidence, never an assumption.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Link href="/jobs" className="rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft">Browse all jobs</Link>
+          <Link href="/import-job" className="rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft">Import a job</Link>
+        </div>
+      </div>
       {sampleData ? <p className="mt-4 inline-flex items-center gap-2 rounded-xl bg-amber-soft px-4 py-2.5 text-xs font-semibold text-ink"><Info size={14} />Showing sample data — the Emploi API is unavailable.</p> : null}
       {error ? <p role="alert" className="mt-4 rounded-xl bg-warn-soft px-4 py-3 text-sm font-semibold text-warn">{error}</p> : null}
 

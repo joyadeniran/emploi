@@ -168,6 +168,28 @@ chat_turn(m, PROFILE, "question", "user: earlier\nassistant: earlier reply")
 ok &= check("chat prompt includes history + question",
             "earlier reply" in m.calls[0] and "question" in m.calls[0])
 
+# 7d. apply_chat_updates: legacy chat keys merged onto the Career Twin schema
+from core import apply_chat_updates
+twin_for_chat = {"headline": "Marketing Manager", "skills": ["SEO"],
+                 "career_goals": ["Career Growth"],
+                 "experience": [{"summary": "MM at Acme"}]}
+apply_chat_updates(twin_for_chat, {"goals": "Remote-first roles",
+                                   "skills": "Media Buying, SEO",
+                                   "title": "Senior Marketing Manager",
+                                   "experience": "Led rebrand at Grand Oak",
+                                   "location": "Lagos"})
+ok &= check("chat updates: goal appended, existing kept",
+            twin_for_chat["career_goals"] == ["Career Growth", "Remote-first roles"])
+ok &= check("chat updates: skills merged case-insensitively (no dupe SEO)",
+            twin_for_chat["skills"] == ["SEO", "Media Buying"])
+ok &= check("chat updates: title maps to headline",
+            twin_for_chat["headline"] == "Senior Marketing Manager")
+ok &= check("chat updates: experience appended as entry",
+            twin_for_chat["experience"][-1] == {"summary": "Led rebrand at Grand Oak"})
+ok &= check("chat updates: location set", twin_for_chat["location"] == "Lagos")
+ok &= check("chat updates: empty/unknown values are no-ops",
+            apply_chat_updates({"name": "Ada"}, {"goals": "  ", "bogus": "x"}) == {"name": "Ada"})
+
 # 8. Intent routing
 ok &= check("pdf upload -> process_pdf", detect_intent("", has_pdf=True)[0] == "process_pdf")
 ok &= check("'apply 2' -> apply('2')", detect_intent("apply 2") == ("apply", "2"))

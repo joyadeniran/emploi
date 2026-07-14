@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowRight, CheckCircle2, Circle, Info, Loader2 } from "lucide-react";
+import { ArrowRight, CheckCircle2, Circle, Info } from "lucide-react";
 import { auth } from "@/auth";
 import { applications as demoApplications, firstName, greeting, matches as demoMatches, statusMeta, type ApplicationStatus } from "@/lib/data";
 import { ApiUnavailableError, apiFetch, DEMO_MODE, toMatchCard, type ApiMatch } from "@/lib/api";
@@ -49,7 +49,36 @@ export default async function DashboardPage() {
   }
 
   if (!sampleData && cards.length === 0) {
-    return <div className="flex flex-col items-center justify-center py-24 text-center"><h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">{greeting()}, {name}.</h1><p className="mt-3 text-lg font-semibold text-muted">Your Career Twin is getting to work.</p><div className="mt-8 w-full max-w-sm space-y-3 text-left">{["Scanning new opportunities...", "Building your first recommendations...", "Verifying employers..."].map((line) => <div key={line} className="flex items-center gap-3 rounded-xl border border-line bg-white px-4 py-3 shadow-card"><Loader2 size={16} className="animate-spin text-brand" /><span className="text-sm font-semibold">{line}</span></div>)}</div><p className="mt-8 text-sm text-muted">Come back after the next matching run for your first opportunities.</p></div>;
+    // Honest empty state: nothing is literally running while the user looks
+    // at this page — jobs refresh hourly and matching runs nightly. Say so,
+    // and give them things they CAN do right now instead of a fake spinner.
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">{greeting()}, {name}.</h1>
+        <p className="mt-3 text-lg font-semibold text-muted">Your Career Twin is set up and on duty.</p>
+        <div className="mt-8 w-full max-w-md space-y-3 text-left">
+          {[
+            "New jobs are pulled from verified boards every hour",
+            "Your Twin scores fresh jobs against your profile every night",
+            "You'll get an email digest when your first matches land",
+          ].map((line) => (
+            <div key={line} className="flex items-center gap-3 rounded-xl border border-line bg-white px-4 py-3 shadow-card">
+              <CheckCircle2 size={16} className="shrink-0 text-good" />
+              <span className="text-sm font-semibold">{line}</span>
+            </div>
+          ))}
+        </div>
+        <p className="mt-8 text-sm text-muted">Don&apos;t want to wait for the nightly run?</p>
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
+          <Link href="/jobs" className="rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-white transition-transform hover:-translate-y-0.5">
+            Browse live jobs now
+          </Link>
+          <Link href="/import-job" className="rounded-xl border border-line bg-white px-5 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft">
+            Import a job you found
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   const completed = strength(twin);

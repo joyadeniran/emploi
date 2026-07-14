@@ -23,7 +23,7 @@ from collections import defaultdict
 from time import time
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File, Request, Response
 from pydantic import BaseModel, Field
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -62,6 +62,7 @@ RATE_LIMITS = {
     "/career-twin/upload": (5, 300),
     "/matches": (30, 60),
     "/applications/generate": (10, 3600),
+    "/chat": (20, 60),
 }
 
 
@@ -200,6 +201,13 @@ class MatchIn(BaseModel):
 class GenerateIn(BaseModel):
     job: dict
     include_review: bool = True
+
+
+class ChatIn(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    # [{"role": "user"|"assistant", "content": "..."}]; capped so a hostile
+    # client can't stuff the prompt.
+    history: list[dict] = Field(default_factory=list, max_length=30)
 
 
 # ---------------- endpoints ----------------
@@ -385,6 +393,27 @@ def matches_endpoint(body: MatchIn, user_id: str = Depends(rate_limit)):
     return {"matches": run_extraction(core.match_jobs, model, profile, body.jobs)}
 
 
+@app.post("/chat")
+def chat_endpoint(body: ChatIn, user_id: str = Depends(rate_limit)):
+    """One Career Twin chat turn (Gemini). Profile facts the candidate states
+    are merged into their stored twin via core.apply_chat_updates — appended,
+    never overwritten wholesale."""
+    model = require_model()
+    conn = get_conn()
+    twin = db.load_career_twin(conn, user_id)
+    if not twin:
+        raise HTTPException(status_code=409,
+                            detail="no Career Twin yet — complete setup first")
+    history = "\n".join(
+        f"{'user' if h.get('role') == 'user' else 'assistant'}: {str(h.get('content', ''))[:1000]}"
+        for h in body.history if str(h.get("content", "")).strip())
+    reply, updates = run_extraction(core.chat_turn, model, twin, body.message, history)
+    if updates:
+        core.apply_chat_updates(twin, updates)
+        db.save_career_twin(conn, user_id, twin)
+    return {"reply": reply, "profile_updates": updates}
+
+
 @app.delete("/user")
 def delete_user(user_id: str = Depends(auth)):
     """NDPA/GDPR deletion right — removes everything stored for the user."""
@@ -407,17 +436,19 @@ class JobsQuery(BaseModel):
 def list_ingested_jobs(
     remote_only: bool = False,
     category: Optional[str] = None,
+    q: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
     user_id: str = Depends(auth),
 ):
-    """Return ingested jobs with optional filters. Newest first."""
+    """Return ingested jobs with optional filters (incl. free-text q). Newest first."""
     if limit < 1 or limit > 200:
         raise HTTPException(status_code=422, detail="limit must be 1–200")
+    q = (q or "").strip()[:200] or None
     conn = get_conn()
     jobs = db.list_jobs(conn, remote_only=remote_only, category=category,
-                        limit=limit, offset=offset)
-    total = db.count_jobs(conn, remote_only=remote_only, category=category)
+                        q=q, limit=limit, offset=offset)
+    total = db.count_jobs(conn, remote_only=remote_only, category=category, q=q)
     return {"jobs": jobs, "total": total, "limit": limit, "offset": offset}
 
 
@@ -513,34 +544,76 @@ def admin_seed_sources(user_id: str = Depends(auth)):
 # Worker triggers — Render Cron Jobs can't mount the persistent disk that
 # holds the SQLite file (a Render product limitation), so the scheduled
 # workers run in-process here instead; render.yaml's cron services just curl
-# these endpoints on schedule. Runs are synchronous and block the calling
-# request until the worker finishes, so a cron failure means the worker
-# genuinely failed — same honesty guarantee each worker already has on its
-# own CLI. This does mean a scheduled run briefly ties up this process; if
-# traffic ever makes that noticeable, move to a real queue instead.
+# these endpoints on schedule.
+#
+# Heavy workers (ingest, match, verify-employers) run in a BACKGROUND THREAD
+# and the endpoint returns 202 immediately: Render's HTTP proxy hard-kills
+# responses after ~100s, and a full match run (hundreds of jobs × Gemini
+# calls) or daily ingest routinely exceeds that — a synchronous trigger
+# reported false failures for runs that actually finished. The honest
+# outcome record is the worker's own event row (JobIngestionRun /
+# MatchingWorkerRun / VerificationWorkerRun in `events`) plus the service
+# log; a cron "success" now means "trigger accepted". `?background=false`
+# forces the old synchronous behavior for small runs and tests. Notify and
+# backup finish in seconds and stay synchronous.
 # ---------------------------------------------------------------------------
 
-@app.post("/admin/run/ingest")
-def admin_run_ingest(min_priority: int = 1, _: None = Depends(admin_key_auth)):
+def _run_in_background(label: str, fn, *args, **kwargs):
+    import threading
+
+    def target():
+        try:
+            result = fn(*args, **kwargs)
+            log.info("background %s finished: %s", label, result)
+        except Exception:
+            log.exception("background %s crashed", label)
+
+    threading.Thread(target=target, name=f"worker-{label}", daemon=True).start()
+
+
+@app.post("/admin/run/ingest", status_code=200)
+def admin_run_ingest(response: Response, min_priority: int = 1,
+                     background: bool = True,
+                     _: None = Depends(admin_key_auth)):
     """Worker 1 — fetch jobs from Greenhouse/Lever/Ashby board APIs."""
+    if background:
+        _run_in_background("ingest", ingest_worker.run, DB_PATH,
+                           min_priority=min_priority)
+        response.status_code = 202
+        return {"ok": True, "started": True, "background": True,
+                "outcome": "see JobIngestionRun in events / service log"}
     result = ingest_worker.run(DB_PATH, min_priority=min_priority)
     if not result["ok"]:
         raise HTTPException(status_code=500, detail=result)
     return result
 
 
-@app.post("/admin/run/match")
-def admin_run_match(_: None = Depends(admin_key_auth)):
+@app.post("/admin/run/match", status_code=200)
+def admin_run_match(response: Response, background: bool = True,
+                    _: None = Depends(admin_key_auth)):
     """Worker 3 — score fresh unmatched jobs against every completed Career Twin."""
+    if background:
+        _run_in_background("match", match_worker.run, DB_PATH,
+                           model=app.state.model_factory())
+        response.status_code = 202
+        return {"ok": True, "started": True, "background": True,
+                "outcome": "see MatchingWorkerRun in events / service log"}
     result = match_worker.run(DB_PATH, model=app.state.model_factory())
     if not result["ok"]:
         raise HTTPException(status_code=500, detail=result)
     return result
 
 
-@app.post("/admin/run/verify-employers")
-def admin_run_verify_employers(_: None = Depends(admin_key_auth)):
+@app.post("/admin/run/verify-employers", status_code=200)
+def admin_run_verify_employers(response: Response, background: bool = True,
+                               _: None = Depends(admin_key_auth)):
     """Worker 2 — refresh stale employer trust records for direct company domains."""
+    if background:
+        _run_in_background("verify-employers", verify_worker.run, DB_PATH,
+                           model=app.state.model_factory())
+        response.status_code = 202
+        return {"ok": True, "started": True, "background": True,
+                "outcome": "see VerificationWorkerRun in events / service log"}
     result = verify_worker.run(DB_PATH, model=app.state.model_factory())
     if not result["ok"]:
         raise HTTPException(status_code=500, detail=result)

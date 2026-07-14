@@ -60,6 +60,23 @@ export function toMatchCard(row: ApiMatch): JobMatch {
   };
 }
 
+export interface ApiJob {
+  id: number;
+  title?: string | null;
+  company_name?: string | null;
+  description?: string | null;
+  location?: string | null;
+  is_remote?: number | boolean | null;
+  salary_text?: string | null;
+  apply_url?: string | null;
+  category?: string | null;
+}
+
+/** Convert a raw ingested-job row (no fit score yet) into the card shape. */
+export function toJobCard(row: ApiJob): JobMatch {
+  return toMatchCard({ ...row, job_id: row.id, fit_score: null, reason: null });
+}
+
 export async function apiFetch<T>(
   path: string,
   init: RequestInit = {},

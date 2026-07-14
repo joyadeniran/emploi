@@ -1,17 +1,19 @@
 import { NextResponse } from "next/server";
 import { ApiUnavailableError, apiFetch } from "@/lib/api";
 
-export const maxDuration = 60;
+export const maxDuration = 45;
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   try {
-    const data = await apiFetch<{ generated: unknown }>("/applications/generate", {
+    const data = await apiFetch<{ reply: string; profile_updates: Record<string, string> }>("/chat", {
       method: "POST",
-      body: JSON.stringify({ job: body.job ?? {}, include_review: body.include_review !== false }),
-      // apiFetch defaults to a 10s abort; a reviewed generation is 3 Gemini
-      // calls and routinely takes longer than that.
-      signal: AbortSignal.timeout(55_000),
+      body: JSON.stringify({
+        message: String(body.message ?? ""),
+        history: Array.isArray(body.history) ? body.history.slice(-30) : [],
+      }),
+      // One Gemini call per turn; the default 10s abort is too tight.
+      signal: AbortSignal.timeout(40_000),
     });
     return NextResponse.json(data);
   } catch (error) {

@@ -249,6 +249,17 @@ r = client.get("/jobs?category=Engineering", headers=AUTH)
 check("GET /jobs?category filters", all(j["category"] == "Engineering"
                                         for j in r.json()["jobs"]))
 
+r = client.get("/jobs?q=designer", headers=AUTH)
+check("GET /jobs?q= free-text search matches title case-insensitively",
+      r.json()["total"] >= 1 and all("design" in (j["title"] or "").lower()
+                                     or "design" in (j["company_name"] or "").lower()
+                                     or "design" in (j["description"] or "").lower()
+                                     for j in r.json()["jobs"]))
+check("GET /jobs?q= no hits -> empty, not error",
+      client.get("/jobs?q=zzz-no-such-job-zzz", headers=AUTH).json()["total"] == 0)
+check("GET /jobs?q=%25 wildcard is escaped (no match-everything)",
+      client.get("/jobs?q=%25", headers=AUTH).json()["total"] == 0)
+
 job_id = r.json()["jobs"][0]["id"]
 r = client.get(f"/jobs/{job_id}", headers=AUTH)
 check("GET /jobs/{id} returns single job", r.status_code == 200
@@ -288,6 +299,38 @@ check("generation requires Career Twin",
       client.post("/applications/generate", headers={**AUTH, "X-User-Id": "no-twin"},
                   json={"job": {"description": "Build products"}}).status_code == 409)
 
+# ---------------- Career Twin chat ----------------
+m.app.state.model_factory = lambda: None
+r = client.post("/chat", headers=AUTH, json={"message": "hi"})
+check("chat without key -> 503", r.status_code == 503)
+
+CHAT_JSON = ('{"reply": "Senior marketing roles suit your brand-building record.",'
+             ' "profile_updates": {"goals": "Senior marketing roles", "skills": "Media Buying"}}')
+m.app.state.model_factory = lambda: FakeModel(CHAT_JSON)
+r = client.post("/chat", headers=AUTH,
+                json={"message": "I want senior marketing roles",
+                      "history": [{"role": "user", "content": "earlier"},
+                                  {"role": "assistant", "content": "earlier reply"}]})
+check("chat returns reply", r.status_code == 200 and "Senior marketing" in r.json()["reply"])
+check("chat reports profile updates", "goals" in r.json()["profile_updates"])
+tw = client.get("/career-twin", headers=AUTH).json()["career_twin"]
+check("chat goal appended to career_goals list",
+      isinstance(tw.get("career_goals"), list) and "Senior marketing roles" in tw["career_goals"])
+check("chat skill merged into skills list",
+      isinstance(tw.get("skills"), list) and "Media Buying" in tw["skills"])
+check("chat requires a Career Twin",
+      client.post("/chat", headers={**AUTH, "X-User-Id": "chat-no-twin"},
+                  json={"message": "hi"}).status_code == 409)
+check("chat rejects empty message",
+      client.post("/chat", headers=AUTH, json={"message": ""}).status_code == 422)
+
+# Plain-text fallback: model ignores the JSON contract -> raw reply, no updates
+m.app.state.model_factory = lambda: FakeModel("plain text, no JSON here")
+r = client.post("/chat", headers=AUTH, json={"message": "hello again"})
+check("chat plain-text fallback returns raw reply",
+      r.status_code == 200 and r.json()["reply"].startswith("plain text")
+      and r.json()["profile_updates"] == {})
+
 # ---------------- worker triggers (Render Cron -> HTTP, no disk on cron) ----------------
 # Render Cron Jobs can't mount the persistent disk the SQLite file lives on,
 # so scheduled workers run in-process here instead of as their own cron
@@ -310,17 +353,29 @@ check("admin run without api key -> 401",
       client.post("/admin/run/ingest").status_code == 401)
 
 _ingest_mod.run = lambda db_path, min_priority=1: {"ok": True, "min_priority": min_priority}
-r = client.post("/admin/run/ingest?min_priority=8", headers={"X-API-Key": "test-key"})
-check("admin run ingest -> 200 with correct key",
+r = client.post("/admin/run/ingest?min_priority=8&background=false",
+                headers={"X-API-Key": "test-key"})
+check("admin run ingest (sync) -> 200 with correct key",
       r.status_code == 200 and r.json()["min_priority"] == 8)
 
+# Default is background=true: Render's proxy kills responses after ~100s, so
+# heavy runs return 202 immediately and finish in a thread.
+import threading as _threading
+_ran = _threading.Event()
+_ingest_mod.run = lambda db_path, min_priority=1: (_ran.set(), {"ok": True})[1]
+r = client.post("/admin/run/ingest", headers={"X-API-Key": "test-key"})
+check("admin run ingest (background default) -> 202 started",
+      r.status_code == 202 and r.json()["started"] is True)
+check("background ingest actually executed the worker", _ran.wait(timeout=5))
+
 _match_mod.run = lambda db_path, model=None: {"ok": True, "total_matches": 3}
-r = client.post("/admin/run/match", headers={"X-API-Key": "test-key"})
-check("admin run match -> 200", r.status_code == 200 and r.json()["total_matches"] == 3)
+r = client.post("/admin/run/match?background=false", headers={"X-API-Key": "test-key"})
+check("admin run match (sync) -> 200", r.status_code == 200 and r.json()["total_matches"] == 3)
 
 _verify_mod.run = lambda db_path, model=None: {"ok": True, "verified": 2}
-r = client.post("/admin/run/verify-employers", headers={"X-API-Key": "test-key"})
-check("admin run verify-employers -> 200", r.status_code == 200 and r.json()["verified"] == 2)
+r = client.post("/admin/run/verify-employers?background=false", headers={"X-API-Key": "test-key"})
+check("admin run verify-employers (sync) -> 200",
+      r.status_code == 200 and r.json()["verified"] == 2)
 
 _notify_mod.run = lambda db_path, send_fn=None: {"ok": True, "sent": 1}
 r = client.post("/admin/run/notify", headers={"X-API-Key": "test-key"})

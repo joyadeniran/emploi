@@ -243,6 +243,45 @@ def chat_turn(model, profile: dict, question: str, history: str = ""):
     return raw, {}
 
 
+def apply_chat_updates(twin: dict, updates: dict) -> dict:
+    """Merge chat_turn's legacy-keyed profile_updates into a Career Twin dict.
+
+    chat_turn emits the legacy PROFILE_KEYS schema (title/goals/skills as
+    strings); the Career Twin stores headline/career_goals/skills as lists
+    and experience/education as [{"summary": ...}] entries. Values are
+    appended/merged, never overwritten wholesale — a chat remark must not
+    erase a curated profile. Returns the same dict, mutated."""
+    for key, value in (updates or {}).items():
+        text = str(value).strip()
+        if not text:
+            continue
+        if key == "title":
+            twin["headline"] = text
+        elif key == "goals":
+            goals = twin.get("career_goals")
+            goals = list(goals) if isinstance(goals, list) else ([goals] if goals else [])
+            if text not in goals:
+                goals.append(text)
+            twin["career_goals"] = goals
+        elif key == "skills":
+            existing = twin.get("skills")
+            existing = list(existing) if isinstance(existing, list) else normalize_skills(existing)
+            lowered = {s.lower() for s in existing if isinstance(s, str)}
+            for skill in normalize_skills(text):
+                if skill.lower() not in lowered:
+                    existing.append(skill)
+                    lowered.add(skill.lower())
+            twin["skills"] = existing
+        elif key in ("experience", "education"):
+            entries = twin.get(key)
+            entries = list(entries) if isinstance(entries, list) else []
+            entries.append({"summary": text})
+            twin[key] = normalize_entries(entries)
+        elif key in ("name", "location"):
+            twin[key] = text
+    return twin
+
+
 # ---------------- Parsing ----------------
 
 FIT_RE = re.compile(r"fit\s*score[:\s]*\**\s*(\d{1,3})\s*/\s*100", re.IGNORECASE)

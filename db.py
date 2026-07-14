@@ -271,16 +271,28 @@ def upsert_job(conn, source: str, source_job_id: str, fields: dict) -> int:
     return row["id"] if row else -1
 
 
-def list_jobs(conn, *, remote_only: bool = False, category: Optional[str] = None,
-              limit: int = 100, offset: int = 0) -> list:
-    """Return ingested jobs, newest first. Filters are optional."""
+def _job_filters(remote_only: bool, category: Optional[str], q: Optional[str]):
     clauses, params = [], []
     if remote_only:
         clauses.append("is_remote = 1")
     if category:
         clauses.append("category = ?")
         params.append(category)
+    if q:
+        # Escape LIKE wildcards so a user typing "%" doesn't match everything.
+        needle = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        clauses.append("(title LIKE ? ESCAPE '\\' OR company_name LIKE ? ESCAPE '\\' "
+                       "OR description LIKE ? ESCAPE '\\')")
+        params.extend([f"%{needle}%"] * 3)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    return where, params
+
+
+def list_jobs(conn, *, remote_only: bool = False, category: Optional[str] = None,
+              q: Optional[str] = None, limit: int = 100, offset: int = 0) -> list:
+    """Return ingested jobs, newest first. Filters (including free-text `q`
+    over title/company/description) are optional."""
+    where, params = _job_filters(remote_only, category, q)
     rows = conn.execute(
         f"SELECT * FROM ingested_jobs {where} "
         f"ORDER BY fetched_at DESC LIMIT ? OFFSET ?",
@@ -289,14 +301,8 @@ def list_jobs(conn, *, remote_only: bool = False, category: Optional[str] = None
 
 
 def count_jobs(conn, *, remote_only: bool = False,
-               category: Optional[str] = None) -> int:
-    clauses, params = [], []
-    if remote_only:
-        clauses.append("is_remote = 1")
-    if category:
-        clauses.append("category = ?")
-        params.append(category)
-    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+               category: Optional[str] = None, q: Optional[str] = None) -> int:
+    where, params = _job_filters(remote_only, category, q)
     row = conn.execute(f"SELECT COUNT(*) AS n FROM ingested_jobs {where}",
                        params).fetchone()
     return row["n"] if row else 0

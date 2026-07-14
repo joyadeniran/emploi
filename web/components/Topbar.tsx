@@ -1,7 +1,11 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Bell, Search, Menu, LogOut, ChevronDown, User } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Bell, Search, Menu, LogOut, ChevronDown, User, Loader2, Sparkles } from "lucide-react";
+
+type MatchNotice = { id: number; title?: string; company_name?: string; fit_score?: number };
 
 export function Topbar({
   user,
@@ -12,18 +16,50 @@ export function Topbar({
   onMenu: () => void;
   signOutAction: () => Promise<void>;
 }) {
+  const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [bellOpen, setBellOpen] = useState(false);
+  const [notices, setNotices] = useState<MatchNotice[] | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const bellRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
       }
+      if (bellRef.current && !bellRef.current.contains(e.target as Node)) {
+        setBellOpen(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
     }
     document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
   }, []);
+
+  async function openBell() {
+    const next = !bellOpen;
+    setBellOpen(next);
+    if (next && notices === null) {
+      try {
+        const res = await fetch("/api/matches?limit=5");
+        const data = res.ok ? await res.json() : { matches: [] };
+        setNotices(Array.isArray(data.matches) ? data.matches : []);
+      } catch {
+        setNotices([]);
+      }
+    }
+  }
 
   const initials =
     user.name
@@ -43,12 +79,20 @@ export function Topbar({
         <Menu size={18} />
       </button>
 
-      <div className="relative hidden max-w-md flex-1 sm:block">
+      <form
+        className="relative hidden max-w-md flex-1 sm:block"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const q = searchRef.current?.value.trim();
+          router.push(q ? `/jobs?q=${encodeURIComponent(q)}` : "/jobs");
+        }}
+      >
         <Search
           size={16}
           className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint"
         />
         <input
+          ref={searchRef}
           type="search"
           placeholder="Search jobs, companies or skills..."
           className="w-full rounded-full border border-line bg-surface py-2.5 pl-10 pr-12 text-sm outline-none transition-colors placeholder:text-faint focus:border-brand/40 focus:bg-white"
@@ -56,16 +100,56 @@ export function Topbar({
         <kbd className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 rounded-md border border-line bg-white px-1.5 py-0.5 text-[10px] font-semibold text-faint">
           ⌘K
         </kbd>
-      </div>
+      </form>
 
       <div className="ml-auto flex items-center gap-2">
-        <button
-          className="relative rounded-full border border-line p-2.5 text-muted hover:bg-surface"
-          aria-label="Notifications"
-        >
-          <Bell size={17} />
-          <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-brand ring-2 ring-white" />
-        </button>
+        <div className="relative" ref={bellRef}>
+          <button
+            onClick={openBell}
+            className="relative rounded-full border border-line p-2.5 text-muted hover:bg-surface"
+            aria-label="Notifications"
+            aria-expanded={bellOpen}
+            aria-haspopup="menu"
+          >
+            <Bell size={17} />
+            {notices === null || notices.length > 0 ? (
+              <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-brand ring-2 ring-white" />
+            ) : null}
+          </button>
+          {bellOpen ? (
+            <div role="menu" className="absolute right-0 top-12 z-40 w-80 rounded-2xl border border-line bg-white p-2 shadow-pop">
+              <p className="px-3 py-2 text-xs font-bold uppercase tracking-wide text-faint">Latest matches</p>
+              {notices === null ? (
+                <p className="flex items-center gap-2 px-3 py-3 text-sm text-muted">
+                  <Loader2 size={14} className="animate-spin" /> Checking…
+                </p>
+              ) : notices.length === 0 ? (
+                <p className="px-3 py-3 text-sm text-muted">
+                  Nothing yet — your Career Twin scans new jobs every night and you&apos;ll see matches here.
+                </p>
+              ) : (
+                <>
+                  {notices.map((n) => (
+                    <Link key={n.id} href="/matches" role="menuitem" onClick={() => setBellOpen(false)}
+                      className="flex items-start gap-2.5 rounded-xl px-3 py-2.5 hover:bg-surface">
+                      <Sparkles size={15} className="mt-0.5 shrink-0 text-brand" />
+                      <span className="min-w-0 text-sm">
+                        <span className="block truncate font-bold">{n.title || "New match"}</span>
+                        <span className="block truncate text-muted">
+                          {n.company_name || "Unknown company"}{typeof n.fit_score === "number" ? ` · fit ${n.fit_score}/100` : ""}
+                        </span>
+                      </span>
+                    </Link>
+                  ))}
+                  <Link href="/matches" role="menuitem" onClick={() => setBellOpen(false)}
+                    className="mt-1 block rounded-xl bg-brand-soft/60 px-3 py-2.5 text-center text-sm font-bold text-brand hover:bg-brand-soft">
+                    View all matches
+                  </Link>
+                </>
+              )}
+            </div>
+          ) : null}
+        </div>
 
         <div className="relative" ref={menuRef}>
           <button
