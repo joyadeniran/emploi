@@ -496,7 +496,7 @@ def upsert_match(conn, user_id: str, job_id: int,
     conn.commit()
 
 
-def list_matches(conn, user_id: str, *, limit: int = 50) -> list:
+def list_matches(conn, user_id: str, *, limit: int = 20, offset: int = 0) -> list:
     """Return a user's matches, best fit first, with job detail joined."""
     rows = conn.execute(
         "SELECT m.id, m.fit_score, m.reason, m.created_at, "
@@ -504,9 +504,15 @@ def list_matches(conn, user_id: str, *, limit: int = 50) -> list:
         "       j.is_remote, j.salary_text, j.apply_url, j.category, "
         "       j.source "
         "FROM matches m JOIN ingested_jobs j ON m.job_id = j.id "
-        "WHERE m.user_id = ? ORDER BY m.fit_score DESC LIMIT ?",
-        (user_id, limit)).fetchall()
+        "WHERE m.user_id = ? ORDER BY m.fit_score DESC LIMIT ? OFFSET ?",
+        (user_id, limit, offset)).fetchall()
     return [dict(r) for r in rows]
+
+
+def count_matches(conn, user_id: str) -> int:
+    return conn.execute(
+        "SELECT COUNT(*) FROM matches m JOIN ingested_jobs j ON m.job_id = j.id WHERE m.user_id = ?",
+        (user_id,)).fetchone()[0]
 
 
 # ---------------------------------------------------------------------------

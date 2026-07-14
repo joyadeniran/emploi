@@ -884,12 +884,18 @@ def unsave_job_endpoint(job_id: int, user_id: str = Depends(auth)):
 
 
 @app.get("/matches")
-def get_user_matches(limit: int = 50, user_id: str = Depends(rate_limit)):
+def get_user_matches(limit: int = 20, offset: int = 0, user_id: str = Depends(rate_limit)):
     """Return the user's pre-computed match rankings (populated by the matching
     worker). Returns empty list if the worker hasn't run yet."""
     if limit < 1 or limit > 200:
         raise HTTPException(status_code=422, detail="limit must be 1–200")
-    return {"matches": db.list_matches(get_conn(), user_id, limit=limit)}
+    conn = get_conn()
+    return {
+        "matches": db.list_matches(conn, user_id, limit=limit, offset=offset),
+        "total": db.count_matches(conn, user_id),
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 # ---------------------------------------------------------------------------

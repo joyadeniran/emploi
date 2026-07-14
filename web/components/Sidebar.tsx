@@ -138,7 +138,7 @@ export function Sidebar({
         aria-hidden="true"
       />
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-72 border-r border-line bg-white transition-transform lg:static lg:z-auto lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 w-72 border-r border-line bg-white transition-transform lg:sticky lg:top-0 lg:z-auto lg:h-dvh lg:translate-x-0 lg:overflow-hidden ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
         aria-label="Sidebar"

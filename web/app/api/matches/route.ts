@@ -3,11 +3,12 @@ import { apiFetch, ApiUnavailableError } from "@/lib/api";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const limit = Number(searchParams.get("limit") ?? 50);
+  const limit = Number(searchParams.get("limit") ?? 20);
+  const offset = Number(searchParams.get("offset") ?? 0);
 
   try {
-    const data = await apiFetch<{ matches: unknown[] }>(
-      `/matches?limit=${limit}`,
+    const data = await apiFetch<{ matches: unknown[]; total: number; limit: number; offset: number }>(
+      `/matches?limit=${limit}&offset=${offset}`,
     );
     return NextResponse.json(data);
   } catch (e) {
