@@ -12,9 +12,15 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
+import { generateApplication, GenerationError, type GeneratedDraft } from "@/lib/generate";
 
 type Trust = { score: number; level: string; evidence: string[]; company: string; domain?: string };
-type Generated = { result: string; fit_score: number | null };
+
+function progressLabel(elapsedSeconds: number): string {
+  if (elapsedSeconds < 12) return "Writing your draft…";
+  if (elapsedSeconds < 30) return "Reviewing it for tone and honesty…";
+  return "Still working — a reviewed draft can take a little while…";
+}
 
 export function ImportJobFlow() {
   const [company, setCompany] = useState("");
@@ -23,8 +29,9 @@ export function ImportJobFlow() {
   const [role, setRole] = useState("");
 
   const [trust, setTrust] = useState<Trust | null>(null);
-  const [generated, setGenerated] = useState<Generated | null>(null);
+  const [generated, setGenerated] = useState<GeneratedDraft | null>(null);
   const [busy, setBusy] = useState<"" | "trust" | "generate" | "track">("");
+  const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
   const [tracked, setTracked] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -58,20 +65,17 @@ export function ImportJobFlow() {
 
   async function generate() {
     setError("");
+    setProgress(progressLabel(0));
     setBusy("generate");
     try {
-      const res = await fetch("/api/applications/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          job: { company_name: company.trim(), title: role.trim(), description: jd.trim() },
-          include_review: true,
-        }),
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "generation failed");
-      setGenerated((await res.json()).generated as Generated);
+      const draft = await generateApplication(
+        { company_name: company.trim(), title: role.trim(), description: jd.trim() },
+        true,
+        (elapsed) => setProgress(progressLabel(elapsed)),
+      );
+      setGenerated(draft);
     } catch (e) {
-      setError(e instanceof Error && e.message ? e.message : "Couldn't generate a draft — try again.");
+      setError(e instanceof GenerationError ? e.message : "Couldn't generate a draft — try again.");
     } finally {
       setBusy("");
     }
@@ -180,27 +184,36 @@ export function ImportJobFlow() {
           ) : null}
           {!generated ? (
             <div className="mt-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <button type="button" onClick={generate} disabled={busy === "generate" || busy === "track"}
-                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand-violet to-brand-indigo px-5 py-2.5 text-sm font-bold text-white shadow-pop disabled:opacity-60">
-                  {busy === "generate" ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-                  Generate tailored application
-                </button>
-                {tracked ? (
-                  <Link href="/applications" className="inline-flex items-center gap-1.5 rounded-xl bg-good px-4 py-2.5 text-sm font-bold text-white">
-                    <Check size={15} /> Tracked — view applications
-                  </Link>
-                ) : (
-                  <button type="button" onClick={track} disabled={busy === "generate" || busy === "track"}
-                    className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-bold text-brand hover:bg-brand-soft disabled:opacity-60">
-                    {busy === "track" ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-                    Skip draft — just add to tracker
-                  </button>
-                )}
-              </div>
-              <p className="mt-2 text-xs text-muted">
-                The draft is grounded only in your Career Twin — nothing invented. Uses 3 AI calls (drafted, then reviewed). Not every application needs one.
-              </p>
+              {busy === "generate" ? (
+                <div className="flex items-center gap-3 rounded-xl bg-surface px-4 py-3">
+                  <Loader2 size={16} className="shrink-0 animate-spin text-brand" />
+                  <p className="text-sm font-semibold text-ink">{progress}</p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button type="button" onClick={generate} disabled={busy === "track"}
+                      className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand-violet to-brand-indigo px-5 py-2.5 text-sm font-bold text-white shadow-pop disabled:opacity-60">
+                      <Sparkles size={15} />
+                      Generate tailored application
+                    </button>
+                    {tracked ? (
+                      <Link href="/applications" className="inline-flex items-center gap-1.5 rounded-xl bg-good px-4 py-2.5 text-sm font-bold text-white">
+                        <Check size={15} /> Tracked — view applications
+                      </Link>
+                    ) : (
+                      <button type="button" onClick={track} disabled={busy === "track"}
+                        className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-bold text-brand hover:bg-brand-soft disabled:opacity-60">
+                        {busy === "track" ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                        Skip draft — just add to tracker
+                      </button>
+                    )}
+                  </div>
+                  <p className="mt-2 text-xs text-muted">
+                    The draft is grounded only in your Career Twin — nothing invented. Uses 3 AI calls (drafted, then reviewed). Not every application needs one.
+                  </p>
+                </>
+              )}
             </div>
           ) : null}
         </section>

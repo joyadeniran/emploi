@@ -19,6 +19,8 @@ import os
 import secrets
 import sys
 import logging
+import threading
+import uuid
 from collections import defaultdict
 from time import time
 from typing import Optional
@@ -74,6 +76,9 @@ def get_conn():
     return get_conn._conn
 
 
+GENERATE_CALL_TIMEOUT_S = 25  # per-provider-call bound; see FallbackModel/GroqModel
+
+
 class GroqModel:
     """Duck-typed .generate_content over Groq's OpenAI-compatible API.
     Fallback provider: Gemini free tier exhausts fast (observed in prod on
@@ -93,7 +98,9 @@ class GroqModel:
                      "Content-Type": "application/json"},
             json={"model": self._model,
                   "messages": [{"role": "user", "content": prompt}]},
-            timeout=60)
+            # Bounded so a stuck call fails fast rather than stalling a
+            # generation job indefinitely (see GENERATE_CALL_TIMEOUT_S).
+            timeout=GENERATE_CALL_TIMEOUT_S)
         resp.raise_for_status()
 
         class R:
@@ -121,6 +128,21 @@ class FallbackModel:
             return self._fallback.generate_content(prompt)
 
 
+class TimeoutGeminiModel:
+    """Wraps a genai.GenerativeModel so every call carries the same bounded
+    timeout as GroqModel — without this, a slow/stuck Gemini call can hang
+    well past both our own client timeouts and Render's ~100s proxy limit,
+    with nothing surfacing why (the original bug behind the "spins forever
+    then fails" report)."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def generate_content(self, prompt: str):
+        return self._inner.generate_content(
+            prompt, request_options={"timeout": GENERATE_CALL_TIMEOUT_S})
+
+
 def get_model():
     """Duck-typed model: Gemini primary, Groq fallback when GROQ_API_KEY is
     set, or None when neither provider is configured."""
@@ -129,7 +151,8 @@ def get_model():
     if key:
         import google.generativeai as genai
         genai.configure(api_key=key)
-        gemini = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+        gemini = TimeoutGeminiModel(
+            genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.5-flash")))
     groq_key = os.getenv("GROQ_API_KEY", "")
     groq = GroqModel(groq_key, os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")) if groq_key else None
     if gemini and groq:
@@ -398,13 +421,53 @@ def create_app_row(body: ApplicationIn, user_id: str = Depends(auth)):
     return {"id": app_id}
 
 
-@app.post("/applications/generate")
-def generate_application_endpoint(body: GenerateIn,
+# ---------------------------------------------------------------------------
+# Application generation — asynchronous. A reviewed draft is TWO sequential
+# Gemini calls; a slow/exhausted provider can push that past both our own
+# client timeouts and Render's ~100s proxy limit, and a single blocking
+# request has no way to say anything while it waits ("spins forever then
+# fails" — the real bug, not a broken feature). Submit returns immediately;
+# the client polls GET /applications/generate/{job_id} for status. Jobs live
+# in-process (single-server deployment, same posture as _rate_counters) and
+# expire after _JOB_TTL_S so a crashed poll doesn't leak memory forever.
+# ---------------------------------------------------------------------------
+
+_generation_jobs: dict = {}
+_generation_jobs_lock = threading.Lock()
+_JOB_TTL_S = 15 * 60
+
+
+def _set_job(job_id: str, **fields) -> None:
+    with _generation_jobs_lock:
+        current = _generation_jobs.get(job_id, {})
+        _generation_jobs[job_id] = {**current, **fields, "updated_at": time()}
+
+
+def _get_job(job_id: str):
+    with _generation_jobs_lock:
+        job = _generation_jobs.get(job_id)
+        return dict(job) if job else None
+
+
+def _prune_generation_jobs() -> None:
+    cutoff = time() - _JOB_TTL_S
+    with _generation_jobs_lock:
+        for stale_id in [jid for jid, j in _generation_jobs.items()
+                         if j.get("updated_at", 0) < cutoff]:
+            _generation_jobs.pop(stale_id, None)
+
+
+@app.post("/applications/generate", status_code=202)
+def generate_application_endpoint(body: GenerateIn, response: Response,
+                                  background: bool = True,
                                   user_id: str = Depends(rate_limit)):
     """Generate an honest tailored draft from a stored Career Twin.
 
     Reviewer mode costs one additional model call; the web UI must disclose
-    that before invoking this endpoint.
+    that before invoking this endpoint. Runs asynchronously by default —
+    poll GET /applications/generate/{job_id} for the result.
+    `?background=false` runs synchronously (used by tests and any caller
+    that genuinely wants to block).
     """
     model = require_model()
     profile = db.load_career_twin(get_conn(), user_id)
@@ -416,9 +479,45 @@ def generate_application_endpoint(body: GenerateIn,
     if not job_text:
         raise HTTPException(status_code=422, detail="job description is required")
     company = str(job.get("company") or job.get("company_name") or "")
-    result = run_extraction(core.generate_application, model, profile, job_text,
-                            company, body.include_review)
-    return {"generated": result}
+
+    if not background:
+        response.status_code = 200
+        result = run_extraction(core.generate_application, model, profile, job_text,
+                                company, body.include_review)
+        return {"generated": result}
+
+    job_id = uuid.uuid4().hex
+    _set_job(job_id, status="pending", user_id=user_id)
+
+    def task():
+        try:
+            result = core.generate_application(model, profile, job_text, company,
+                                               body.include_review)
+            _set_job(job_id, status="done", result=result)
+        except Exception as exc:
+            log.exception("generation job %s failed", job_id)
+            _set_job(job_id, status="error",
+                     error="The AI service is temporarily unavailable — try again in a moment.",
+                     detail=str(exc)[:200])
+
+    threading.Thread(target=task, name=f"generate-{job_id}", daemon=True).start()
+    _prune_generation_jobs()
+    return {"job_id": job_id, "status": "pending"}
+
+
+@app.get("/applications/generate/{job_id}")
+def get_generation_job(job_id: str, user_id: str = Depends(auth)):
+    """Poll a generation job started above. 404 for an unknown id or one
+    that belongs to a different user — never leak that a job id exists."""
+    job = _get_job(job_id)
+    if not job or job.get("user_id") != user_id:
+        raise HTTPException(status_code=404, detail="generation job not found")
+    payload = {"status": job["status"]}
+    if job["status"] == "done":
+        payload["generated"] = job["result"]
+    elif job["status"] == "error":
+        payload["error"] = job["error"]
+    return payload
 
 
 @app.patch("/applications/{app_id}")

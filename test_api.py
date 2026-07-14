@@ -280,24 +280,68 @@ r = client.get("/matches", headers=AUTH)
 check("GET /matches returns seeded match",
       len(r.json()["matches"]) == 1 and r.json()["matches"][0]["fit_score"] == 88)
 
-# ---------------- application generation ----------------
+# ---------------- application generation (sync path, background=false) ----------------
 m.app.state.model_factory = lambda: None
-r = client.post("/applications/generate", headers=AUTH,
+r = client.post("/applications/generate?background=false", headers=AUTH,
                 json={"job": {"company_name": "TestCo", "description": "Build products"}})
 check("generation without key -> 503", r.status_code == 503)
 
 m.app.state.model_factory = lambda: FakeModel("Dear TestCo,\n\nFit Score: 85/100")
-r = client.post("/applications/generate", headers=AUTH,
+r = client.post("/applications/generate?background=false", headers=AUTH,
                 json={"job": {"company_name": "TestCo", "description": "Build products"},
                       "include_review": False})
 generated = r.json().get("generated", {})
-check("generation returns application and fit score",
+check("generation (sync) returns application and fit score",
       r.status_code == 200 and generated.get("fit_score") == 85 and generated.get("result"))
 check("generation rejects a job without description",
       client.post("/applications/generate", headers=AUTH, json={"job": {"company": "TestCo"}}).status_code == 422)
 check("generation requires Career Twin",
       client.post("/applications/generate", headers={**AUTH, "X-User-Id": "no-twin"},
                   json={"job": {"description": "Build products"}}).status_code == 409)
+
+# ---------------- application generation (async path, default) ----------------
+import time as _time
+
+m.app.state.model_factory = lambda: FakeModel("Dear TestCo,\n\nFit Score: 77/100")
+r = client.post("/applications/generate", headers=AUTH,
+                json={"job": {"company_name": "TestCo", "description": "Build products"},
+                      "include_review": False})
+check("generation (async) submit returns 202 with a job_id",
+      r.status_code == 202 and r.json().get("status") == "pending" and r.json().get("job_id"))
+gen_job_id = r.json()["job_id"]
+
+for _ in range(50):
+    poll = client.get(f"/applications/generate/{gen_job_id}", headers=AUTH)
+    if poll.json().get("status") != "pending":
+        break
+    _time.sleep(0.05)
+check("generation (async) job reaches done", poll.json().get("status") == "done")
+check("generation (async) result matches sync contract",
+      poll.json()["generated"]["fit_score"] == 77)
+
+check("generation job lookup requires auth", client.get(f"/applications/generate/{gen_job_id}").status_code == 401)
+check("generation job is per-user (404 for someone else)",
+      client.get(f"/applications/generate/{gen_job_id}",
+                headers={**AUTH, "X-User-Id": "someone-else"}).status_code == 404)
+check("unknown generation job -> 404",
+      client.get("/applications/generate/not-a-real-id", headers=AUTH).status_code == 404)
+
+# A provider failure surfaces as a job error, never an unhandled exception
+class _AlwaysFails:
+    def generate_content(self, prompt):
+        raise RuntimeError("simulated provider outage")
+
+m.app.state.model_factory = lambda: _AlwaysFails()
+r = client.post("/applications/generate", headers=AUTH,
+                json={"job": {"company_name": "TestCo", "description": "Build products"}})
+gen_job_id = r.json()["job_id"]
+for _ in range(50):
+    poll = client.get(f"/applications/generate/{gen_job_id}", headers=AUTH)
+    if poll.json().get("status") != "pending":
+        break
+    _time.sleep(0.05)
+check("generation (async) provider failure surfaces as a job error, not a crash",
+      poll.json().get("status") == "error" and "unavailable" in poll.json().get("error", ""))
 
 # ---------------- Career Twin chat ----------------
 m.app.state.model_factory = lambda: None
