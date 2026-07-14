@@ -94,7 +94,7 @@ export function PlanCard() {
           />
         </div>
         <p className="mt-2 text-xs text-muted">
-          {status.used_this_month}/{status.limit} applications this month
+          {status.used_this_month}/{status.limit} tailored drafts this month
         </p>
         {status.status === "past_due" ? (
           <p className="mt-2 text-xs font-semibold text-warn">
