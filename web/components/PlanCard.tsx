@@ -73,7 +73,7 @@ export function PlanCard() {
             className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-violet to-brand-indigo px-4 py-2.5 text-sm font-bold text-white shadow-pop transition-transform hover:-translate-y-0.5 disabled:opacity-70"
           >
             {upgrading ? <Loader2 size={15} className="animate-spin" /> : null}
-            Upgrade Now — ₦{status.prices_ngn.pro?.toLocaleString() ?? "3,500"}/mo
+            Upgrade Now
           </button>
         </div>
       ) : null}
@@ -94,7 +94,7 @@ export function PlanCard() {
           />
         </div>
         <p className="mt-2 text-xs text-muted">
-          {status.used_this_month}/{status.limit} tailored drafts this month
+          {status.used_this_month}/{status.limit} applications this month
         </p>
         {status.status === "past_due" ? (
           <p className="mt-2 text-xs font-semibold text-warn">
