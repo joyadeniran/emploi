@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowRight, CheckCircle2, Circle, Info } from "lucide-react";
+import { ArrowRight, CheckCircle2, Circle, Info, ShieldCheck, Sparkles } from "lucide-react";
 import { auth } from "@/auth";
 import { applications as demoApplications, firstName, greeting, matches as demoMatches, statusMeta, type ApplicationStatus } from "@/lib/data";
 import { ApiUnavailableError, apiFetch, DEMO_MODE, toMatchCard, type ApiMatch } from "@/lib/api";
@@ -11,9 +11,22 @@ type Twin = Record<string, unknown>;
 type ApiApplication = { id: number; company: string | null; role: string | null; status: string | null; created_at: string };
 const statuses: ApplicationStatus[] = ["applied", "interview", "offer", "rejected", "withdrawn"];
 
+const STRENGTH_FIELDS: { key: string; label: string }[] = [
+  { key: "name", label: "Name" },
+  { key: "headline", label: "Headline" },
+  { key: "skills", label: "Skills" },
+  { key: "experience", label: "Experience" },
+  { key: "education", label: "Education" },
+  { key: "career_goals", label: "Goals" },
+];
+
+function fieldDone(twin: Twin, key: string) {
+  const value = twin[key];
+  return Array.isArray(value) ? value.length > 0 : Boolean(value);
+}
+
 function strength(twin: Twin) {
-  const fields = ["name", "headline", "skills", "experience", "education", "career_goals"];
-  return Math.round((fields.filter((field) => Array.isArray(twin[field]) ? twin[field].length > 0 : Boolean(twin[field])).length / fields.length) * 100);
+  return Math.round((STRENGTH_FIELDS.filter((f) => fieldDone(twin, f.key)).length / STRENGTH_FIELDS.length) * 100);
 }
 
 export default async function DashboardPage() {
@@ -91,6 +104,7 @@ export default async function DashboardPage() {
   }
 
   const completed = strength(twin);
+  const profileChecklist = STRENGTH_FIELDS.map((f) => ({ label: f.label, done: fieldDone(twin, f.key) }));
   const high = cards.filter((match) => match.fit >= 85).length;
   const medium = cards.filter((match) => match.fit >= 60 && match.fit < 85).length;
   const displayApplications = sampleData ? demoApplications.slice(0, 3) : recent;
@@ -103,6 +117,65 @@ export default async function DashboardPage() {
       <section><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-extrabold">Top Job Matches</h2><Link className="text-sm font-bold text-brand" href="/matches">View all <ArrowRight className="inline" size={14} /></Link></div><div className="space-y-3">{cards.map((match) => <article key={match.id} className="flex items-center gap-4 rounded-2xl border border-line bg-white p-4 shadow-card"><span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl font-extrabold text-white" style={{ background: match.companyColor }}>{match.companyInitial}</span><div className="min-w-0 flex-1"><h3 className="truncate font-bold">{match.title}</h3><p className="truncate text-sm text-muted">{match.company} · {match.location}</p><p className="mt-1 text-xs text-muted">{match.reason}</p></div><FitRing fit={match.fit} /></article>)}</div></section>
       <section className="overflow-x-auto rounded-2xl border border-line bg-white shadow-card"><div className="flex justify-between px-5 pt-5"><h2 className="font-extrabold">Recent Applications</h2><Link href="/applications" className="text-sm font-bold text-brand">View all</Link></div><table className="mt-3 w-full min-w-[520px] text-sm"><thead><tr className="border-y border-line bg-surface text-left text-xs font-bold uppercase text-faint"><th className="px-5 py-3">Role</th><th className="px-5 py-3">Company</th><th className="px-5 py-3">Status</th></tr></thead><tbody>{displayApplications.map((application) => { const status = statuses.includes(application.status as ApplicationStatus) ? application.status as ApplicationStatus : "applied"; return <tr key={application.id} className="border-b border-line last:border-0"><td className="px-5 py-4 font-bold">{application.role}</td><td className="px-5 py-4">{application.company}</td><td className="px-5 py-4"><span className={`rounded-full px-3 py-1 text-xs font-bold ${statusMeta[status].className}`}>{statusMeta[status].label}</span></td></tr>; })}</tbody></table></section>
     </main>
-    <aside className="space-y-6"><section className="rounded-2xl border border-line bg-white p-6 shadow-card"><div className="flex justify-between"><h2 className="font-extrabold">Your Career Twin</h2><Link href="/career-twin" className="text-xs font-bold text-brand">View profile</Link></div><div className="mt-5 flex items-center gap-5"><ProgressRing value={completed || 0} size={104} label={`${completed}%`} sublabel="Profile strength" /><p className="text-xs text-muted">Keep your profile current so your matches stay accurate.</p></div></section><section className="rounded-2xl border border-line bg-white p-6 shadow-card"><h2 className="font-extrabold">Trust first</h2><p className="mt-2 text-sm text-muted">Never pay a fee or share bank or ID details for a job application.</p><Link href="/trust-check" className="mt-4 inline-block text-sm font-bold text-brand">Run a Trust Check →</Link></section></aside>
+    <aside className="space-y-6">
+      {/* Profile strength — glass card over an ambient brand gradient */}
+      <section className="relative overflow-hidden rounded-3xl border border-white/70 bg-white/60 p-6 shadow-card backdrop-blur-xl">
+        <div aria-hidden className="pointer-events-none absolute -right-10 -top-12 h-40 w-40 rounded-full bg-gradient-to-br from-brand-violet/35 to-brand-indigo/25 blur-2xl" />
+        <div aria-hidden className="pointer-events-none absolute -bottom-14 -left-10 h-36 w-36 rounded-full bg-brand-soft/80 blur-2xl" />
+        <div className="relative">
+          <div className="flex items-center justify-between">
+            <h2 className="flex items-center gap-2 font-extrabold"><Sparkles size={15} className="text-brand" /> Your Career Twin</h2>
+            <Link href="/career-twin" className="text-xs font-bold text-brand hover:underline">View profile</Link>
+          </div>
+          <div className="mt-5 flex items-center gap-5">
+            <ProgressRing value={completed || 0} size={108} label={`${completed}%`} sublabel="Complete" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-extrabold">
+                {completed >= 100 ? "Profile fully tuned" : completed >= 60 ? "Almost there" : "Let's build it out"}
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-muted">
+                {completed >= 100
+                  ? "Your Twin has everything it needs to match and write for you."
+                  : "The more your Twin knows, the sharper your matches and drafts get."}
+              </p>
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-1.5">
+            {profileChecklist.map((item) => (
+              <span key={item.label}
+                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ${item.done
+                  ? "bg-good-soft text-good"
+                  : "border border-dashed border-line bg-white/70 text-muted"}`}>
+                {item.done ? <CheckCircle2 size={11} /> : <Circle size={11} />}
+                {item.label}
+              </span>
+            ))}
+          </div>
+          {completed < 100 ? (
+            <Link href="/career-twin"
+              className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-brand-violet to-brand-indigo px-4 py-2.5 text-xs font-bold text-white shadow-pop transition-transform hover:-translate-y-0.5">
+              Complete your profile <ArrowRight size={13} />
+            </Link>
+          ) : null}
+        </div>
+      </section>
+
+      {/* Trust — glass card, the product promise stays loud */}
+      <section className="relative overflow-hidden rounded-3xl border border-white/70 bg-white/60 p-6 shadow-card backdrop-blur-xl">
+        <div aria-hidden className="pointer-events-none absolute -right-12 -bottom-12 h-36 w-36 rounded-full bg-good-soft/90 blur-2xl" />
+        <div className="relative">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-good-soft"><ShieldCheck size={19} className="text-good" /></span>
+            <h2 className="font-extrabold">Trust first</h2>
+          </div>
+          <p className="mt-3 text-sm leading-relaxed text-muted">
+            Never pay a fee or share bank or ID details for a job application. Every employer here can be checked.
+          </p>
+          <Link href="/trust-check" className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-white/80 px-4 py-2.5 text-xs font-bold text-brand shadow-card transition hover:bg-brand-soft">
+            Run a Trust Check <ArrowRight size={13} />
+          </Link>
+        </div>
+      </section>
+    </aside>
   </div>;
 }

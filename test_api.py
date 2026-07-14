@@ -331,6 +331,28 @@ check("chat plain-text fallback returns raw reply",
       r.status_code == 200 and r.json()["reply"].startswith("plain text")
       and r.json()["profile_updates"] == {})
 
+# ---------------- saved jobs ----------------
+check("saved jobs starts empty",
+      client.get("/saved-jobs", headers=AUTH).json()["saved"] == [])
+r = client.put(f"/saved-jobs/{job_id}", headers=AUTH)
+check("save a job -> ok", r.status_code == 200 and r.json()["saved"] is True)
+check("save is idempotent",
+      client.put(f"/saved-jobs/{job_id}", headers=AUTH).status_code == 200)
+saved = client.get("/saved-jobs", headers=AUTH).json()["saved"]
+check("saved list has the job with detail joined",
+      len(saved) == 1 and saved[0]["id"] == job_id and saved[0]["title"])
+check("saved jobs are per-user",
+      client.get("/saved-jobs", headers={**AUTH, "X-User-Id": "user-2"}).json()["saved"] == [])
+check("saving a nonexistent job -> 404 (no dangling bookmark)",
+      client.put("/saved-jobs/999999", headers=AUTH).status_code == 404)
+check("unsave removes it",
+      client.delete(f"/saved-jobs/{job_id}", headers=AUTH).status_code == 200
+      and client.get("/saved-jobs", headers=AUTH).json()["saved"] == [])
+check("unsave twice -> 404",
+      client.delete(f"/saved-jobs/{job_id}", headers=AUTH).status_code == 404)
+# re-save so the later DELETE /user check can prove erasure covers saved_jobs
+client.put(f"/saved-jobs/{job_id}", headers=AUTH)
+
 # ---------------- model fallback (Gemini primary, Groq secondary) ----------------
 class _Boom:
     calls = 0
@@ -466,6 +488,8 @@ check("career twin gone after deletion",
       client.get("/career-twin", headers=AUTH).json()["career_twin"] == {})
 check("applications gone after deletion",
       client.get("/applications", headers=AUTH).json()["applications"] == [])
+check("saved jobs gone after deletion (clear_user covers saved_jobs)",
+      client.get("/saved-jobs", headers=AUTH).json()["saved"] == [])
 
 print()
 if FAILURES:

@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { BadgeCheck, Bookmark, Info } from "lucide-react";
+import { BadgeCheck, Info } from "lucide-react";
 import { FitRing } from "@/components/ProgressRing";
 import { ApplyButton } from "@/components/ApplyButton";
+import { SaveJobButton } from "@/components/SaveJobButton";
 import { matches as demoMatches } from "@/lib/data";
 import { ApiUnavailableError, apiFetch, DEMO_MODE, toMatchCard, type ApiMatch } from "@/lib/api";
 
@@ -11,11 +12,16 @@ export default async function MatchesPage() {
   let matchData = DEMO_MODE ? demoMatches : [];
   let sampleData = DEMO_MODE;
   let error = "";
+  let savedIds = new Set<number>();
 
   if (!DEMO_MODE) {
     try {
-      const { matches } = await apiFetch<{ matches: ApiMatch[] }>("/matches?limit=50");
+      const [{ matches }, savedRes] = await Promise.all([
+        apiFetch<{ matches: ApiMatch[] }>("/matches?limit=50"),
+        apiFetch<{ saved: { id: number }[] }>("/saved-jobs"),
+      ]);
       matchData = matches.map(toMatchCard);
+      savedIds = new Set(savedRes.saved.map((s) => s.id));
     } catch (caught) {
       if (caught instanceof ApiUnavailableError) {
         matchData = demoMatches;
@@ -54,7 +60,7 @@ export default async function MatchesPage() {
                 {m.verified ? <span className="mt-2 inline-flex items-center gap-1 rounded-md bg-good-soft px-2 py-0.5 text-xs font-bold text-good"><BadgeCheck size={12} /> Employer verified</span> : null}
                 <p className="mt-3 rounded-xl bg-surface px-4 py-3 text-sm leading-relaxed text-muted"><span className="font-bold text-ink">Why this match: </span>{m.reason}</p>
               </div>
-              <div className="flex items-center gap-3 sm:flex-col sm:items-end"><FitRing fit={m.fit} size={56} /><div className="flex gap-2"><button className="rounded-xl border border-line p-2.5 text-muted hover:bg-surface hover:text-brand" aria-label={`Save ${m.title}`}><Bookmark size={16} /></button><ApplyButton match={m} /></div></div>
+              <div className="flex items-center gap-3 sm:flex-col sm:items-end"><FitRing fit={m.fit} size={56} /><div className="flex gap-2"><SaveJobButton jobId={m.jobId} title={m.title} initialSaved={m.jobId ? savedIds.has(m.jobId) : false} /><ApplyButton match={m} /></div></div>
             </div>
           </article>
         ))}

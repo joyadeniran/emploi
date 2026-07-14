@@ -99,6 +99,16 @@ CREATE TABLE IF NOT EXISTS job_sources (
 CREATE INDEX IF NOT EXISTS idx_sources_active   ON job_sources(active);
 CREATE INDEX IF NOT EXISTS idx_sources_priority ON job_sources(priority);
 
+-- Jobs a user bookmarked from matches/browse (per-user, idempotent save).
+CREATE TABLE IF NOT EXISTS saved_jobs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    TEXT NOT NULL,
+    job_id     INTEGER NOT NULL REFERENCES ingested_jobs(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, job_id)
+);
+CREATE INDEX IF NOT EXISTS idx_saved_user ON saved_jobs(user_id);
+
 -- Structured audit / analytics events (stdout now; queried later).
 CREATE TABLE IF NOT EXISTS events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -234,8 +244,44 @@ def clear_user(conn, user_id: str) -> None:
     conn.execute("DELETE FROM career_twins WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM applications WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM matches WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM saved_jobs WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM events WHERE user_id = ?", (user_id,))
     conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Saved jobs — per-user bookmarks over ingested_jobs
+# ---------------------------------------------------------------------------
+
+def save_job(conn, user_id: str, job_id: int) -> bool:
+    """Bookmark a job for a user. Idempotent. Returns False when the job
+    doesn't exist (never creates a dangling bookmark)."""
+    exists = conn.execute("SELECT 1 FROM ingested_jobs WHERE id = ?",
+                          (job_id,)).fetchone()
+    if not exists:
+        return False
+    conn.execute("INSERT OR IGNORE INTO saved_jobs (user_id, job_id) VALUES (?, ?)",
+                 (user_id, job_id))
+    conn.commit()
+    return True
+
+
+def unsave_job(conn, user_id: str, job_id: int) -> bool:
+    """Remove a bookmark. Returns True if one existed."""
+    cur = conn.execute("DELETE FROM saved_jobs WHERE user_id = ? AND job_id = ?",
+                       (user_id, job_id))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def list_saved_jobs(conn, user_id: str, *, limit: int = 100) -> list:
+    """A user's saved jobs, newest bookmark first, with job detail joined."""
+    rows = conn.execute(
+        "SELECT s.created_at AS saved_at, j.* "
+        "FROM saved_jobs s JOIN ingested_jobs j ON s.job_id = j.id "
+        "WHERE s.user_id = ? ORDER BY s.id DESC LIMIT ?",
+        (user_id, limit)).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

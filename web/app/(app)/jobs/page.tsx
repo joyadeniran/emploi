@@ -2,6 +2,7 @@ import Link from "next/link";
 import { BadgeCheck, ClipboardPaste, Info, Search } from "lucide-react";
 import { ApiUnavailableError, apiFetch, DEMO_MODE, toJobCard, type ApiJob } from "@/lib/api";
 import { ApplyButton } from "@/components/ApplyButton";
+import { SaveJobButton } from "@/components/SaveJobButton";
 import { PagePlaceholder } from "@/components/PagePlaceholder";
 
 export const metadata = { title: "Browse Jobs — Emploi" };
@@ -22,13 +23,18 @@ export default async function JobsPage({
   let jobs: ApiJob[] = [];
   let total = 0;
   let offline = false;
+  let savedIds = new Set<number>();
   try {
     const qs = new URLSearchParams({ limit: "30" });
     if (q) qs.set("q", q);
     if (remoteOnly) qs.set("remote_only", "true");
-    const data = await apiFetch<{ jobs: ApiJob[]; total: number }>(`/jobs?${qs.toString()}`);
+    const [data, savedRes] = await Promise.all([
+      apiFetch<{ jobs: ApiJob[]; total: number }>(`/jobs?${qs.toString()}`),
+      apiFetch<{ saved: { id: number }[] }>("/saved-jobs"),
+    ]);
     jobs = data.jobs;
     total = data.total;
+    savedIds = new Set(savedRes.saved.map((s) => s.id));
   } catch (e) {
     if (e instanceof ApiUnavailableError) offline = true;
     else throw e;
@@ -105,6 +111,7 @@ export default async function JobsPage({
                   </div>
                 </div>
                 <div className="flex items-center gap-2 sm:border-l sm:border-line sm:pl-5">
+                  <SaveJobButton jobId={card.jobId} title={card.title} initialSaved={card.jobId ? savedIds.has(card.jobId) : false} />
                   <ApplyButton match={card} />
                 </div>
               </article>

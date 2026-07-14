@@ -576,6 +576,28 @@ def get_job(job_id: int, user_id: str = Depends(auth)):
     return {"job": dict(row)}
 
 
+@app.get("/saved-jobs")
+def list_saved(user_id: str = Depends(auth)):
+    """The user's bookmarked jobs, newest first, with job detail."""
+    return {"saved": db.list_saved_jobs(get_conn(), user_id)}
+
+
+@app.put("/saved-jobs/{job_id}")
+def save_job_endpoint(job_id: int, user_id: str = Depends(auth)):
+    """Bookmark an ingested job. Idempotent; 404 for a job that doesn't exist."""
+    if not db.save_job(get_conn(), user_id, job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    return {"ok": True, "saved": True}
+
+
+@app.delete("/saved-jobs/{job_id}")
+def unsave_job_endpoint(job_id: int, user_id: str = Depends(auth)):
+    """Remove a bookmark. 404 when it wasn't saved."""
+    if not db.unsave_job(get_conn(), user_id, job_id):
+        raise HTTPException(status_code=404, detail="not saved")
+    return {"ok": True, "saved": False}
+
+
 @app.get("/matches")
 def get_user_matches(limit: int = 50, user_id: str = Depends(rate_limit)):
     """Return the user's pre-computed match rankings (populated by the matching
