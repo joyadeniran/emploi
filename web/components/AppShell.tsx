@@ -25,6 +25,13 @@ export function AppShell({
           signOutAction={signOutAction}
         />
         <main className="flex-1 px-4 py-6 lg:px-8">{children}</main>
+        <footer className="border-t border-line px-4 py-3 text-center text-xs text-faint lg:px-8">
+          <a href="/privacy" className="hover:text-brand">Privacy Policy</a>
+          <span className="mx-2">·</span>
+          <a href="/terms" className="hover:text-brand">Terms of Service</a>
+          <span className="mx-2">·</span>
+          © 2026 Crost Limited
+        </footer>
       </div>
     </div>
   );
