@@ -14,6 +14,14 @@ with tempfile.TemporaryDirectory() as d:
  check("sends one digest", result["sent"]==1 and len(calls)==1)
  check("marks sent matches", conn.execute("SELECT notified FROM matches").fetchone()[0]==1)
  check("second run sends nothing", run(path,send_fn=lambda *args: calls.append(args))["sent"]==0)
+ # Diagnostics: sent:0 must be explainable from the summary alone
+ db.save_career_twin(conn,"noemail",{"name":"Bola"})  # twin without email
+ job2=db.upsert_job(conn,"t","2",{"title":"PM","company_name":"Acme"}); db.upsert_match(conn,"noemail",job2,80,"fit")
+ r2=run(path,send_fn=lambda *args: None)
+ check("summary counts users skipped for missing email", r2["skipped_no_email"]==1 and r2["sent"]==0)
+ check("summary reports sender_configured", r2["sender_configured"] is True)
+ r3=run(path,send_fn=None)
+ check("summary shows unconfigured sender honestly", r3["sender_configured"] is False)
 
 # ---- Brevo sender (mocked HTTP, no real network/API key) -------------------
 with patch("requests.post") as mock_post:

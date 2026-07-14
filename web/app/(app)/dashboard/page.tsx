@@ -30,6 +30,15 @@ export default async function DashboardPage() {
       const twinResult = await apiFetch<{ career_twin: Twin }>("/career-twin");
       twin = twinResult.career_twin ?? {};
       if (!twin.onboarding_complete) redirect("/create-career-twin");
+      // Backfill: twins completed before email-capture shipped have no
+      // stored email, which silently starves the notification digest.
+      // One-time repair per user, fire-and-forget.
+      if (!twin.email && session?.user?.email) {
+        apiFetch("/career-twin", {
+          method: "PATCH",
+          body: JSON.stringify({ data: { email: session.user.email } }),
+        }).catch(() => {});
+      }
       const [matchResult, applicationResult] = await Promise.all([
         apiFetch<{ matches: ApiMatch[] }>("/matches?limit=5"),
         apiFetch<{ applications: ApiApplication[] }>("/applications"),

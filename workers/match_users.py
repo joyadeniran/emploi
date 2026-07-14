@@ -122,6 +122,13 @@ def run(db_path: str, dry_run: bool = False,
 
         try:
             jobs = _get_fresh_unmatched_jobs(conn, user_id, days_fresh, max_jobs)
+            # Deterministic preference gate BEFORE any Gemini spend: jobs that
+            # plainly contradict the user's work-arrangement/location
+            # preferences are never scored (core.job_passes_preferences).
+            jobs, pref_skipped = core.filter_jobs_by_preferences(twin, jobs)
+            if pref_skipped:
+                log.info("user %s — %d jobs gated out by preferences",
+                         user_id[-8:], pref_skipped)
             if not jobs:
                 log.info("user %s — no fresh unmatched jobs", user_id[-8:])
                 continue
@@ -159,7 +166,9 @@ def run(db_path: str, dry_run: bool = False,
             log.info("user %s — %d matches written", user_id[-8:], user_matches)
             db.log_event(conn, "MatchesGenerated",
                          {"user_suffix": user_id[-8:], "matches": user_matches,
-                          "jobs_scored": len(jobs), "gemini_calls": total_calls},
+                          "jobs_scored": len(jobs),
+                          "preference_gated": pref_skipped,
+                          "gemini_calls": total_calls},
                          user_id=user_id)
 
         except Exception as exc:

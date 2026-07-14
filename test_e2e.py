@@ -190,6 +190,48 @@ ok &= check("chat updates: location set", twin_for_chat["location"] == "Lagos")
 ok &= check("chat updates: empty/unknown values are no-ops",
             apply_chat_updates({"name": "Ada"}, {"goals": "  ", "bogus": "x"}) == {"name": "Ada"})
 
+# 7e. Preference gating (deterministic pre-filter before LLM scoring)
+from core import job_passes_preferences, filter_jobs_by_preferences, build_match_prompt
+
+JOY_TWIN = {"remote_preference": "Remote or Hybrid",
+            "preferred_locations": ["Nigeria", "Anywhere in Africa"]}
+REMOTE_US = {"is_remote": True, "location": "Remote in the US"}
+ONSITE_SF = {"is_remote": False, "location": "SF, Seattle, NYC"}
+ONSITE_LAGOS = {"is_remote": False, "location": "Lagos, Nigeria"}
+
+ok &= check("prefs: remote job passes for remote-or-hybrid candidate",
+            job_passes_preferences(JOY_TWIN, REMOTE_US))
+ok &= check("prefs: on-site SF gated out for Nigeria-based remote candidate",
+            not job_passes_preferences(JOY_TWIN, ONSITE_SF))
+ok &= check("prefs: on-site Lagos passes via concrete 'Nigeria' preference",
+            job_passes_preferences(JOY_TWIN, ONSITE_LAGOS))
+ok &= check("prefs: 'Anywhere in Africa' wildcard doesn't make SF commutable",
+            not job_passes_preferences(
+                {"remote_preference": "Remote", "preferred_locations": ["Anywhere in Africa"]},
+                ONSITE_SF))
+ok &= check("prefs: no preferences at all -> everything passes (legacy profiles)",
+            job_passes_preferences({}, ONSITE_SF) and job_passes_preferences({"name": "Ada"}, REMOTE_US))
+ok &= check("prefs: on-site-only candidate with no locations -> nothing gated",
+            job_passes_preferences({"remote_preference": "On-site"}, ONSITE_SF))
+ok &= check("prefs: on-site-only candidate with concrete location gates mismatches",
+            not job_passes_preferences(
+                {"remote_preference": "On-site", "preferred_locations": ["Lagos"]}, ONSITE_SF))
+ok &= check("prefs: locations without arrangement — remote passes, wrong on-site fails",
+            job_passes_preferences({"preferred_locations": ["Nigeria"]}, REMOTE_US)
+            and not job_passes_preferences({"preferred_locations": ["Nigeria"]}, ONSITE_SF))
+kept, skipped = filter_jobs_by_preferences(JOY_TWIN, [REMOTE_US, ONSITE_SF, ONSITE_LAGOS])
+ok &= check("prefs: filter splits kept/skipped correctly", kept == [REMOTE_US, ONSITE_LAGOS] and skipped == 1)
+
+mp_pref = build_match_prompt(JOY_TWIN, [{"company": "Acme", "title": "PM",
+                                          "description": "x", "location": "Remote in the US",
+                                          "is_remote": True}])
+ok &= check("match prompt surfaces candidate preferences explicitly",
+            "Candidate preferences" in mp_pref and "Nigeria" in mp_pref
+            and "Remote or Hybrid" in mp_pref)
+ok &= check("match prompt includes job location context", "Remote in the US" in mp_pref)
+ok &= check("match prompt omits preferences block for legacy profiles",
+            "Candidate preferences" not in build_match_prompt(PROFILE, [{"company": "A", "title": "B", "description": "c"}]))
+
 # 8. Intent routing
 ok &= check("pdf upload -> process_pdf", detect_intent("", has_pdf=True)[0] == "process_pdf")
 ok &= check("'apply 2' -> apply('2')", detect_intent("apply 2") == ("apply", "2"))

@@ -44,23 +44,32 @@ def run(db_path, dry_run=False, send_fn=None):
     rows = conn.execute("SELECT m.user_id, COUNT(*) n, MAX(m.fit_score) top, ct.data "
                         "FROM matches m JOIN career_twins ct ON ct.user_id=m.user_id "
                         "WHERE m.notified=0 GROUP BY m.user_id").fetchall()
-    sent = 0
+    # `sent: 0` alone is ambiguous (no users? no emails? no sender?) — count
+    # every skip reason so a quiet run is diagnosable from the summary alone.
+    sent, skipped_no_email, send_failures = 0, 0, []
     for row in rows:
         try: twin = json.loads(row["data"])
         except Exception: twin = {}
         email = twin.get("email") if isinstance(twin, dict) else None
-        if not email: continue
+        if not email:
+            skipped_no_email += 1
+            continue
         subject = f"Your Career Twin found {row['n']} new jobs for you"
         body = f"Hi {twin.get('name') or 'there'},\n\nYour Career Twin found {row['n']} new matches. Best fit: {row['top']}/100.\n\nhttps://app.emploihq.com/matches"
         if not dry_run and send_fn:
             try: send_fn(email, subject, body)
-            except Exception: continue
+            except Exception as exc:
+                send_failures.append(str(exc)[:200])
+                continue
         elif not dry_run:
             continue
         if not dry_run:
             conn.execute("UPDATE matches SET notified=1, notified_at=datetime('now') WHERE user_id=? AND notified=0", (row["user_id"],)); conn.commit()
         sent += 1
-    result = {"ok": True, "sent": sent, "dry_run": dry_run}
+    result = {"ok": True, "sent": sent, "users_with_unnotified": len(rows),
+              "skipped_no_email": skipped_no_email,
+              "sender_configured": send_fn is not None,
+              "send_failures": send_failures, "dry_run": dry_run}
     if not dry_run: db.log_event(conn, "NotificationWorkerRun", result)
     return result
 

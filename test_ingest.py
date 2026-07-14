@@ -276,5 +276,22 @@ with tempfile.TemporaryDirectory() as tmpdir:
     ok &= check("batch_size=1 calls Gemini once per unmatched job",
                 result_b1["total_calls"] >= result_b1["total_matches"] > 0)
 
+    # Preference gating: a remote-only Nigeria-based user never has an
+    # on-site San Francisco job scored (no Gemini spend, no match row).
+    db.save_career_twin(conn, "u3", {
+        "name": "Remi", "onboarding_complete": True,
+        "remote_preference": "Remote", "preferred_locations": ["Nigeria"],
+        "skills": ["Ops"]})
+    db.upsert_job(conn, "test/src", "j7",
+                  {"title": "Onsite Office Manager", "company_name": "SF Co",
+                   "description": "in office daily", "is_remote": False,
+                   "location": "San Francisco, CA"})
+    match_run(db_path, model=FakeModel(), days_fresh=365)
+    u3_titles = [m["title"] for m in db.list_matches(conn, "u3")]
+    ok &= check("preference gate: on-site SF job never matched for remote-only user",
+                "Onsite Office Manager" not in u3_titles)
+    ok &= check("preference gate: remote jobs still matched for that user",
+                len(u3_titles) > 0 and all(t != "Onsite Office Manager" for t in u3_titles))
+
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

@@ -175,9 +175,35 @@ Document:
 {text}"""
 
 
+def _preferences_block(profile: dict) -> str:
+    """Explicit candidate-preferences lines for the match prompt. Empty
+    string when the profile has none (legacy profiles, tests)."""
+    lines = []
+    for key, label in (("remote_preference", "Work arrangement"),
+                       ("preferred_locations", "Locations"),
+                       ("preferred_roles", "Target roles"),
+                       ("preferred_industries", "Industries"),
+                       ("employment_type", "Employment type")):
+        value = profile.get(key)
+        if isinstance(value, list):
+            value = ", ".join(str(v) for v in value if str(v).strip())
+        if value and str(value).strip():
+            lines.append(f"- {label}: {value}")
+    if not lines:
+        return ""
+    return ("\nCandidate preferences (weigh these in the location/role parts "
+            "of the rubric — a remote-only candidate scored against an "
+            "on-site role in a country they didn't list must lose points, "
+            "and a remote role restricted to a region they didn't list is "
+            "a real gap the reason must name):\n" + "\n".join(lines) + "\n")
+
+
 def build_match_prompt(profile: dict, jobs: list) -> str:
     listing = "\n\n".join(
-        f"[{i}] {j.get('company','?')} — {j.get('title','?')}\n{str(j.get('description',''))[:600]}"
+        f"[{i}] {j.get('company','?')} — {j.get('title','?')}"
+        + (f" ({j.get('location')}{', remote' if j.get('is_remote') else ''})"
+           if j.get('location') or j.get('is_remote') else "")
+        + f"\n{str(j.get('description',''))[:600]}"
         for i, j in enumerate(jobs))
     return f"""You are a recruiter. Score how well this candidate fits EACH job below,
 using this rubric (fit_score = the weighted average it defines):
@@ -185,12 +211,62 @@ using this rubric (fit_score = the weighted average it defines):
 
 Candidate profile:
 {profile}
-
+{_preferences_block(profile)}
 Jobs:
 {listing}
 
 Return ONLY a JSON array, one item per job:
 [{{"index": 0, "fit_score": 0-100, "reason": "one short sentence naming the biggest strength AND biggest gap"}}]"""
+
+
+# ---------------- Preference gating (hard filter before LLM scoring) ----------------
+
+_OPEN_LOCATION_RE = re.compile(r"anywhere|global|worldwide|open to", re.IGNORECASE)
+
+
+def job_passes_preferences(profile: dict, job: dict) -> bool:
+    """Deterministic pre-filter: should this job even be scored for this
+    candidate? Errs toward inclusion — the LLM rubric still ranks what
+    passes; this only removes jobs that plainly contradict the candidate's
+    stated work-arrangement/location preferences.
+
+    Rules:
+    - No preferences on the profile -> everything passes (legacy profiles).
+    - Remote jobs always pass for remote-inclusive candidates ("Remote",
+      "Remote or Hybrid"); a remote role restricted to a region the
+      candidate didn't list is left to the LLM rubric to penalize —
+      substring matching can't resolve geography honestly.
+    - On-site/hybrid jobs need a CONCRETE preferred-location match
+      ("Nigeria" in "Lagos, Nigeria"). Wildcard preferences like
+      "Anywhere in Africa"/"Global" open remote acceptance but do NOT
+      make far-away on-site roles commutable, so they don't count here.
+    - A candidate with no concrete locations: on-site jobs fail if they
+      said remote-only/remote-or-hybrid (the job plainly contradicts the
+      stated arrangement), and pass otherwise (nothing to gate on).
+    """
+    remote_pref = str(profile.get("remote_preference") or "").lower()
+    prefs = profile.get("preferred_locations")
+    prefs = [str(p).strip() for p in prefs if str(p).strip()] if isinstance(prefs, list) else []
+    if not remote_pref and not prefs:
+        return True
+
+    job_remote = bool(job.get("is_remote"))
+    job_location = str(job.get("location") or "").lower()
+    concrete = [p for p in prefs if not _OPEN_LOCATION_RE.search(p)]
+    onsite_ok = (any(p.lower() in job_location for p in concrete) if concrete
+                 else "remote" not in remote_pref)
+
+    if job_remote:
+        # A remote job only contradicts an explicitly on-site-only candidate
+        # with concrete locations the job doesn't mention.
+        return "remote" in remote_pref or not remote_pref or onsite_ok
+    return onsite_ok
+
+
+def filter_jobs_by_preferences(profile: dict, jobs: list):
+    """Split jobs into (kept, skipped_count) using job_passes_preferences."""
+    kept = [j for j in jobs if job_passes_preferences(profile, j)]
+    return kept, len(jobs) - len(kept)
 
 
 def build_interview_prompt(profile: dict, job_text: str, company: str = "") -> str:
