@@ -21,6 +21,11 @@ ok = True
 
 # ---- utility helpers --------------------------------------------------------
 ok &= check("_strip_html removes tags", _strip_html("<p>Hello <b>world</b></p>") == "Hello world")
+# Greenhouse sends content HTML-escaped — regression: entity soup was stored verbatim
+ok &= check("_strip_html unescapes entity-encoded HTML before stripping",
+            _strip_html("&lt;div class=&quot;intro&quot;&gt;About &amp;amp; beyond&lt;/div&gt;")
+            == "About & beyond")
+ok &= check("_strip_html leaves plain text alone", _strip_html("Just words, no markup") == "Just words, no markup")
 ok &= check("_is_remote matches 'remote'", _is_remote("Fully remote position"))
 ok &= check("_is_remote case-insensitive", _is_remote("REMOTE"))
 ok &= check("_is_remote not triggered by unrelated text", not _is_remote("in-office Lagos"))

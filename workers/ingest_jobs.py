@@ -20,6 +20,7 @@ Schedule on Render Cron (daily, all sources):
 
 import argparse
 import hashlib
+import html as html_lib
 import json
 import logging
 import os
@@ -79,7 +80,12 @@ def _is_remote(text: str) -> bool:
 
 
 def _strip_html(text: str) -> str:
-    text = re.sub(r"<[^>]+>", " ", text or "")
+    # Greenhouse's `content` field arrives HTML-ESCAPED (&lt;div&gt;...), so
+    # unescape first or the tag-stripper sees no tags and the entity soup
+    # ends up in stored descriptions and match prompts (was a real bug).
+    # Unescape twice for double-encoded payloads; plain text is unaffected.
+    text = html_lib.unescape(html_lib.unescape(text or ""))
+    text = re.sub(r"<[^>]+>", " ", text)
     return re.sub(r"\s+", " ", text).strip()[:8000]
 
 
