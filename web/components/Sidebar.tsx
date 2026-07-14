@@ -18,7 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { Logo } from "./Logo";
-import { plan } from "@/lib/data";
+import { PlanCard } from "./PlanCard";
 
 const mainNav = [
   { href: "/dashboard", label: "Home", icon: Home },
@@ -83,7 +83,6 @@ export function Sidebar({
   onClose: () => void;
 }) {
   const pathname = usePathname();
-  const pct = Math.round((plan.used / plan.limit) * 100);
 
   const content = (
     <div className="flex h-full flex-col">
@@ -122,37 +121,8 @@ export function Sidebar({
         ))}
       </nav>
 
-      <div className="space-y-3 p-4">
-        <div className="rounded-2xl border border-line bg-surface p-4">
-          <div className="flex items-center gap-2 text-sm font-bold">
-            <Sparkles size={16} className="text-brand" />
-            Upgrade to Pro
-          </div>
-          <p className="mt-1.5 text-xs leading-relaxed text-muted">
-            Unlock advanced insights, priority matches and more.
-          </p>
-          <button className="mt-3 w-full rounded-xl bg-gradient-to-r from-brand-violet to-brand-indigo px-4 py-2.5 text-sm font-bold text-white shadow-pop transition-transform hover:-translate-y-0.5">
-            Upgrade Now
-          </button>
-        </div>
-
-        <div className="rounded-2xl border border-line p-4">
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-bold">{plan.name} Plan</span>
-            <button className="text-xs font-bold text-brand hover:underline">
-              Upgrade
-            </button>
-          </div>
-          <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-line">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-brand-violet to-brand-indigo"
-              style={{ width: `${pct}%` }}
-            />
-          </div>
-          <p className="mt-2 text-xs text-muted">
-            {plan.used}/{plan.limit} applications this month
-          </p>
-        </div>
+      <div className="p-4">
+        <PlanCard />
       </div>
     </div>
   );

@@ -8,7 +8,9 @@ from db import (connect, save_career_twin, load_career_twin,
                 update_application_status, clear_user,
                 upsert_job, list_jobs, count_jobs,
                 upsert_trust_record, get_trust_record,
-                upsert_match, list_matches, log_event)
+                upsert_match, list_matches, log_event,
+                get_subscription, upsert_subscription,
+                log_generation, count_generations_this_month)
 
 
 def check(label, cond):
@@ -151,6 +153,33 @@ upsert_match(jconn, "u2", id1, 90, "revised fit")  # same user+job
 ok &= check("upsert_match deduplicates on user+job",
             len(list_matches(jconn, "u2")) == 1
             and list_matches(jconn, "u2")[0]["fit_score"] == 90)
+
+# 16. billing: subscription defaults + upsert + generation quota counting
+ok &= check("get_subscription defaults to free for a never-billed user",
+            get_subscription(jconn, "never-billed")["tier"] == "free")
+upsert_subscription(jconn, "u3", tier="pro", status="active",
+                    paystack_customer_code="CUS_1")
+sub = get_subscription(jconn, "u3")
+ok &= check("upsert_subscription creates a row", sub["tier"] == "pro" and sub["status"] == "active")
+upsert_subscription(jconn, "u3", status="cancelled")
+ok &= check("upsert_subscription updates only the given fields (tier untouched)",
+            get_subscription(jconn, "u3")["tier"] == "pro"
+            and get_subscription(jconn, "u3")["status"] == "cancelled")
+upsert_subscription(jconn, "u3", tier="max", nonsense="x")  # unknown field must be dropped, not error
+ok &= check("upsert_subscription ignores unknown fields (no SQL injection surface)",
+            get_subscription(jconn, "u3")["tier"] == "max"
+            and "nonsense" not in get_subscription(jconn, "u3"))
+
+ok &= check("count_generations_this_month starts at 0", count_generations_this_month(jconn, "u4") == 0)
+log_generation(jconn, "u4")
+log_generation(jconn, "u4")
+ok &= check("log_generation increments the monthly count", count_generations_this_month(jconn, "u4") == 2)
+ok &= check("generation count is per-user", count_generations_this_month(jconn, "u3") == 0)
+
+clear_user(jconn, "u4")
+ok &= check("clear_user wipes generation_log", count_generations_this_month(jconn, "u4") == 0)
+clear_user(jconn, "u3")
+ok &= check("clear_user resets billing to free", get_subscription(jconn, "u3")["tier"] == "free")
 
 # 16. employer_trust_records roundtrip
 fake_result = {"score": 78, "level": "High trust",

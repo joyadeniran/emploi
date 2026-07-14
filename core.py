@@ -8,6 +8,21 @@ from datetime import datetime
 
 PROFILE_KEYS = ["name", "title", "location", "experience", "skills", "education", "goals"]
 
+# ---------------- Billing tiers ----------------
+# Business decision (Joy, 2026-07-14): Free/Pro/Max, priced in Naira/month.
+# The number here is what's actually enforced server-side; TIER_PRICES_NGN
+# is display-only (Paystack plan codes are the real source of truth for
+# what a subscription actually charges — these are shown in the UI and
+# used to sanity-check the plan code environment vars point at the right
+# amount, never used to charge anyone directly).
+TIER_LIMITS = {"free": 10, "pro": 50, "max": 300}
+TIER_PRICES_NGN = {"free": 0, "pro": 3500, "max": 7500}
+TIER_ORDER = ["free", "pro", "max"]
+
+
+def monthly_generation_limit(tier: str) -> int:
+    return TIER_LIMITS.get(tier, TIER_LIMITS["free"])
+
 SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills")
 _skill_cache = {}
 

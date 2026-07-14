@@ -397,6 +397,103 @@ check("unsave twice -> 404",
 # re-save so the later DELETE /user check can prove erasure covers saved_jobs
 client.put(f"/saved-jobs/{job_id}", headers=AUTH)
 
+# ---------------- billing (Paystack) — defaults & quota gating ----------------
+check("billing status defaults to free",
+      client.get("/billing/status", headers=AUTH).json()["tier"] == "free")
+status = client.get("/billing/status", headers=AUTH).json()
+check("free tier limit is 10", status["limit"] == 10)
+check("used_this_month reflects the 2 successful generations above (sync + async)",
+      status["used_this_month"] == 2)
+
+check("checkout without PAYSTACK_SECRET_KEY -> 503",
+      client.post("/billing/checkout", headers=AUTH, json={"tier": "pro"}).status_code == 503)
+
+m.PAYSTACK_SECRET_KEY = "sk_test_fake"
+m.PAYSTACK_PLAN_CODES = {"pro": "PLN_pro", "max": "PLN_max"}
+
+check("checkout rejects an unknown tier",
+      client.post("/billing/checkout", headers=AUTH, json={"tier": "enterprise"}).status_code == 422)
+check("checkout requires an email on the Career Twin",
+      client.post("/billing/checkout", headers=AUTH, json={"tier": "pro"}).status_code == 422)
+
+client.patch("/career-twin", headers=AUTH, json={"data": {"email": "ada@example.com"}})
+
+init_calls = []
+m.billing.initialize_transaction = lambda *a, **k: (init_calls.append((a, k)) or {
+    "authorization_url": "https://checkout.paystack.com/xyz", "reference": "ref_abc"})
+r = client.post("/billing/checkout", headers=AUTH, json={"tier": "pro"})
+check("checkout returns Paystack's authorization_url",
+      r.status_code == 200 and r.json()["authorization_url"] == "https://checkout.paystack.com/xyz")
+check("checkout passes the plan code and price for the requested tier",
+      init_calls[0][0][2] == 3500 and init_calls[0][0][3] == "PLN_pro")
+
+m.billing.verify_transaction = lambda *a, **k: {
+    "status": "success", "metadata": {"user_id": "user-1", "tier": "pro"},
+    "customer": {"customer_code": "CUS_1", "email": "ada@example.com"}}
+r = client.post("/billing/verify", headers=AUTH, json={"reference": "ref_abc"})
+check("verify activates the tier", r.status_code == 200 and r.json()["tier"] == "pro")
+status_after_verify = client.get("/billing/status", headers=AUTH).json()
+check("billing status now reflects Pro with the raised limit",
+      status_after_verify["tier"] == "pro" and status_after_verify["limit"] == 50)
+
+check("verify rejects a transaction for a different user's metadata",
+      client.post("/billing/verify", headers={**AUTH, "X-User-Id": "someone-else"},
+                  json={"reference": "ref_abc"}).status_code == 404)
+
+check("cancel with no known Paystack subscription code -> 409",
+      client.post("/billing/cancel", headers=AUTH).status_code == 409)
+
+# ---- webhook: signature required, then drives subscription lifecycle ----
+import hmac as _hmac, hashlib as _hashlib, json as _json_lib
+
+def _signed(body_dict):
+    raw = _json_lib.dumps(body_dict).encode()
+    sig = _hmac.new(m.PAYSTACK_SECRET_KEY.encode(), raw, _hashlib.sha512).hexdigest()
+    return raw, sig
+
+raw, sig = _signed({"event": "charge.success", "data": {}})
+check("webhook rejects a missing/invalid signature",
+      client.post("/billing/webhook", content=raw, headers={"x-paystack-signature": "bad"}).status_code == 401)
+
+raw, sig = _signed({"event": "subscription.create",
+                    "data": {"subscription_code": "SUB_123", "customer": {"customer_code": "CUS_1"}}})
+r = client.post("/billing/webhook", content=raw, headers={"x-paystack-signature": sig})
+check("webhook accepts a validly signed event", r.status_code == 200)
+row = _conn.execute("SELECT paystack_subscription_code FROM subscriptions WHERE user_id = 'user-1'").fetchone()
+check("subscription.create webhook records the subscription code", row["paystack_subscription_code"] == "SUB_123")
+
+# Now cancel can actually reach Paystack (mocked) and succeed
+m.billing.fetch_subscription = lambda *a, **k: {"email_token": "tok_1"}
+disable_called = []
+m.billing.disable_subscription = lambda *a, **k: disable_called.append(a)
+r = client.post("/billing/cancel", headers=AUTH)
+check("cancel succeeds once a subscription code is on file", r.status_code == 200)
+check("cancel marks status cancelled (tier stays until Paystack confirms via webhook)",
+      client.get("/billing/status", headers=AUTH).json()["tier"] == "pro")
+
+raw, sig = _signed({"event": "subscription.disable", "data": {"subscription_code": "SUB_123"}})
+client.post("/billing/webhook", content=raw, headers={"x-paystack-signature": sig})
+check("subscription.disable webhook downgrades the user to free",
+      client.get("/billing/status", headers=AUTH).json()["tier"] == "free")
+
+raw, sig = _signed({"event": "invoice.payment_failed",
+                    "data": {"subscription": {"subscription_code": "SUB_123"}}})
+client.post("/billing/webhook", content=raw, headers={"x-paystack-signature": sig})
+row = _conn.execute("SELECT status FROM subscriptions WHERE user_id = 'user-1'").fetchone()
+check("invoice.payment_failed webhook marks the subscription past_due", row["status"] == "past_due")
+
+# ---- quota gate: /applications/generate 402s once the tier's monthly cap is hit ----
+_db.upsert_subscription(_conn, "quota-user", tier="free")
+for _ in range(10):
+    _db.log_generation(_conn, "quota-user")
+_db.save_career_twin(_conn, "quota-user", {"name": "Cap Reached"})
+m.app.state.model_factory = lambda: FakeModel("Dear TestCo,\n\nFit Score: 90/100")
+r = client.post("/applications/generate?background=false",
+                headers={**AUTH, "X-User-Id": "quota-user"},
+                json={"job": {"description": "Build products"}})
+check("generation is blocked with 402 once the monthly cap is reached",
+      r.status_code == 402 and "10" in r.json()["detail"])
+
 # ---------------- model fallback (Gemini primary, Groq secondary) ----------------
 class _Boom:
     calls = 0
@@ -534,6 +631,11 @@ check("applications gone after deletion",
       client.get("/applications", headers=AUTH).json()["applications"] == [])
 check("saved jobs gone after deletion (clear_user covers saved_jobs)",
       client.get("/saved-jobs", headers=AUTH).json()["saved"] == [])
+billing_after_delete = client.get("/billing/status", headers=AUTH).json()
+check("billing subscription reset to free after deletion (clear_user covers subscriptions)",
+      billing_after_delete["tier"] == "free")
+check("generation usage reset after deletion (clear_user covers generation_log)",
+      billing_after_delete["used_this_month"] == 0)
 
 print()
 if FAILURES:

@@ -109,6 +109,29 @@ CREATE TABLE IF NOT EXISTS saved_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_saved_user ON saved_jobs(user_id);
 
+-- Billing: one row per user, defaults to free until Paystack activates one.
+CREATE TABLE IF NOT EXISTS subscriptions (
+    user_id                   TEXT PRIMARY KEY,
+    tier                       TEXT NOT NULL DEFAULT 'free',   -- free | pro | max
+    status                     TEXT NOT NULL DEFAULT 'active', -- active | past_due | cancelled
+    paystack_customer_code     TEXT,
+    paystack_subscription_code TEXT,
+    paystack_email             TEXT,
+    current_period_end         TEXT,
+    created_at                 TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at                 TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- One row per successfully completed tailored-application generation —
+-- the AI-cost-driving action quotas are actually measured against (not
+-- "applications", since the skip-draft/direct-apply path costs nothing).
+CREATE TABLE IF NOT EXISTS generation_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_generation_log_user_time ON generation_log(user_id, created_at);
+
 -- Structured audit / analytics events (stdout now; queried later).
 CREATE TABLE IF NOT EXISTS events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -245,8 +268,66 @@ def clear_user(conn, user_id: str) -> None:
     conn.execute("DELETE FROM applications WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM matches WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM saved_jobs WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM subscriptions WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM generation_log WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM events WHERE user_id = ?", (user_id,))
     conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Billing — subscription state + generation quota usage
+# ---------------------------------------------------------------------------
+
+def get_subscription(conn, user_id: str) -> dict:
+    """A user's billing state. Every user is implicitly 'free' until a row
+    exists — never fabricate a paid tier for a user we've never billed."""
+    row = conn.execute("SELECT * FROM subscriptions WHERE user_id = ?",
+                       (user_id,)).fetchone()
+    if row:
+        return dict(row)
+    return {"user_id": user_id, "tier": "free", "status": "active",
+           "paystack_customer_code": None, "paystack_subscription_code": None,
+           "paystack_email": None, "current_period_end": None}
+
+
+def upsert_subscription(conn, user_id: str, **fields) -> None:
+    """Create or update a user's billing row. Only known columns are
+    written; unspecified fields keep their existing value."""
+    existing = conn.execute("SELECT 1 FROM subscriptions WHERE user_id = ?",
+                            (user_id,)).fetchone()
+    allowed = {"tier", "status", "paystack_customer_code",
+              "paystack_subscription_code", "paystack_email",
+              "current_period_end"}
+    fields = {k: v for k, v in fields.items() if k in allowed}
+    if existing:
+        if fields:
+            sets = ", ".join(f"{k} = ?" for k in fields)
+            conn.execute(
+                f"UPDATE subscriptions SET {sets}, updated_at = datetime('now') "
+                f"WHERE user_id = ?", (*fields.values(), user_id))
+    else:
+        cols = ["user_id"] + list(fields.keys())
+        placeholders = ", ".join(["?"] * len(cols))
+        conn.execute(
+            f"INSERT INTO subscriptions ({', '.join(cols)}) VALUES ({placeholders})",
+            (user_id, *fields.values()))
+    conn.commit()
+
+
+def log_generation(conn, user_id: str) -> None:
+    """Record one completed tailored-application generation against the
+    user's monthly quota. Called only on a SUCCESSFUL job — a failed or
+    aborted generation must never count against the user."""
+    conn.execute("INSERT INTO generation_log (user_id) VALUES (?)", (user_id,))
+    conn.commit()
+
+
+def count_generations_this_month(conn, user_id: str) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM generation_log WHERE user_id = ? "
+        "AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')",
+        (user_id,)).fetchone()
+    return row["n"] if row else 0
 
 
 # ---------------------------------------------------------------------------

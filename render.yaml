@@ -28,6 +28,14 @@ services:
         sync: false
       - key: R2_BUCKET
         sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false          # unset = /billing/* returns 503, same posture as GEMINI_API_KEY
+      - key: PAYSTACK_PRO_PLAN_CODE
+        sync: false          # Paystack dashboard > Products > Plans; ₦3,500/mo
+      - key: PAYSTACK_MAX_PLAN_CODE
+        sync: false          # Paystack dashboard > Products > Plans; ₦7,500/mo
+      - key: WEB_APP_URL
+        value: https://app.emploihq.com
       - key: PYTHON_VERSION
         value: 3.12.0
     disk:

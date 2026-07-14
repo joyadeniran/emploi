@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import core  # noqa: E402
 import db  # noqa: E402
 import verify  # noqa: E402
+import billing  # noqa: E402
 import workers.ingest_jobs as ingest_worker  # noqa: E402
 import workers.match_users as match_worker  # noqa: E402
 import workers.verify_employers as verify_worker  # noqa: E402
@@ -44,6 +45,17 @@ logging.basicConfig(level=logging.INFO)
 
 API_KEY = os.getenv("EMPLOI_API_KEY", "")
 DB_PATH = os.getenv("EMPLOI_DB_PATH", "emploi.sqlite3")
+
+# Billing — Paystack. Plan codes are created once in the Paystack dashboard
+# (Products > Plans) and referenced by code, never by amount; TIER_PRICES_NGN
+# in core.py is display-only. Unset PAYSTACK_SECRET_KEY = billing endpoints
+# 503, same degradation posture as GEMINI_API_KEY.
+PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "")
+PAYSTACK_PLAN_CODES = {
+    "pro": os.getenv("PAYSTACK_PRO_PLAN_CODE", ""),
+    "max": os.getenv("PAYSTACK_MAX_PLAN_CODE", ""),
+}
+WEB_APP_URL = os.getenv("WEB_APP_URL", "https://app.emploihq.com")
 
 if not API_KEY:
     log.warning("EMPLOI_API_KEY not set — API running in OPEN DEV MODE. "
@@ -470,7 +482,8 @@ def generate_application_endpoint(body: GenerateIn, response: Response,
     that genuinely wants to block).
     """
     model = require_model()
-    profile = db.load_career_twin(get_conn(), user_id)
+    conn = get_conn()
+    profile = db.load_career_twin(conn, user_id)
     if not profile:
         raise HTTPException(status_code=409,
                             detail="complete Career Twin setup first")
@@ -480,10 +493,20 @@ def generate_application_endpoint(body: GenerateIn, response: Response,
         raise HTTPException(status_code=422, detail="job description is required")
     company = str(job.get("company") or job.get("company_name") or "")
 
+    sub = db.get_subscription(conn, user_id)
+    limit = core.monthly_generation_limit(sub["tier"])
+    used = db.count_generations_this_month(conn, user_id)
+    if used >= limit:
+        raise HTTPException(
+            status_code=402,
+            detail=f"You've used all {limit} tailored drafts on the {sub['tier'].title()} "
+                   f"plan this month. Upgrade for more, or skip the draft and apply directly.")
+
     if not background:
         response.status_code = 200
         result = run_extraction(core.generate_application, model, profile, job_text,
                                 company, body.include_review)
+        db.log_generation(conn, user_id)
         return {"generated": result}
 
     job_id = uuid.uuid4().hex
@@ -493,6 +516,7 @@ def generate_application_endpoint(body: GenerateIn, response: Response,
         try:
             result = core.generate_application(model, profile, job_text, company,
                                                body.include_review)
+            db.log_generation(get_conn(), user_id)
             _set_job(job_id, status="done", result=result)
         except Exception as exc:
             log.exception("generation job %s failed", job_id)
@@ -518,6 +542,168 @@ def get_generation_job(job_id: str, user_id: str = Depends(auth)):
     elif job["status"] == "error":
         payload["error"] = job["error"]
     return payload
+
+
+# ---------------------------------------------------------------------------
+# Billing — Paystack. Paystack's subscription lifecycle is authoritative;
+# our `subscriptions` table is a cache kept in sync by the webhook below
+# (the durable path) and /billing/verify (instant feedback right after
+# checkout, since the webhook can lag a few seconds behind the redirect).
+# ---------------------------------------------------------------------------
+
+class CheckoutIn(BaseModel):
+    tier: str  # "pro" | "max"
+
+
+class VerifyIn(BaseModel):
+    reference: str
+
+
+def require_paystack() -> None:
+    if not PAYSTACK_SECRET_KEY:
+        raise HTTPException(status_code=503,
+                            detail="Billing is not configured on this server.")
+
+
+@app.get("/billing/status")
+def billing_status(user_id: str = Depends(auth)):
+    conn = get_conn()
+    sub = db.get_subscription(conn, user_id)
+    tier = sub["tier"]
+    return {
+        "tier": tier,
+        "status": sub["status"],
+        "current_period_end": sub.get("current_period_end"),
+        "used_this_month": db.count_generations_this_month(conn, user_id),
+        "limit": core.monthly_generation_limit(tier),
+        "prices_ngn": core.TIER_PRICES_NGN,
+    }
+
+
+@app.post("/billing/checkout")
+def billing_checkout(body: CheckoutIn, user_id: str = Depends(auth)):
+    require_paystack()
+    if body.tier not in ("pro", "max"):
+        raise HTTPException(status_code=422, detail="tier must be 'pro' or 'max'")
+    plan_code = PAYSTACK_PLAN_CODES.get(body.tier, "")
+    if not plan_code:
+        raise HTTPException(status_code=503,
+                            detail=f"The {body.tier} plan isn't configured yet — try again shortly.")
+    conn = get_conn()
+    twin = db.load_career_twin(conn, user_id)
+    email = (twin or {}).get("email") or ""
+    if not email:
+        raise HTTPException(status_code=422,
+                            detail="We need your email on file before checkout — "
+                                   "complete your Career Twin first.")
+    try:
+        data = billing.initialize_transaction(
+            PAYSTACK_SECRET_KEY, email, core.TIER_PRICES_NGN[body.tier], plan_code,
+            callback_url=f"{WEB_APP_URL}/settings?billing=return",
+            metadata={"user_id": user_id, "tier": body.tier})
+    except Exception:
+        log.exception("Paystack checkout init failed for user %s", user_id[-8:])
+        raise HTTPException(status_code=502,
+                            detail="Couldn't start checkout — try again in a moment.")
+    return {"authorization_url": data["authorization_url"], "reference": data["reference"]}
+
+
+@app.post("/billing/verify")
+def billing_verify(body: VerifyIn, user_id: str = Depends(auth)):
+    """Called by the settings page right after the Paystack redirect, for
+    instant UI feedback. The webhook below is still what's authoritative —
+    this just avoids a user staring at 'Free' for the few seconds before it
+    arrives."""
+    require_paystack()
+    try:
+        data = billing.verify_transaction(PAYSTACK_SECRET_KEY, body.reference)
+    except Exception:
+        raise HTTPException(status_code=502, detail="Couldn't verify that payment yet — try refreshing shortly.")
+    metadata = data.get("metadata") or {}
+    tier = metadata.get("tier")
+    if metadata.get("user_id") != user_id or tier not in ("pro", "max"):
+        raise HTTPException(status_code=404, detail="transaction not found for this account")
+    conn = get_conn()
+    # paystack_subscription_code isn't in the verify response — Paystack
+    # creates the subscription async after the charge and reports its code
+    # via the subscription.create webhook, handled below.
+    db.upsert_subscription(
+        conn, user_id, tier=tier, status="active",
+        paystack_customer_code=(data.get("customer") or {}).get("customer_code"),
+        paystack_email=(data.get("customer") or {}).get("email"))
+    return {"tier": tier, "status": "active"}
+
+
+@app.post("/billing/cancel")
+def billing_cancel(user_id: str = Depends(auth)):
+    require_paystack()
+    conn = get_conn()
+    sub = db.get_subscription(conn, user_id)
+    if sub["tier"] == "free" or not sub.get("paystack_subscription_code"):
+        raise HTTPException(status_code=409, detail="no active paid subscription to cancel")
+    try:
+        details = billing.fetch_subscription(PAYSTACK_SECRET_KEY, sub["paystack_subscription_code"])
+        billing.disable_subscription(PAYSTACK_SECRET_KEY, sub["paystack_subscription_code"],
+                                     details.get("email_token", ""))
+    except Exception:
+        log.exception("Paystack cancel failed for user %s", user_id[-8:])
+        raise HTTPException(status_code=502, detail="Couldn't cancel with Paystack — try again shortly.")
+    db.upsert_subscription(conn, user_id, status="cancelled")
+    return {"ok": True}
+
+
+@app.post("/billing/webhook")
+async def billing_webhook(request: Request):
+    """Paystack's authoritative event stream. No X-API-Key/X-User-Id here —
+    Paystack authenticates itself via the HMAC signature on the raw body,
+    not our normal service-to-service headers."""
+    require_paystack()
+    raw = await request.body()
+    signature = request.headers.get("x-paystack-signature", "")
+    if not billing.verify_webhook_signature(PAYSTACK_SECRET_KEY, raw, signature):
+        raise HTTPException(status_code=401, detail="invalid signature")
+
+    event = billing.parse_webhook_event(raw)
+    kind = event.get("event", "")
+    data = event.get("data", {})
+    conn = get_conn()
+
+    if kind == "charge.success":
+        metadata = data.get("metadata") or {}
+        user_id = metadata.get("user_id")
+        tier = metadata.get("tier")
+        if user_id and tier in ("pro", "max"):
+            db.upsert_subscription(
+                conn, user_id, tier=tier, status="active",
+                paystack_customer_code=(data.get("customer") or {}).get("customer_code"),
+                paystack_email=(data.get("customer") or {}).get("email"))
+    elif kind == "subscription.create":
+        # Paystack creates the subscription asynchronously after the first
+        # successful charge; this is the only reliable place we learn its
+        # code, which /billing/cancel later needs to disable it.
+        customer_code = (data.get("customer") or {}).get("customer_code")
+        sub_code = data.get("subscription_code", "")
+        if customer_code and sub_code:
+            conn.execute(
+                "UPDATE subscriptions SET paystack_subscription_code = ?, "
+                "updated_at = datetime('now') WHERE paystack_customer_code = ?",
+                (sub_code, customer_code))
+            conn.commit()
+    elif kind in ("subscription.disable", "subscription.not_renew"):
+        code = data.get("subscription_code", "")
+        if code:
+            conn.execute(
+                "UPDATE subscriptions SET tier = 'free', status = 'cancelled', "
+                "updated_at = datetime('now') WHERE paystack_subscription_code = ?", (code,))
+            conn.commit()
+    elif kind == "invoice.payment_failed":
+        code = (data.get("subscription") or {}).get("subscription_code", "")
+        if code:
+            conn.execute(
+                "UPDATE subscriptions SET status = 'past_due', updated_at = datetime('now') "
+                "WHERE paystack_subscription_code = ?", (code,))
+            conn.commit()
+    return {"received": True}
 
 
 @app.patch("/applications/{app_id}")
