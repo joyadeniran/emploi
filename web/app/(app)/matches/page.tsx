@@ -120,7 +120,7 @@ export default async function MatchesPage({
         {!sampleData && !error && matchData.length === 0 ? (
           <div className="rounded-2xl border border-line bg-white p-10 text-center shadow-card">
             <h2 className="font-extrabold">Your Career Twin is getting to work</h2>
-            <p className="mt-2 text-sm text-muted">No matches yet. We'll show verified opportunities here after the next matching run.</p>
+            <p className="mt-2 text-sm text-muted">No matches yet. We&apos;ll show verified opportunities here after the next matching run.</p>
           </div>
         ) : null}
       </div>
