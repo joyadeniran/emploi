@@ -402,8 +402,8 @@ check("billing status defaults to free",
       client.get("/billing/status", headers=AUTH).json()["tier"] == "free")
 status = client.get("/billing/status", headers=AUTH).json()
 check("free tier limit is 10", status["limit"] == 10)
-check("used_this_month reflects the 2 successful generations above (sync + async)",
-      status["used_this_month"] == 2)
+check("used_this_month reflects the 1 application created above",
+      status["used_this_month"] == 1)
 
 check("checkout without PAYSTACK_SECRET_KEY -> 503",
       client.post("/billing/checkout", headers=AUTH, json={"tier": "pro"}).status_code == 503)

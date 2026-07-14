@@ -574,7 +574,7 @@ def billing_status(user_id: str = Depends(auth)):
         "tier": tier,
         "status": sub["status"],
         "current_period_end": sub.get("current_period_end"),
-        "used_this_month": db.count_generations_this_month(conn, user_id),
+        "used_this_month": db.count_applications_this_month(conn, user_id),
         "limit": core.monthly_generation_limit(tier),
         "prices_ngn": core.TIER_PRICES_NGN,
     }

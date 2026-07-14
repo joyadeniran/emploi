@@ -256,6 +256,13 @@ def list_applications(conn, user_id: str) -> list:
     return out
 
 
+def count_applications_this_month(conn, user_id: str) -> int:
+    return conn.execute(
+        "SELECT COUNT(*) FROM applications WHERE user_id = ? "
+        "AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')",
+        (user_id,)).fetchone()[0]
+
+
 def update_application_status(conn, app_id: int, status: str) -> None:
     conn.execute("UPDATE applications SET status = ? WHERE id = ?",
                  (status, app_id))
