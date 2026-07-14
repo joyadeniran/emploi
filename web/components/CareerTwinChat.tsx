@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Send, Sparkles } from "lucide-react";
+import { Loader2, Paperclip, Send, Sparkles } from "lucide-react";
 
 type Msg = { role: "user" | "assistant"; content: string; updates?: string[] };
 
 const WELCOME: Msg = {
   role: "assistant",
   content:
-    "Hi, I'm your Career Twin. Ask me anything — interview advice, how to position your experience, whether a role fits you. If you tell me something new about your goals or skills, I'll remember it in your profile.",
+    "Hi, I'm your Career Twin. Ask me anything — interview advice, how to position your experience, whether a role fits you. If you tell me something new about your goals or skills, I'll remember it in your profile. You can also attach a PDF: a new CV refreshes your profile, a job listing gets scored against it.",
 };
 
 const UPDATE_LABELS: Record<string, string> = {
@@ -27,6 +27,30 @@ export function CareerTwinChat() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function attach(file: File) {
+    if (busy) return;
+    setError("");
+    setMessages((prev) => [...prev, { role: "user", content: `📎 ${file.name}` }]);
+    setBusy(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/chat/attach", { method: "POST", body: formData });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "attachment failed");
+      setMessages((prev) => [...prev, {
+        role: "assistant",
+        content: String(data.reply ?? "Done."),
+        updates: data.kind === "cv" ? ["Career Twin refreshed"] : undefined,
+      }]);
+    } catch (e) {
+      setError(e instanceof Error && e.message ? e.message : "I couldn't read that file — try a text-based PDF.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -115,6 +139,26 @@ export function CareerTwinChat() {
         onSubmit={(e) => { e.preventDefault(); send(); }}
         className="mt-4 flex items-end gap-2"
       >
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/pdf"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) attach(file);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
+          aria-label="Attach a PDF (CV or job listing)"
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-line bg-white text-muted transition hover:border-brand/40 hover:text-brand disabled:opacity-50"
+        >
+          <Paperclip size={18} />
+        </button>
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}

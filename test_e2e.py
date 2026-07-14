@@ -167,6 +167,10 @@ m = FakeModel([CHAT_JSON])
 chat_turn(m, PROFILE, "question", "user: earlier\nassistant: earlier reply")
 ok &= check("chat prompt includes history + question",
             "earlier reply" in m.calls[0] and "question" in m.calls[0])
+# The chat must know the product it lives in (skills/emploi_context.md)
+ok &= check("chat prompt embeds the product-context skill",
+            "Trust Check" in m.calls[0] and "Browse Jobs" in m.calls[0]
+            and "never pay a fee" in m.calls[0])
 
 # 7d. apply_chat_updates: legacy chat keys merged onto the Career Twin schema
 from core import apply_chat_updates

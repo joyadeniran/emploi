@@ -63,6 +63,7 @@ RATE_LIMITS = {
     "/matches": (30, 60),
     "/applications/generate": (10, 3600),
     "/chat": (20, 60),
+    "/chat/attach": (5, 300),
 }
 
 
@@ -73,14 +74,67 @@ def get_conn():
     return get_conn._conn
 
 
+class GroqModel:
+    """Duck-typed .generate_content over Groq's OpenAI-compatible API.
+    Fallback provider: Gemini free tier exhausts fast (observed in prod on
+    launch day), and every AI feature dying with the primary provider is
+    not acceptable. Same contract as GenerativeModel: returns an object
+    with .text; raises on failure so FallbackModel/run_extraction see it."""
+
+    def __init__(self, api_key: str, model_name: str):
+        self._key = api_key
+        self._model = model_name
+
+    def generate_content(self, prompt: str):
+        import requests
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {self._key}",
+                     "Content-Type": "application/json"},
+            json={"model": self._model,
+                  "messages": [{"role": "user", "content": prompt}]},
+            timeout=60)
+        resp.raise_for_status()
+
+        class R:
+            pass
+        result = R()
+        result.text = resp.json()["choices"][0]["message"]["content"]
+        return result
+
+
+class FallbackModel:
+    """Tries the primary model; on ANY provider failure (quota, 5xx,
+    network) transparently retries the same prompt on the fallback. Both
+    are duck-typed, so every core function works unchanged."""
+
+    def __init__(self, primary, fallback):
+        self._primary = primary
+        self._fallback = fallback
+
+    def generate_content(self, prompt: str):
+        try:
+            return self._primary.generate_content(prompt)
+        except Exception as exc:
+            log.warning("primary model failed (%s: %s) — using fallback",
+                        type(exc).__name__, str(exc)[:200])
+            return self._fallback.generate_content(prompt)
+
+
 def get_model():
-    """Duck-typed Gemini model, or None when no key is configured."""
+    """Duck-typed model: Gemini primary, Groq fallback when GROQ_API_KEY is
+    set, or None when neither provider is configured."""
+    gemini = None
     key = os.getenv("GEMINI_API_KEY", "")
-    if not key:
-        return None
-    import google.generativeai as genai
-    genai.configure(api_key=key)
-    return genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+    if key:
+        import google.generativeai as genai
+        genai.configure(api_key=key)
+        gemini = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+    groq_key = os.getenv("GROQ_API_KEY", "")
+    groq = GroqModel(groq_key, os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")) if groq_key else None
+    if gemini and groq:
+        return FallbackModel(gemini, groq)
+    return gemini or groq
 
 
 def require_model():
@@ -412,6 +466,66 @@ def chat_endpoint(body: ChatIn, user_id: str = Depends(rate_limit)):
         core.apply_chat_updates(twin, updates)
         db.save_career_twin(conn, user_id, twin)
     return {"reply": reply, "profile_updates": updates}
+
+
+@app.post("/chat/attach")
+async def chat_attach(file: UploadFile = File(...),
+                      user_id: str = Depends(rate_limit)):
+    """Handle a PDF dropped into the Career Twin chat. The document is
+    classified first (core.classify_document — the same guard that keeps
+    job-listing PDFs out of the CV parser): a CV refreshes the stored twin,
+    a job listing gets extracted and scored against the twin, anything else
+    gets an honest 'couldn't use this' reply."""
+    model = require_model()
+    conn = get_conn()
+    twin = db.load_career_twin(conn, user_id)
+    if not twin:
+        raise HTTPException(status_code=409,
+                            detail="no Career Twin yet — complete setup first")
+    pdf_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(pdf_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="PDF too large (max 15 MB)")
+    try:
+        text = core.pdf_to_text(pdf_bytes)
+    except Exception:
+        raise HTTPException(status_code=422, detail="could not read that PDF")
+    if len(text.strip()) < 50:
+        raise HTTPException(status_code=422,
+                            detail="that PDF looks image-only or empty — try a text-based file")
+
+    kind = run_extraction(core.classify_document, model, text)
+    if kind == "cv":
+        extracted = run_extraction(core.extract_career_twin, model, text)
+        if not extracted:
+            raise HTTPException(status_code=422,
+                                detail="couldn't extract a profile from that CV")
+        merged = {k: v for k, v in extracted.items()
+                  if v not in ("", [], None)}
+        twin.update(merged)
+        db.save_career_twin(conn, user_id, twin)
+        updated = ", ".join(sorted(merged.keys()))
+        return {"kind": "cv",
+                "reply": f"I read your CV and refreshed your Career Twin ({updated}). "
+                         "Your preferences and goals are untouched — check the "
+                         "Career Twin page to review."}
+    if kind == "jobs":
+        jobs = run_extraction(core.extract_jobs, model, text)
+        if not jobs:
+            raise HTTPException(status_code=422,
+                                detail="I saw job listings but couldn't extract them cleanly")
+        ranked = run_extraction(core.match_jobs, model, twin, jobs[:20])
+        top = [r for r in ranked if r.get("fit_score") is not None][:5]
+        lines = [f"- {r.get('title') or r.get('company', 'Role')} at "
+                 f"{r.get('company', 'unknown')}: {r['fit_score']}/100 — {r.get('reason', '')}"
+                 for r in top]
+        return {"kind": "jobs", "matches": ranked,
+                "reply": ("I found " + str(len(jobs)) + " job(s) in that document. "
+                          "Scored against your profile:\n" + "\n".join(lines)
+                          + "\n\nUse Import a Job if you want a tailored application for one.")}
+    return {"kind": "other",
+            "reply": "I read that document but it doesn't look like a CV or a "
+                     "job listing, so I haven't changed anything. You can tell "
+                     "me what it is and what you'd like me to do."}
 
 
 @app.delete("/user")

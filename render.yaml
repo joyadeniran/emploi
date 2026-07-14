@@ -12,6 +12,8 @@ services:
         sync: false          # shared secret; must match the web tier's env
       - key: GEMINI_API_KEY
         sync: false
+      - key: GROQ_API_KEY
+        sync: false          # optional AI fallback provider; unset = Gemini only
       - key: EMPLOI_DB_PATH
         value: /var/data/emploi.sqlite3
       - key: BREVO_API_KEY

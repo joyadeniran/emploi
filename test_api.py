@@ -331,6 +331,68 @@ check("chat plain-text fallback returns raw reply",
       r.status_code == 200 and r.json()["reply"].startswith("plain text")
       and r.json()["profile_updates"] == {})
 
+# ---------------- model fallback (Gemini primary, Groq secondary) ----------------
+class _Boom:
+    calls = 0
+    def generate_content(self, prompt):
+        _Boom.calls += 1
+        raise RuntimeError("429 quota exhausted")
+
+fallback_calls = []
+class _Backup:
+    def generate_content(self, prompt):
+        fallback_calls.append(prompt)
+        class R: text = "backup answer"
+        return R()
+
+fb = m.FallbackModel(_Boom(), _Backup())
+check("fallback model rescues a failing primary",
+      fb.generate_content("hello").text == "backup answer" and len(fallback_calls) == 1)
+fb2 = m.FallbackModel(FakeModel("primary answer"), _Backup())
+check("fallback never called when primary works",
+      fb2.generate_content("hi").text == "primary answer" and len(fallback_calls) == 1)
+
+# ---------------- chat attachments (PDF -> classify -> act) ----------------
+class SeqModel:
+    """Returns queued responses in order — classify, then extract, etc."""
+    def __init__(self, texts):
+        self._texts = list(texts)
+    def generate_content(self, prompt):
+        class R: pass
+        r = R()
+        r.text = self._texts.pop(0) if self._texts else "{}"
+        return r
+
+import core as _core
+cv_pdf = _core.make_pdf("Jane Doe\nMarketing Manager\n8 years experience in brand building at Acme.")
+
+# CV path: classify -> "CV", extraction -> twin JSON
+m.app.state.model_factory = lambda: SeqModel([
+    "CV",
+    '{"name":"Jane Doe","headline":"Marketing Manager","skills":["Brand Building"],'
+    '"experience":[{"summary":"MM at Acme"}]}'])
+r = client.post("/chat/attach", headers=AUTH, files={"file": ("cv.pdf", cv_pdf, "application/pdf")})
+check("chat attach: CV classified and merged", r.status_code == 200 and r.json()["kind"] == "cv")
+tw = client.get("/career-twin", headers=AUTH).json()["career_twin"]
+check("chat attach: CV merged into stored twin", tw.get("headline") == "Marketing Manager")
+
+# JOBS path: classify -> JOBS, extract -> array, match -> scores
+jobs_pdf = _core.make_pdf("Hiring: Growth Marketer at Acme. Remote. Apply at jobs@acme.com")
+m.app.state.model_factory = lambda: SeqModel([
+    "JOBS",
+    '[{"company":"Acme","title":"Growth Marketer","description":"remote growth role"}]',
+    '[{"index":0,"fit_score":88,"reason":"strong growth background"}]'])
+r = client.post("/chat/attach", headers=AUTH, files={"file": ("jobs.pdf", jobs_pdf, "application/pdf")})
+check("chat attach: job listing scored against twin",
+      r.status_code == 200 and r.json()["kind"] == "jobs"
+      and "88/100" in r.json()["reply"])
+
+# OTHER path: honest no-op
+m.app.state.model_factory = lambda: SeqModel(["OTHER"])
+r = client.post("/chat/attach", headers=AUTH, files={"file": ("x.pdf", cv_pdf, "application/pdf")})
+check("chat attach: unclassifiable document changes nothing",
+      r.status_code == 200 and r.json()["kind"] == "other")
+
 # ---------------- worker triggers (Render Cron -> HTTP, no disk on cron) ----------------
 # Render Cron Jobs can't mount the persistent disk the SQLite file lives on,
 # so scheduled workers run in-process here instead of as their own cron

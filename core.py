@@ -286,6 +286,8 @@ Description: {job_text}"""
 def build_chat_prompt(profile: dict, question: str, history: str = "") -> str:
     return f"""You are Emploi, a friendly expert career agent talking WITH the candidate.
 
+{load_skill('emploi_context')}
+
 Candidate profile (fields: {", ".join(PROFILE_KEYS)}):
 {profile}
 

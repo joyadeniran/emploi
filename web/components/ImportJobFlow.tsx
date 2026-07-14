@@ -180,13 +180,26 @@ export function ImportJobFlow() {
           ) : null}
           {!generated ? (
             <div className="mt-4">
-              <button type="button" onClick={generate} disabled={busy === "generate"}
-                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand-violet to-brand-indigo px-5 py-2.5 text-sm font-bold text-white shadow-pop disabled:opacity-60">
-                {busy === "generate" ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-                Generate tailored application
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                <button type="button" onClick={generate} disabled={busy === "generate" || busy === "track"}
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand-violet to-brand-indigo px-5 py-2.5 text-sm font-bold text-white shadow-pop disabled:opacity-60">
+                  {busy === "generate" ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                  Generate tailored application
+                </button>
+                {tracked ? (
+                  <Link href="/applications" className="inline-flex items-center gap-1.5 rounded-xl bg-good px-4 py-2.5 text-sm font-bold text-white">
+                    <Check size={15} /> Tracked — view applications
+                  </Link>
+                ) : (
+                  <button type="button" onClick={track} disabled={busy === "generate" || busy === "track"}
+                    className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-bold text-brand hover:bg-brand-soft disabled:opacity-60">
+                    {busy === "track" ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                    Skip draft — just add to tracker
+                  </button>
+                )}
+              </div>
               <p className="mt-2 text-xs text-muted">
-                Grounded only in your Career Twin — nothing invented. Uses 3 AI calls (drafted, then reviewed).
+                The draft is grounded only in your Career Twin — nothing invented. Uses 3 AI calls (drafted, then reviewed). Not every application needs one.
               </p>
             </div>
           ) : null}
