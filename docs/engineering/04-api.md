@@ -33,12 +33,23 @@ Deploy the API private to the web tier (Render private service / network rules).
 | `POST /verify` | `{company?, contact?, job_text?, role?}` (≥1 of company/contact) | verify.py result: `{company, domain, score, level, evidence[], signals}` | 422, 401, 429 |
 | `GET /applications` | — | `{applications: [...]}` newest first, extra JSON flattened | 401 |
 | `POST /applications` | `{company, role, status, extra?}` | `{id}` (201) | 422 bad status |
-| `POST /applications/generate` | `{job: {description|job_text, company?}, include_review?}` | `{generated: {text, fit_score, ...}}` from stored twin | 409 no twin, 422 no description, 502/503, 429 |
+| `POST /applications/generate` | `{job: {description|job_text, company?}, include_review?}` | `{job_id}` (202) — async; poll the job status endpoint. 402 when monthly quota exhausted. | 409 no twin, 402 quota, 422 no description, 429 |
+| `GET /applications/generate/{job_id}` | — | `{status: pending|done|error, result?: {text, fit_score, ...}, error?: str}` | 404 unknown job |
 | `PATCH /applications/{id}` | `{status}` | `{ok}` | 404 not owner, 422 bad status |
 | `POST /matches` | `{jobs: [...]}` | `{matches: [...]}` ranked by fit (ad-hoc ranking) | 409 no twin, 422 no jobs, 503, 429 |
 | `GET /matches` | `?limit=` | `{matches: [...]}` pre-computed by Worker 3, best fit first, joined with job fields incl. description | 401 |
 | `GET /jobs` | `?remote_only&category&limit&offset` | `{jobs, total, limit, offset}` (limit ≤ 200) | 422 bad limit |
 | `GET /jobs/{id}` | — | single ingested job | 404 |
+| `GET /saved-jobs` | — | `{saved_jobs: [...]}` user's bookmarked jobs joined with ingested_jobs fields | 401 |
+| `POST /saved-jobs` | `{job_id}` | `{ok}` (201) — idempotent via UNIQUE constraint | 422 |
+| `DELETE /saved-jobs/{job_id}` | — | `{ok}` | 404 |
+| `POST /chat` | `{message, history?}` | `{reply, profile_updates?}` — chat_turn with emploi_context injected; profile_updates merged into career twin on non-null | 409 no twin, 503 |
+| `POST /chat/attach` | multipart: file + history | `{reply, career_twin?}` — classifies as CV or job listings; merges if CV, scores if jobs | 422, 503 |
+| `GET /billing/status` | — | `{tier, status, current_period_end, used_this_month, limit, prices_ngn}` | 401 |
+| `POST /billing/checkout` | `{tier: pro|max}` | `{authorization_url, reference}` — Paystack hosted checkout | 400 already on tier, 422 |
+| `POST /billing/verify` | `{reference}` | `{tier, status}` — verify a Paystack transaction by reference and activate | 400 failed |
+| `POST /billing/cancel` | — | `{ok}` — disables Paystack subscription; reverts to free immediately | 400 no active sub |
+| `POST /billing/webhook` | raw body + `X-Paystack-Signature` | `{ok}` | 400 bad sig, 422 unknown event |
 | `DELETE /user` | — | `{ok}` — full NDPA/GDPR erasure across all user-keyed tables | 401 |
 | `GET /admin/job-sources` | — | source registry (auto-seeds from JSON on first call) | 401 |
 | `POST /admin/job-sources` | `{company, ats, token, priority?, ...}` | `{id}` (201) | 422 |
@@ -71,7 +82,9 @@ X-API-Key: ...  X-User-Id: google-sub-123
 - **Verification caching:** per-process per-domain (`_verify_cache`); network probes run once per domain per process. Preserve when touching `/verify` (test asserts one probe).
 - **Injectable I/O:** `api.main.dns_fn / mx_fn / fetch_fn` and `app.state.model_factory` are the seams tests patch. Never call probes directly in endpoints.
 - **SQLite contention:** connections use a 30s busy timeout to absorb ordinary write contention.
-- **Worker triggers:** `/admin/run/*` run their worker's `run()` synchronously in-process and require only `X-API-Key` (no `X-User-Id` — there's no user in a scheduled run). This exists because Render Cron Jobs can't mount a persistent disk (05-services-and-workers.md) — the crons in `render.yaml` just curl these endpoints instead of running the worker scripts themselves. A worker failure surfaces as `500`, never a false `200`.
+- **Async generation:** `POST /applications/generate` returns `202 {job_id}` immediately and runs both Gemini calls in a background thread. The client polls `GET /applications/generate/{job_id}` until `status` is `done` or `error`. Per-call Gemini timeout is 25 s (`GENERATE_CALL_TIMEOUT_S`). On success the worker calls `db.log_generation()` before marking done.
+- **Quota enforcement:** before any AI spend, the generation endpoint checks `db.count_generations_this_month()` against `core.monthly_generation_limit(tier)`. If `used >= limit`, returns `402` immediately. See [10 — Billing](10-billing.md) for tier limits.
+- **Worker triggers:** `/admin/run/*` default to `background=true` (202 + background thread) to beat Render's ~100 s proxy timeout; pass `?background=false` for sync mode (used in tests). Require only `X-API-Key` (no user in a scheduled run). A worker failure in sync mode surfaces as `500`, never a false `200`.
 
 ## Acceptance criteria
 

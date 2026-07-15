@@ -1,145 +1,1197 @@
 {
-  "_doc": "Curated job source list. This file seeds the `job_sources` DB table on first run. After seeding, the DB is the source of truth — edits here only take effect on the next seed run (or via the admin API). ats: greenhouse | lever | ashby | workday | career_page (future). priority: 10=hourly, 7=every 3h, 5=twice daily, 1=daily. active=false means skip without deleting.",
+  "_doc": "Curated job source list. This file seeds the `job_sources` DB table on first run. After seeding, the DB is the source of truth \u2014 edits here only take effect on the next seed run (or via the admin API). ats: greenhouse | lever | ashby | workable | smartrecruiters | workday | career_page. priority: 10=hourly, 7=every 3h, 5=twice daily, 1=daily. active=false means skip without deleting. Workable/SmartRecruiters entries below are seeded active=false \u2014 spot-check the public URL (apply.workable.com/{token}/ or jobs.smartrecruiters.com/{token}) before enabling. A failing source is graceful (0 jobs, no crash) but wastes a request; verify first. Entries below marked active=false with the note `dead_2026-07-15` are ones the spot-check confirmed returned 0 jobs against their ATS endpoint \u2014 the token is wrong, the company migrated ATS, or the company no longer publishes a public feed. Re-enable via `PATCH /admin/job-sources/{id}/toggle` after finding the correct token.",
   "african_tech": [
-    {"company": "Andela", "ats": "greenhouse", "token": "andela", "priority": 10, "region": "africa", "active": true},
-    {"company": "Flutterwave", "ats": "greenhouse", "token": "flutterwave", "priority": 10, "region": "africa", "active": true},
-    {"company": "Paystack", "ats": "lever", "token": "paystack", "priority": 10, "region": "africa", "active": true},
-    {"company": "Moniepoint", "ats": "greenhouse", "token": "moniepoint", "priority": 10, "region": "africa", "active": true},
-    {"company": "Interswitch", "ats": "career_page", "token": "interswitch", "priority": 5, "region": "africa", "active": false},
-    {"company": "Kuda", "ats": "lever", "token": "kuda", "priority": 10, "region": "africa", "active": true},
-    {"company": "PalmPay", "ats": "greenhouse", "token": "palmpay", "priority": 7, "region": "africa", "active": true},
-    {"company": "OPay", "ats": "greenhouse", "token": "opay", "priority": 7, "region": "africa", "active": true},
-    {"company": "LemFi", "ats": "lever", "token": "lemonade-finance", "priority": 7, "region": "africa", "active": true},
-    {"company": "Chipper Cash", "ats": "lever", "token": "chippercash", "priority": 7, "region": "africa", "active": true},
-    {"company": "Stitch", "ats": "lever", "token": "stitchdata", "priority": 5, "region": "africa", "active": true},
-    {"company": "Yoco", "ats": "lever", "token": "yoco", "priority": 7, "region": "africa", "active": true},
-    {"company": "TymeBank", "ats": "lever", "token": "tymebank", "priority": 5, "region": "africa", "active": true},
-    {"company": "Carry1st", "ats": "lever", "token": "carry1st", "priority": 7, "region": "africa", "active": true},
-    {"company": "Wasoko", "ats": "lever", "token": "wasoko", "priority": 5, "region": "africa", "active": true},
-    {"company": "Moove", "ats": "lever", "token": "moove", "priority": 5, "region": "africa", "active": true},
-    {"company": "MAX", "ats": "lever", "token": "max-ng", "priority": 5, "region": "africa", "active": true},
-    {"company": "M-KOPA", "ats": "lever", "token": "mkopa", "priority": 5, "region": "africa", "active": true},
-    {"company": "OmniRetail", "ats": "lever", "token": "omniretail", "priority": 5, "region": "africa", "active": true},
-    {"company": "Sabi", "ats": "lever", "token": "sabi", "priority": 5, "region": "africa", "active": true},
-    {"company": "TradeDepot", "ats": "greenhouse", "token": "tradedepot", "priority": 5, "region": "africa", "active": true},
-    {"company": "Terragon", "ats": "career_page", "token": "terragon", "priority": 1, "region": "africa", "active": false},
-    {"company": "SeamlessHR", "ats": "lever", "token": "seamlesshr", "priority": 7, "region": "africa", "active": true},
-    {"company": "Reliance Health", "ats": "lever", "token": "reliancehealth", "priority": 7, "region": "africa", "active": true},
-    {"company": "Helium Health", "ats": "lever", "token": "heliumhealth", "priority": 5, "region": "africa", "active": true},
-    {"company": "Remedial Health", "ats": "lever", "token": "remedialhealth", "priority": 5, "region": "africa", "active": true},
-    {"company": "Chowdeck", "ats": "lever", "token": "chowdeck", "priority": 7, "region": "africa", "active": true},
-    {"company": "Bumpa", "ats": "lever", "token": "bumpa", "priority": 7, "region": "africa", "active": true},
-    {"company": "PaidHR", "ats": "lever", "token": "paidhr", "priority": 5, "region": "africa", "active": true},
-    {"company": "AltSchool Africa", "ats": "lever", "token": "altschoolafrica", "priority": 5, "region": "africa", "active": true},
-    {"company": "uLesson", "ats": "lever", "token": "ulesson", "priority": 5, "region": "africa", "active": true}
+    {
+      "company": "Andela",
+      "ats": "greenhouse",
+      "token": "andela",
+      "priority": 10,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Flutterwave",
+      "ats": "greenhouse",
+      "token": "flutterwave",
+      "priority": 10,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Paystack",
+      "ats": "lever",
+      "token": "paystack",
+      "priority": 10,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Moniepoint",
+      "ats": "greenhouse",
+      "token": "moniepoint",
+      "priority": 10,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "Interswitch",
+      "ats": "career_page",
+      "token": "interswitch",
+      "priority": 5,
+      "region": "africa",
+      "active": false
+    },
+    {
+      "company": "Kuda",
+      "ats": "lever",
+      "token": "kuda",
+      "priority": 10,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "PalmPay",
+      "ats": "greenhouse",
+      "token": "palmpay",
+      "priority": 7,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "OPay",
+      "ats": "greenhouse",
+      "token": "opay",
+      "priority": 7,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "LemFi",
+      "ats": "lever",
+      "token": "lemonade-finance",
+      "priority": 7,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Chipper Cash",
+      "ats": "lever",
+      "token": "chippercash",
+      "priority": 7,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Stitch",
+      "ats": "lever",
+      "token": "stitchdata",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Yoco",
+      "ats": "lever",
+      "token": "yoco",
+      "priority": 7,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "TymeBank",
+      "ats": "lever",
+      "token": "tymebank",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Carry1st",
+      "ats": "lever",
+      "token": "carry1st",
+      "priority": 7,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Wasoko",
+      "ats": "lever",
+      "token": "wasoko",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Moove",
+      "ats": "lever",
+      "token": "moove",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "MAX",
+      "ats": "lever",
+      "token": "max-ng",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "M-KOPA",
+      "ats": "lever",
+      "token": "mkopa",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "OmniRetail",
+      "ats": "lever",
+      "token": "omniretail",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Sabi",
+      "ats": "lever",
+      "token": "sabi",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "TradeDepot",
+      "ats": "greenhouse",
+      "token": "tradedepot",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Terragon",
+      "ats": "career_page",
+      "token": "terragon",
+      "priority": 1,
+      "region": "africa",
+      "active": false
+    },
+    {
+      "company": "SeamlessHR",
+      "ats": "lever",
+      "token": "seamlesshr",
+      "priority": 7,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Reliance Health",
+      "ats": "lever",
+      "token": "reliancehealth",
+      "priority": 7,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Helium Health",
+      "ats": "lever",
+      "token": "heliumhealth",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Remedial Health",
+      "ats": "lever",
+      "token": "remedialhealth",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Chowdeck",
+      "ats": "lever",
+      "token": "chowdeck",
+      "priority": 7,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Bumpa",
+      "ats": "lever",
+      "token": "bumpa",
+      "priority": 7,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "PaidHR",
+      "ats": "lever",
+      "token": "paidhr",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "AltSchool Africa",
+      "ats": "lever",
+      "token": "altschoolafrica",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "uLesson",
+      "ats": "lever",
+      "token": "ulesson",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    }
   ],
   "remote_global": [
-    {"company": "GitLab", "ats": "lever", "token": "gitlab", "priority": 10, "region": "global", "active": true},
-    {"company": "Automattic", "ats": "greenhouse", "token": "automattic", "priority": 10, "region": "global", "active": true},
-    {"company": "Buffer", "ats": "lever", "token": "buffer", "priority": 7, "region": "global", "active": true},
-    {"company": "Zapier", "ats": "greenhouse", "token": "zapier", "priority": 10, "region": "global", "active": true},
-    {"company": "Canonical", "ats": "greenhouse", "token": "canonical", "priority": 7, "region": "global", "active": true},
-    {"company": "Hotjar", "ats": "lever", "token": "hotjar", "priority": 7, "region": "global", "active": true},
-    {"company": "Remote", "ats": "lever", "token": "remote", "priority": 10, "region": "global", "active": true},
-    {"company": "Deel", "ats": "lever", "token": "deel", "priority": 10, "region": "global", "active": true},
-    {"company": "Oyster HR", "ats": "greenhouse", "token": "oysterhr", "priority": 10, "region": "global", "active": true},
-    {"company": "Toggl", "ats": "lever", "token": "toggl", "priority": 5, "region": "global", "active": true},
-    {"company": "Doist", "ats": "lever", "token": "doist", "priority": 7, "region": "global", "active": true},
-    {"company": "Invisible Technologies", "ats": "greenhouse", "token": "invisible", "priority": 7, "region": "global", "active": true},
-    {"company": "Toptal", "ats": "greenhouse", "token": "toptal", "priority": 5, "region": "global", "active": true},
-    {"company": "DuckDuckGo", "ats": "lever", "token": "duckduckgo", "priority": 5, "region": "global", "active": true},
-    {"company": "Mozilla", "ats": "greenhouse", "token": "mozilla", "priority": 7, "region": "global", "active": true},
-    {"company": "Wikimedia Foundation", "ats": "greenhouse", "token": "wikimediafoundation", "priority": 5, "region": "global", "active": true},
-    {"company": "Hubstaff", "ats": "lever", "token": "hubstaff", "priority": 5, "region": "global", "active": true},
-    {"company": "Help Scout", "ats": "lever", "token": "helpscout", "priority": 5, "region": "global", "active": true},
-    {"company": "Loom", "ats": "greenhouse", "token": "loom", "priority": 7, "region": "global", "active": true},
-    {"company": "ConvertKit", "ats": "lever", "token": "convertkit", "priority": 5, "region": "global", "active": true},
-    {"company": "Ghost", "ats": "lever", "token": "ghost", "priority": 5, "region": "global", "active": true}
+    {
+      "company": "GitLab",
+      "ats": "lever",
+      "token": "gitlab",
+      "priority": 10,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Automattic",
+      "ats": "greenhouse",
+      "token": "automattic",
+      "priority": 10,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Buffer",
+      "ats": "lever",
+      "token": "buffer",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Zapier",
+      "ats": "greenhouse",
+      "token": "zapier",
+      "priority": 10,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Canonical",
+      "ats": "greenhouse",
+      "token": "canonical",
+      "priority": 7,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Hotjar",
+      "ats": "lever",
+      "token": "hotjar",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Remote",
+      "ats": "lever",
+      "token": "remote",
+      "priority": 10,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Deel",
+      "ats": "lever",
+      "token": "deel",
+      "priority": 10,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Oyster HR",
+      "ats": "greenhouse",
+      "token": "oysterhr",
+      "priority": 10,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Toggl",
+      "ats": "lever",
+      "token": "toggl",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Doist",
+      "ats": "lever",
+      "token": "doist",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Invisible Technologies",
+      "ats": "greenhouse",
+      "token": "invisible",
+      "priority": 7,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Toptal",
+      "ats": "greenhouse",
+      "token": "toptal",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "DuckDuckGo",
+      "ats": "lever",
+      "token": "duckduckgo",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Mozilla",
+      "ats": "greenhouse",
+      "token": "mozilla",
+      "priority": 7,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Wikimedia Foundation",
+      "ats": "greenhouse",
+      "token": "wikimediafoundation",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Hubstaff",
+      "ats": "lever",
+      "token": "hubstaff",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Help Scout",
+      "ats": "lever",
+      "token": "helpscout",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Loom",
+      "ats": "greenhouse",
+      "token": "loom",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "ConvertKit",
+      "ats": "lever",
+      "token": "convertkit",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Ghost",
+      "ats": "lever",
+      "token": "ghost",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    }
   ],
   "ai": [
-    {"company": "Anthropic", "ats": "greenhouse", "token": "anthropic", "priority": 10, "region": "global", "active": true},
-    {"company": "OpenAI", "ats": "greenhouse", "token": "openai", "priority": 10, "region": "global", "active": true},
-    {"company": "Cohere", "ats": "greenhouse", "token": "cohere", "priority": 7, "region": "global", "active": true},
-    {"company": "Hugging Face", "ats": "lever", "token": "huggingface", "priority": 7, "region": "global", "active": true},
-    {"company": "Perplexity", "ats": "lever", "token": "perplexity", "priority": 7, "region": "global", "active": true},
-    {"company": "ElevenLabs", "ats": "lever", "token": "elevenlabs", "priority": 7, "region": "global", "active": true},
-    {"company": "Mistral AI", "ats": "lever", "token": "mistral", "priority": 5, "region": "global", "active": true},
-    {"company": "Together AI", "ats": "greenhouse", "token": "togetherai", "priority": 5, "region": "global", "active": true},
-    {"company": "Scale AI", "ats": "greenhouse", "token": "scaleai", "priority": 7, "region": "global", "active": true},
-    {"company": "Runway", "ats": "lever", "token": "runwayml", "priority": 5, "region": "global", "active": true},
-    {"company": "Stability AI", "ats": "greenhouse", "token": "stabilityai", "priority": 5, "region": "global", "active": true}
+    {
+      "company": "Anthropic",
+      "ats": "greenhouse",
+      "token": "anthropic",
+      "priority": 10,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "OpenAI",
+      "ats": "greenhouse",
+      "token": "openai",
+      "priority": 10,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Cohere",
+      "ats": "greenhouse",
+      "token": "cohere",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Hugging Face",
+      "ats": "lever",
+      "token": "huggingface",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Perplexity",
+      "ats": "lever",
+      "token": "perplexity",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "ElevenLabs",
+      "ats": "lever",
+      "token": "elevenlabs",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Mistral AI",
+      "ats": "lever",
+      "token": "mistral",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Together AI",
+      "ats": "greenhouse",
+      "token": "togetherai",
+      "priority": 5,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Scale AI",
+      "ats": "greenhouse",
+      "token": "scaleai",
+      "priority": 7,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Runway",
+      "ats": "lever",
+      "token": "runwayml",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Stability AI",
+      "ats": "greenhouse",
+      "token": "stabilityai",
+      "priority": 5,
+      "region": "global",
+      "active": true
+    }
   ],
   "developer_tools": [
-    {"company": "Vercel", "ats": "greenhouse", "token": "vercel", "priority": 10, "region": "global", "active": true},
-    {"company": "Supabase", "ats": "greenhouse", "token": "supabase", "priority": 10, "region": "global", "active": true},
-    {"company": "Cloudflare", "ats": "greenhouse", "token": "cloudflare", "priority": 10, "region": "global", "active": true},
-    {"company": "Netlify", "ats": "greenhouse", "token": "netlify", "priority": 7, "region": "global", "active": true},
-    {"company": "PlanetScale", "ats": "greenhouse", "token": "planetscale", "priority": 7, "region": "global", "active": true},
-    {"company": "Neon", "ats": "greenhouse", "token": "neondatabase", "priority": 7, "region": "global", "active": true},
-    {"company": "Grafana Labs", "ats": "greenhouse", "token": "grafana", "priority": 7, "region": "global", "active": true},
-    {"company": "HashiCorp", "ats": "greenhouse", "token": "hashicorp", "priority": 7, "region": "global", "active": true},
-    {"company": "Docker", "ats": "greenhouse", "token": "docker", "priority": 5, "region": "global", "active": true},
-    {"company": "MongoDB", "ats": "greenhouse", "token": "mongodb", "priority": 7, "region": "global", "active": true},
-    {"company": "Elastic", "ats": "greenhouse", "token": "elastic", "priority": 5, "region": "global", "active": true},
-    {"company": "Sentry", "ats": "greenhouse", "token": "sentry", "priority": 7, "region": "global", "active": true},
-    {"company": "PostHog", "ats": "greenhouse", "token": "posthog", "priority": 7, "region": "global", "active": true},
-    {"company": "Datadog", "ats": "greenhouse", "token": "datadog", "priority": 7, "region": "global", "active": true},
-    {"company": "GitHub", "ats": "greenhouse", "token": "github", "priority": 10, "region": "global", "active": true},
-    {"company": "Linear", "ats": "greenhouse", "token": "linear", "priority": 7, "region": "global", "active": true},
-    {"company": "Render", "ats": "greenhouse", "token": "render", "priority": 5, "region": "global", "active": true}
+    {
+      "company": "Vercel",
+      "ats": "greenhouse",
+      "token": "vercel",
+      "priority": 10,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Supabase",
+      "ats": "greenhouse",
+      "token": "supabase",
+      "priority": 10,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Cloudflare",
+      "ats": "greenhouse",
+      "token": "cloudflare",
+      "priority": 10,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Netlify",
+      "ats": "greenhouse",
+      "token": "netlify",
+      "priority": 7,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "PlanetScale",
+      "ats": "greenhouse",
+      "token": "planetscale",
+      "priority": 7,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Neon",
+      "ats": "greenhouse",
+      "token": "neondatabase",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Grafana Labs",
+      "ats": "greenhouse",
+      "token": "grafana",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "HashiCorp",
+      "ats": "greenhouse",
+      "token": "hashicorp",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Docker",
+      "ats": "greenhouse",
+      "token": "docker",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "MongoDB",
+      "ats": "greenhouse",
+      "token": "mongodb",
+      "priority": 7,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Elastic",
+      "ats": "greenhouse",
+      "token": "elastic",
+      "priority": 5,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Sentry",
+      "ats": "greenhouse",
+      "token": "sentry",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "PostHog",
+      "ats": "greenhouse",
+      "token": "posthog",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Datadog",
+      "ats": "greenhouse",
+      "token": "datadog",
+      "priority": 7,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "GitHub",
+      "ats": "greenhouse",
+      "token": "github",
+      "priority": 10,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Linear",
+      "ats": "greenhouse",
+      "token": "linear",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Render",
+      "ats": "greenhouse",
+      "token": "render",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    }
   ],
   "enterprise_saas": [
-    {"company": "Stripe", "ats": "greenhouse", "token": "stripe", "priority": 10, "region": "global", "active": true},
-    {"company": "Shopify", "ats": "greenhouse", "token": "shopify", "priority": 10, "region": "global", "active": true},
-    {"company": "Notion", "ats": "greenhouse", "token": "notion", "priority": 10, "region": "global", "active": true},
-    {"company": "Figma", "ats": "greenhouse", "token": "figma", "priority": 10, "region": "global", "active": true},
-    {"company": "Canva", "ats": "greenhouse", "token": "canva", "priority": 10, "region": "global", "active": true},
-    {"company": "Airtable", "ats": "lever", "token": "airtable", "priority": 7, "region": "global", "active": true},
-    {"company": "Asana", "ats": "lever", "token": "asana", "priority": 7, "region": "global", "active": true},
-    {"company": "HubSpot", "ats": "greenhouse", "token": "hubspot", "priority": 7, "region": "global", "active": true},
-    {"company": "Rippling", "ats": "greenhouse", "token": "rippling", "priority": 7, "region": "global", "active": true},
-    {"company": "Gusto", "ats": "greenhouse", "token": "gusto", "priority": 5, "region": "global", "active": true},
-    {"company": "Ramp", "ats": "greenhouse", "token": "ramp", "priority": 7, "region": "global", "active": true},
-    {"company": "Brex", "ats": "greenhouse", "token": "brex", "priority": 7, "region": "global", "active": true},
-    {"company": "Mercury", "ats": "lever", "token": "mercury", "priority": 7, "region": "global", "active": true},
-    {"company": "Webflow", "ats": "lever", "token": "webflow", "priority": 7, "region": "global", "active": true},
-    {"company": "Typeform", "ats": "lever", "token": "typeform", "priority": 5, "region": "global", "active": true},
-    {"company": "Pitch", "ats": "lever", "token": "pitch", "priority": 5, "region": "global", "active": true},
-    {"company": "Loom (Atlassian)", "ats": "greenhouse", "token": "loom", "priority": 5, "region": "global", "active": true},
-    {"company": "Dropbox", "ats": "lever", "token": "dropbox", "priority": 5, "region": "global", "active": true},
-    {"company": "Intercom", "ats": "greenhouse", "token": "intercom", "priority": 5, "region": "global", "active": true},
-    {"company": "Zendesk", "ats": "greenhouse", "token": "zendesk", "priority": 5, "region": "global", "active": true}
+    {
+      "company": "Stripe",
+      "ats": "greenhouse",
+      "token": "stripe",
+      "priority": 10,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Shopify",
+      "ats": "greenhouse",
+      "token": "shopify",
+      "priority": 10,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Notion",
+      "ats": "greenhouse",
+      "token": "notion",
+      "priority": 10,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Figma",
+      "ats": "greenhouse",
+      "token": "figma",
+      "priority": 10,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Canva",
+      "ats": "greenhouse",
+      "token": "canva",
+      "priority": 10,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Airtable",
+      "ats": "lever",
+      "token": "airtable",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Asana",
+      "ats": "lever",
+      "token": "asana",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "HubSpot",
+      "ats": "greenhouse",
+      "token": "hubspot",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Rippling",
+      "ats": "greenhouse",
+      "token": "rippling",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Gusto",
+      "ats": "greenhouse",
+      "token": "gusto",
+      "priority": 5,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Ramp",
+      "ats": "greenhouse",
+      "token": "ramp",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Brex",
+      "ats": "greenhouse",
+      "token": "brex",
+      "priority": 7,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Mercury",
+      "ats": "lever",
+      "token": "mercury",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Webflow",
+      "ats": "lever",
+      "token": "webflow",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Typeform",
+      "ats": "lever",
+      "token": "typeform",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Pitch",
+      "ats": "lever",
+      "token": "pitch",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Loom (Atlassian)",
+      "ats": "greenhouse",
+      "token": "loom",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Dropbox",
+      "ats": "lever",
+      "token": "dropbox",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Intercom",
+      "ats": "greenhouse",
+      "token": "intercom",
+      "priority": 5,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Zendesk",
+      "ats": "greenhouse",
+      "token": "zendesk",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    }
   ],
   "fintech": [
-    {"company": "Coinbase", "ats": "greenhouse", "token": "coinbase", "priority": 7, "region": "global", "active": true},
-    {"company": "Plaid", "ats": "greenhouse", "token": "plaid", "priority": 7, "region": "global", "active": true},
-    {"company": "Adyen", "ats": "greenhouse", "token": "adyen", "priority": 5, "region": "global", "active": true},
-    {"company": "Wise", "ats": "greenhouse", "token": "wise", "priority": 7, "region": "global", "active": true},
-    {"company": "Revolut", "ats": "greenhouse", "token": "revolut", "priority": 7, "region": "global", "active": true},
-    {"company": "Monzo", "ats": "greenhouse", "token": "monzo", "priority": 7, "region": "europe", "active": true},
-    {"company": "Klarna", "ats": "greenhouse", "token": "klarna", "priority": 5, "region": "europe", "active": true},
-    {"company": "Affirm", "ats": "greenhouse", "token": "affirm", "priority": 5, "region": "global", "active": true},
-    {"company": "Chime", "ats": "greenhouse", "token": "chime", "priority": 5, "region": "us", "active": true},
-    {"company": "Paga", "ats": "lever", "token": "paga", "priority": 7, "region": "africa", "active": true}
+    {
+      "company": "Coinbase",
+      "ats": "greenhouse",
+      "token": "coinbase",
+      "priority": 7,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Plaid",
+      "ats": "greenhouse",
+      "token": "plaid",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Adyen",
+      "ats": "greenhouse",
+      "token": "adyen",
+      "priority": 5,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Wise",
+      "ats": "greenhouse",
+      "token": "wise",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Revolut",
+      "ats": "greenhouse",
+      "token": "revolut",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Monzo",
+      "ats": "greenhouse",
+      "token": "monzo",
+      "priority": 7,
+      "region": "europe",
+      "active": true
+    },
+    {
+      "company": "Klarna",
+      "ats": "greenhouse",
+      "token": "klarna",
+      "priority": 5,
+      "region": "europe",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Affirm",
+      "ats": "greenhouse",
+      "token": "affirm",
+      "priority": 5,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Chime",
+      "ats": "greenhouse",
+      "token": "chime",
+      "priority": 5,
+      "region": "us",
+      "active": true
+    },
+    {
+      "company": "Paga",
+      "ats": "lever",
+      "token": "paga",
+      "priority": 7,
+      "region": "africa",
+      "active": false,
+      "note": "dead_2026-07-15"
+    }
   ],
   "large_tech": [
-    {"company": "Google", "ats": "career_page", "token": "google", "priority": 1, "region": "global", "active": false},
-    {"company": "Microsoft", "ats": "career_page", "token": "microsoft", "priority": 1, "region": "global", "active": false},
-    {"company": "Amazon", "ats": "career_page", "token": "amazon", "priority": 1, "region": "global", "active": false},
-    {"company": "Netflix", "ats": "lever", "token": "netflix", "priority": 5, "region": "global", "active": true},
-    {"company": "Spotify", "ats": "greenhouse", "token": "spotify", "priority": 7, "region": "global", "active": true},
-    {"company": "Discord", "ats": "greenhouse", "token": "discord", "priority": 7, "region": "global", "active": true},
-    {"company": "Reddit", "ats": "greenhouse", "token": "reddit", "priority": 5, "region": "global", "active": true},
-    {"company": "Roblox", "ats": "greenhouse", "token": "roblox", "priority": 5, "region": "global", "active": true},
-    {"company": "Pinterest", "ats": "greenhouse", "token": "pinterest", "priority": 5, "region": "global", "active": true},
-    {"company": "Twilio", "ats": "greenhouse", "token": "twilio", "priority": 7, "region": "global", "active": true}
+    {
+      "company": "Google",
+      "ats": "career_page",
+      "token": "google",
+      "priority": 1,
+      "region": "global",
+      "active": false
+    },
+    {
+      "company": "Microsoft",
+      "ats": "career_page",
+      "token": "microsoft",
+      "priority": 1,
+      "region": "global",
+      "active": false
+    },
+    {
+      "company": "Amazon",
+      "ats": "career_page",
+      "token": "amazon",
+      "priority": 1,
+      "region": "global",
+      "active": false
+    },
+    {
+      "company": "Netflix",
+      "ats": "lever",
+      "token": "netflix",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Spotify",
+      "ats": "greenhouse",
+      "token": "spotify",
+      "priority": 7,
+      "region": "global",
+      "active": false,
+      "note": "dead_2026-07-15"
+    },
+    {
+      "company": "Discord",
+      "ats": "greenhouse",
+      "token": "discord",
+      "priority": 7,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Reddit",
+      "ats": "greenhouse",
+      "token": "reddit",
+      "priority": 5,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Roblox",
+      "ats": "greenhouse",
+      "token": "roblox",
+      "priority": 5,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Pinterest",
+      "ats": "greenhouse",
+      "token": "pinterest",
+      "priority": 5,
+      "region": "global",
+      "active": true
+    },
+    {
+      "company": "Twilio",
+      "ats": "greenhouse",
+      "token": "twilio",
+      "priority": 7,
+      "region": "global",
+      "active": true
+    }
   ],
   "nigerian_companies": [
-    {"company": "Access Bank", "ats": "career_page", "token": "accessbank", "priority": 1, "region": "nigeria", "active": false},
-    {"company": "GTCO", "ats": "career_page", "token": "gtbank", "priority": 1, "region": "nigeria", "active": false},
-    {"company": "First Bank", "ats": "career_page", "token": "firstbank", "priority": 1, "region": "nigeria", "active": false},
-    {"company": "Stanbic IBTC", "ats": "career_page", "token": "stanbicibtc", "priority": 1, "region": "nigeria", "active": false},
-    {"company": "Wema Bank", "ats": "career_page", "token": "wemabank", "priority": 1, "region": "nigeria", "active": false},
-    {"company": "Sterling Bank", "ats": "career_page", "token": "sterlingbank", "priority": 1, "region": "nigeria", "active": false}
-  ]
+    {
+      "company": "Access Bank",
+      "ats": "career_page",
+      "token": "accessbank",
+      "priority": 1,
+      "region": "nigeria",
+      "active": false
+    },
+    {
+      "company": "GTCO",
+      "ats": "career_page",
+      "token": "gtbank",
+      "priority": 1,
+      "region": "nigeria",
+      "active": false
+    },
+    {
+      "company": "First Bank",
+      "ats": "career_page",
+      "token": "firstbank",
+      "priority": 1,
+      "region": "nigeria",
+      "active": false
+    },
+    {
+      "company": "Stanbic IBTC",
+      "ats": "career_page",
+      "token": "stanbicibtc",
+      "priority": 1,
+      "region": "nigeria",
+      "active": false
+    },
+    {
+      "company": "Wema Bank",
+      "ats": "career_page",
+      "token": "wemabank",
+      "priority": 1,
+      "region": "nigeria",
+      "active": false
+    },
+    {
+      "company": "Sterling Bank",
+      "ats": "career_page",
+      "token": "sterlingbank",
+      "priority": 1,
+      "region": "nigeria",
+      "active": false
+    }
+  ],
+  "workable_candidates": [
+    {
+      "company": "FairMoney",
+      "ats": "workable",
+      "token": "fairmoney",
+      "priority": 7,
+      "region": "africa",
+      "active": false
+    },
+    {
+      "company": "Nomba",
+      "ats": "workable",
+      "token": "nomba",
+      "priority": 7,
+      "region": "africa",
+      "active": false
+    },
+    {
+      "company": "Wave Mobile Money",
+      "ats": "workable",
+      "token": "wave-mobile-money",
+      "priority": 7,
+      "region": "africa",
+      "active": false
+    },
+    {
+      "company": "Nala",
+      "ats": "workable",
+      "token": "nala",
+      "priority": 5,
+      "region": "africa",
+      "active": false
+    },
+    {
+      "company": "Klasha",
+      "ats": "workable",
+      "token": "klasha",
+      "priority": 5,
+      "region": "africa",
+      "active": false
+    }
+  ],
+  "smartrecruiters_candidates": [
+    {
+      "company": "Bosch",
+      "ats": "smartrecruiters",
+      "token": "Bosch",
+      "priority": 5,
+      "region": "global",
+      "active": false
+    },
+    {
+      "company": "Visa",
+      "ats": "smartrecruiters",
+      "token": "Visa",
+      "priority": 5,
+      "region": "global",
+      "active": false
+    },
+    {
+      "company": "Ubisoft",
+      "ats": "smartrecruiters",
+      "token": "UbisoftEntertainment",
+      "priority": 5,
+      "region": "global",
+      "active": false
+    },
+    {
+      "company": "IKEA",
+      "ats": "smartrecruiters",
+      "token": "IKEA",
+      "priority": 5,
+      "region": "global",
+      "active": false
+    },
+    {
+      "company": "Publicis Groupe",
+      "ats": "smartrecruiters",
+      "token": "PublicisGroupe",
+      "priority": 5,
+      "region": "global",
+      "active": false
+    }
+  ],
+  "_last_verified": "2026-07-15 (workers/spot_check_sources.py against live ATS endpoints)"
 }

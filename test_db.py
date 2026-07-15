@@ -6,11 +6,13 @@ import sys
 from db import (connect, save_career_twin, load_career_twin,
                 add_application, list_applications,
                 update_application_status, clear_user,
+                list_applications_needing_outcome_nudge,
                 upsert_job, list_jobs, count_jobs,
                 upsert_trust_record, get_trust_record,
                 upsert_match, list_matches, log_event,
                 get_subscription, upsert_subscription,
-                log_generation, count_generations_this_month)
+                log_generation, count_generations_this_month,
+                upsert_user, get_user, set_notifications_enabled)
 
 
 def check(label, cond):
@@ -54,11 +56,42 @@ ok &= check("extra fields preserved (notes, fit_score)",
 # 6. Applications are per-user
 ok &= check("other user sees no applications", list_applications(conn, "user-2") == [])
 
-# 7. Status update
+# 7. Status update + outcome notes + outcome_updated_at audit
 update_application_status(conn, a1, "Interview")
 apps = list_applications(conn, "user-1")
-ok &= check("status update sticks",
-            [a for a in apps if a["id"] == a1][0]["status"] == "Interview")
+row1 = [a for a in apps if a["id"] == a1][0]
+ok &= check("status update sticks", row1["status"] == "Interview")
+ok &= check("outcome_updated_at set on transition off applied",
+            row1["outcome_updated_at"] is not None)
+
+update_application_status(conn, a2, "heard_back",
+                          outcome_notes="recruiter reached out on LinkedIn")
+apps = list_applications(conn, "user-1")
+row2 = [a for a in apps if a["id"] == a2][0]
+ok &= check("outcome_notes persist through update",
+            row2["outcome_notes"] == "recruiter reached out on LinkedIn")
+
+# 7b. Stale-applied nudge query
+# Backdate one application to 20 days ago; it should surface in the nudge list.
+conn.execute("UPDATE applications SET status='applied', outcome_updated_at=NULL, "
+             "created_at=datetime('now', '-20 days') WHERE id=?", (a2,))
+conn.commit()
+nudges = list_applications_needing_outcome_nudge(conn, "user-1", days=14)
+ok &= check("stale applied application surfaces in nudge query",
+            any(n["id"] == a2 for n in nudges))
+# a1 is Interview (not applied), even if old, must not be nudged.
+conn.execute("UPDATE applications SET created_at=datetime('now', '-30 days') "
+             "WHERE id=?", (a1,))
+conn.commit()
+nudges = list_applications_needing_outcome_nudge(conn, "user-1", days=14)
+ok &= check("non-applied statuses are never nudged",
+            all(n["id"] != a1 for n in nudges))
+# Days threshold is respected: bump to 100 → nothing qualifies.
+ok &= check("days threshold gates the nudge query",
+            list_applications_needing_outcome_nudge(conn, "user-1", days=100) == [])
+# Users are isolated.
+ok &= check("nudges are per-user",
+            list_applications_needing_outcome_nudge(conn, "user-2", days=14) == [])
 
 # 8. Defensive: non-dict data rejected, DB untouched
 try:
@@ -69,11 +102,59 @@ except (TypeError, ValueError):
 ok &= check("non-dict career twin raises, existing data intact",
             bad and load_career_twin(conn, "user-1") == {"name": "Ada Obi"})
 
+# 8b. Users table (session-backed identity)
+upsert_user(conn, "user-1", "ada@example.com", "Ada Obi", email_verified=True)
+u1 = get_user(conn, "user-1")
+ok &= check("upsert_user creates a row", u1 is not None and u1["email"] == "ada@example.com")
+ok &= check("upsert_user preserves name", u1["name"] == "Ada Obi")
+ok &= check("upsert_user email_verified round-trips as bool",
+            u1["email_verified"] is True)
+ok &= check("notifications_enabled defaults True",
+            u1["notifications_enabled"] is True)
+
+# Idempotent: second call updates last_seen_at without duplicating
+import time as _t
+_t.sleep(1.05)  # sqlite datetime('now') has second resolution
+upsert_user(conn, "user-1", "ada.obi@example.com", None)  # None keeps existing name
+u1b = get_user(conn, "user-1")
+ok &= check("second upsert updates email", u1b["email"] == "ada.obi@example.com")
+ok &= check("second upsert preserves name when None passed",
+            u1b["name"] == "Ada Obi")
+ok &= check("second upsert bumps last_seen_at",
+            u1b["last_seen_at"] > u1["last_seen_at"])
+
+# notifications_enabled toggle
+ok &= check("set_notifications_enabled(False) returns True",
+            set_notifications_enabled(conn, "user-1", False) is True)
+ok &= check("notifications_enabled reflects new state",
+            get_user(conn, "user-1")["notifications_enabled"] is False)
+ok &= check("set_notifications_enabled on unknown user returns False",
+            set_notifications_enabled(conn, "nobody", True) is False)
+
+# Empty inputs are rejected — email is required (Google session always carries one)
+try:
+    upsert_user(conn, "", "x@y.com")
+    raised = False
+except ValueError:
+    raised = True
+ok &= check("upsert_user without user_id raises", raised)
+try:
+    upsert_user(conn, "u", "")
+    raised = False
+except ValueError:
+    raised = True
+ok &= check("upsert_user without email raises", raised)
+
+# get_user returns None (never raises) for unknown user
+ok &= check("get_user on unknown user -> None", get_user(conn, "unknown") is None)
+
 # 9. clear_user wipes only that user (NDPA/GDPR right)
 clear_user(conn, "user-1")
 ok &= check("clear_user removes career twin and applications",
             load_career_twin(conn, "user-1") == {}
             and list_applications(conn, "user-1") == [])
+ok &= check("clear_user wipes users row too (NDPA/GDPR)",
+            get_user(conn, "user-1") is None)
 ok &= check("clear_user leaves other users untouched",
             load_career_twin(conn, "user-2") == {"name": "Bola"})
 

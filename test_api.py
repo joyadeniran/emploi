@@ -211,13 +211,38 @@ check("application listed with extra fields",
 check("invalid status rejected",
       client.post("/applications", headers=AUTH,
                   json={"company": "X", "role": "Y",
-                        "status": "ghosted"}).status_code == 422)
+                        "status": "not-a-real-status"}).status_code == 422)
+
+# Outcome loop: `ghosted` and `heard_back` are first-class statuses now.
+check("ghosted is a valid status (outcome loop)",
+      client.post("/applications", headers=AUTH,
+                  json={"company": "X", "role": "Y",
+                        "status": "ghosted"}).status_code == 201)
+check("heard_back is a valid status (outcome loop)",
+      client.post("/applications", headers=AUTH,
+                  json={"company": "Y", "role": "Z",
+                        "status": "heard_back"}).status_code == 201)
 
 r = client.patch(f"/applications/{app_id}", headers=AUTH,
                  json={"status": "interview"})
 check("status transition applied -> interview", r.status_code == 200)
 rows = client.get("/applications", headers=AUTH).json()["applications"]
-check("transition persisted", rows[0]["status"] == "interview")
+# rows are newest-first; find the Paystack row explicitly.
+paystack = [r for r in rows if r["id"] == app_id][0]
+check("transition persisted", paystack["status"] == "interview")
+check("outcome_updated_at set on status change",
+      paystack.get("outcome_updated_at") is not None)
+
+# PATCH now also accepts optional outcome_notes; old callers that only send
+# status keep working unchanged.
+r = client.patch(f"/applications/{app_id}", headers=AUTH,
+                 json={"status": "offer",
+                       "outcome_notes": "verbal, waiting on written"})
+check("PATCH accepts optional outcome_notes", r.status_code == 200)
+rows = client.get("/applications", headers=AUTH).json()["applications"]
+paystack = [r for r in rows if r["id"] == app_id][0]
+check("outcome_notes persist through PATCH",
+      paystack.get("outcome_notes") == "verbal, waiting on written")
 
 check("cannot patch another user's application",
       client.patch(f"/applications/{app_id}",
@@ -622,6 +647,76 @@ _verify_mod.run = _orig_verify_run
 _notify_mod.run = _orig_notify_run
 _backup_mod.run = _orig_backup_run
 
+# ---------------- /admin/diagnostics ----------------
+check("diagnostics without api key -> 401",
+      client.get("/admin/diagnostics").status_code == 401)
+
+r = client.get("/admin/diagnostics", headers={"X-API-Key": "test-key"})
+check("diagnostics ok with api key", r.status_code == 200)
+diag = r.json()
+check("diagnostics reports ready_for_launch as a boolean",
+      isinstance(diag["ready_for_launch"], bool))
+check("diagnostics.open_items is a list",
+      isinstance(diag["open_items"], list))
+check("diagnostics.config has every launch-blocker section",
+      set(diag["config"].keys()) >= {"emploi_api_key", "gemini", "groq",
+                                     "brevo", "paystack", "r2_backup"})
+# Test suite runs with EMPLOI_API_KEY=test-key so that flag must be true.
+check("diagnostics reports emploi_api_key=True when set",
+      diag["config"]["emploi_api_key"] is True)
+# Every worker event type has a slot (may be null when nothing has run yet).
+check("diagnostics.last_worker_runs has all five worker event types",
+      set(diag["last_worker_runs"].keys()) == {
+          "JobIngestionRun", "MatchingWorkerRun", "VerificationWorkerRun",
+          "NotifyWorkerRun", "BackupWorkerRun"})
+check("diagnostics.counts has every launch-facing scale metric",
+      set(diag["counts"].keys()) >= {"career_twins", "applications",
+                                     "ingested_jobs", "matches",
+                                     "matches_unnotified",
+                                     "subscriptions_paid",
+                                     "job_sources_active",
+                                     "job_sources_inactive",
+                                     "generations_last_30d"})
+# The diagnostics response must NEVER echo a secret value — it should
+# only expose booleans for "configured". Prove it by checking that no
+# response value equals the actual API key we set at test setup time.
+def _walk(obj):
+    if isinstance(obj, dict):
+        for v in obj.values(): yield from _walk(v)
+    elif isinstance(obj, list):
+        for v in obj: yield from _walk(v)
+    else: yield obj
+check("diagnostics NEVER echoes a secret value",
+      "test-key" not in [x for x in _walk(diag) if isinstance(x, str)])
+
+# ---------------- /user/session + /user/notifications ----------------
+# The web tier calls POST /user/session on every authenticated render so the
+# users table has the current email/name from the NextAuth session.
+r = client.post("/user/session", headers=AUTH,
+                json={"email": "ada@example.com", "name": "Ada",
+                      "email_verified": True})
+check("user/session accepts a valid session", r.status_code == 200)
+
+# Notifications endpoint requires a session row (returns 409 otherwise).
+r = client.patch("/user/notifications", headers=AUTH, json={"enabled": False})
+check("user/notifications flips digest opt-in", r.status_code == 200
+      and r.json()["notifications_enabled"] is False)
+
+r = client.patch("/user/notifications",
+                 headers={"X-API-Key": "test-key", "X-User-Id": "user-no-session"},
+                 json={"enabled": True})
+check("user/notifications without a session row -> 409",
+      r.status_code == 409)
+
+# Invalid email is rejected — 422, never PII in an error string.
+r = client.post("/user/session", headers=AUTH,
+                json={"email": "not-an-email"})
+check("user/session rejects malformed email", r.status_code == 422)
+
+# Missing api key -> 401 (same auth chain as every other user endpoint).
+r = client.post("/user/session", json={"email": "x@y.com"})
+check("user/session without api key -> 401", r.status_code == 401)
+
 # ---------------- user deletion (NDPA/GDPR) ----------------
 r = client.delete("/user", headers=AUTH)
 check("delete user ok", r.status_code == 200)
@@ -636,6 +731,10 @@ check("billing subscription reset to free after deletion (clear_user covers subs
       billing_after_delete["tier"] == "free")
 check("generation usage reset after deletion (clear_user covers generation_log)",
       billing_after_delete["used_this_month"] == 0)
+# users row is wiped too — /user/notifications for the deleted user now 409s
+r = client.patch("/user/notifications", headers=AUTH, json={"enabled": True})
+check("users row wiped by DELETE /user (clear_user covers users)",
+      r.status_code == 409)
 
 print()
 if FAILURES:

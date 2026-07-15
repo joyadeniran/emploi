@@ -274,9 +274,16 @@ class ApplicationIn(BaseModel):
 
 class StatusIn(BaseModel):
     status: str
+    outcome_notes: Optional[str] = Field(default=None, max_length=1000)
 
     def validated(self) -> str:
-        allowed = {"applied", "interview", "offer", "rejected", "withdrawn"}
+        # Outcome loop: `heard_back` and `ghosted` are first-class alongside
+        # the older set. Order is loose (real-life isn't linear) — the UI is
+        # a dropdown, not a stepper. `ghosted` is explicit because most
+        # applications actually end there and pretending otherwise is
+        # dishonest.
+        allowed = {"applied", "heard_back", "interview", "offer",
+                   "rejected", "withdrawn", "ghosted"}
         if self.status not in allowed:
             raise HTTPException(status_code=422,
                                 detail=f"status must be one of {sorted(allowed)}")
@@ -715,7 +722,7 @@ def set_app_status(app_id: int, body: StatusIn, user_id: str = Depends(auth)):
         (app_id, user_id)).fetchone()
     if not owned:
         raise HTTPException(status_code=404, detail="application not found")
-    db.update_application_status(conn, app_id, status)
+    db.update_application_status(conn, app_id, status, body.outcome_notes)
     return {"ok": True}
 
 
@@ -811,6 +818,47 @@ async def chat_attach(file: UploadFile = File(...),
             "reply": "I read that document but it doesn't look like a CV or a "
                      "job listing, so I haven't changed anything. You can tell "
                      "me what it is and what you'd like me to do."}
+
+
+# ---------------------------------------------------------------------------
+# User session — the web tier's (app)/layout.tsx calls POST /user/session on
+# every authenticated render so the users table has the current email/name
+# from the NextAuth session. The users table is the source of truth for
+# email + notifications_enabled (superseding the legacy career_twins.data.email
+# blob field, which stays read-only for one release for backfill).
+# ---------------------------------------------------------------------------
+
+class UserSessionIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    name: Optional[str] = Field(default=None, max_length=200)
+    email_verified: bool = False
+
+
+class NotificationsIn(BaseModel):
+    enabled: bool
+
+
+@app.post("/user/session")
+def user_session(body: UserSessionIn, user_id: str = Depends(auth)):
+    """Idempotent upsert of the signed-in user's identity. Never logs the
+    email as PII in an error/trace — validation errors surface as 422 with
+    generic messages."""
+    if "@" not in body.email:
+        raise HTTPException(status_code=422, detail="invalid email")
+    db.upsert_user(get_conn(), user_id, body.email, body.name,
+                   body.email_verified)
+    return {"ok": True}
+
+
+@app.patch("/user/notifications")
+def user_notifications(body: NotificationsIn, user_id: str = Depends(auth)):
+    """Toggle email-digest opt-in. 409 if the user has never called
+    POST /user/session (should be impossible from the web tier, but a direct
+    API caller could hit it before establishing their session row)."""
+    if not db.set_notifications_enabled(get_conn(), user_id, body.enabled):
+        raise HTTPException(status_code=409,
+                            detail="user session not established; POST /user/session first")
+    return {"ok": True, "notifications_enabled": body.enabled}
 
 
 @app.delete("/user")
@@ -1063,3 +1111,127 @@ def admin_run_backup(_: None = Depends(admin_key_auth)):
     if not result["ok"]:
         raise HTTPException(status_code=500, detail=result)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics — one call that reports whether every ops-critical piece of
+# configuration is present in the running process and shows the most recent
+# activity from every worker. Purpose: verify the launch-blocker checklist
+# from a terminal without ssh'ing into Render (`curl -H X-API-Key: … …/admin/
+# diagnostics | jq`). Never returns a secret value — only booleans for
+# "configured", so it's safe to pipe into a status page.
+# ---------------------------------------------------------------------------
+
+_WORKER_EVENT_TYPES = (
+    "JobIngestionRun", "MatchingWorkerRun", "VerificationWorkerRun",
+    "NotifyWorkerRun", "BackupWorkerRun",
+)
+
+
+@app.get("/admin/diagnostics")
+def admin_diagnostics(_: None = Depends(admin_key_auth)):
+    """Return the state of every launch-blocker piece of configuration plus a
+    snapshot of recent activity. Does NOT emit any secret values (only booleans
+    for "configured") so this response is safe to log or forward to a status
+    page."""
+    conn = get_conn()
+
+    # --- configuration presence (env-var booleans only, never the value) ----
+    config = {
+        "emploi_api_key": bool(API_KEY),
+        "gemini": {
+            "api_key": bool(os.getenv("GEMINI_API_KEY", "")),
+            "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        },
+        "groq": {
+            "api_key": bool(os.getenv("GROQ_API_KEY", "")),
+            "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        },
+        "brevo": {
+            "api_key": bool(os.getenv("BREVO_API_KEY", "")),
+            "sender_email": bool(os.getenv("BREVO_SENDER_EMAIL", "")),
+        },
+        "paystack": {
+            "secret_key": bool(PAYSTACK_SECRET_KEY),
+            "pro_plan_code": bool(PAYSTACK_PLAN_CODES.get("pro")),
+            "max_plan_code": bool(PAYSTACK_PLAN_CODES.get("max")),
+        },
+        "r2_backup": {
+            "endpoint": bool(os.getenv("R2_ENDPOINT", "")),
+            "access_key": bool(os.getenv("R2_ACCESS_KEY", "")),
+            "secret_key": bool(os.getenv("R2_SECRET_KEY", "")),
+            "bucket": bool(os.getenv("R2_BUCKET", "")),
+        },
+        "web_app_url": WEB_APP_URL,
+    }
+
+    # --- launch-blocker rollup — a flat list of what's still open -----------
+    open_items: list[str] = []
+    if not config["emploi_api_key"]:
+        open_items.append("EMPLOI_API_KEY unset — API is in OPEN DEV MODE (any X-User-Id impersonates any user)")
+    if not config["gemini"]["api_key"]:
+        open_items.append("GEMINI_API_KEY unset — AI features return 503")
+    if not config["groq"]["api_key"]:
+        open_items.append("GROQ_API_KEY unset — no provider fallback; every Gemini hiccup is user-visible")
+    if not config["brevo"]["api_key"] or not config["brevo"]["sender_email"]:
+        open_items.append("BREVO_API_KEY / BREVO_SENDER_EMAIL incomplete — digest emails will not send")
+    paystack_ok = all(config["paystack"].values())
+    if not paystack_ok:
+        open_items.append("Paystack config incomplete — upgrade buttons will fail")
+    r2_ok = all(config["r2_backup"].values())
+    if not r2_ok:
+        open_items.append("R2 backup env vars incomplete — nightly backup will not upload; disk incident = data loss")
+
+    # --- last-run-per-worker from the events table --------------------------
+    last_runs: dict = {}
+    for event_type in _WORKER_EVENT_TYPES:
+        row = conn.execute(
+            "SELECT created_at, payload FROM events WHERE type = ? "
+            "ORDER BY id DESC LIMIT 1", (event_type,)).fetchone()
+        if not row:
+            last_runs[event_type] = None
+            continue
+        try:
+            payload = json.loads(row["payload"] or "{}")
+        except Exception:
+            payload = {}
+        # Keep the summary compact — only ok/error-ish fields, no huge lists
+        summary = {k: v for k, v in payload.items()
+                   if k in ("ok", "fetched", "written", "total_matches",
+                            "verified", "candidates", "sent", "errors",
+                            "sender_configured", "send_failures", "sources_processed",
+                            "backed_up", "dry_run")}
+        last_runs[event_type] = {"at": row["created_at"], "summary": summary}
+
+    # --- DB scale snapshot ---------------------------------------------------
+    def _scalar(sql: str) -> int:
+        try:
+            return int(conn.execute(sql).fetchone()[0])
+        except Exception:
+            return 0
+
+    counts = {
+        "career_twins": _scalar("SELECT COUNT(*) FROM career_twins"),
+        "applications": _scalar("SELECT COUNT(*) FROM applications"),
+        "ingested_jobs": _scalar("SELECT COUNT(*) FROM ingested_jobs"),
+        "matches": _scalar("SELECT COUNT(*) FROM matches"),
+        "matches_unnotified": _scalar("SELECT COUNT(*) FROM matches WHERE notified = 0"),
+        "subscriptions_paid": _scalar("SELECT COUNT(*) FROM subscriptions WHERE tier IN ('pro','max')"),
+        "job_sources_active": _scalar("SELECT COUNT(*) FROM job_sources WHERE active = 1"),
+        "job_sources_inactive": _scalar("SELECT COUNT(*) FROM job_sources WHERE active = 0"),
+        "generations_last_30d": _scalar(
+            "SELECT COUNT(*) FROM generation_log "
+            "WHERE created_at >= datetime('now', '-30 days')"),
+    }
+
+    ready = (config["emploi_api_key"] and config["gemini"]["api_key"]
+             and paystack_ok and r2_ok
+             and config["brevo"]["api_key"] and config["brevo"]["sender_email"])
+
+    return {
+        "ready_for_launch": ready,
+        "open_items": open_items,
+        "config": config,
+        "last_worker_runs": last_runs,
+        "counts": counts,
+    }

@@ -1,8 +1,14 @@
 """Worker 2 — refresh trustworthy employer records for direct company domains.
 
-ATS hosts (Greenhouse, Lever, Ashby) are deliberately skipped: verifying an
-ATS hostname would incorrectly label the employer as verified. Candidates can
-always run the normal Trust Check for an employer found elsewhere.
+Prefers `ingested_jobs.company_domain` when set (populated by the ingest
+worker's `_derive_company_domain` heuristic at write time) — this lets an
+ATS-hosted job (greenhouse.io / lever.co / ashbyhq.com / apply.workable.com /
+jobs.smartrecruiters.com) still be verified against the employer's actual
+domain instead of the ATS host. Rows without a guessed domain fall back to
+extracting from apply_url, and ATS hosts are still skipped there.
+
+Candidates can always run the normal Trust Check for an employer found
+elsewhere.
 """
 import argparse
 import os
@@ -16,7 +22,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import db
 import verify
 
-ATS_HOSTS = ("greenhouse.io", "lever.co", "ashbyhq.com")
+# ATS hostnames that should never be trust-checked as the employer. Also
+# used to filter out a guessed company_domain that accidentally coincides
+# with an ATS (defensive; the ingest heuristic shouldn't produce these).
+ATS_HOSTS = (
+    "greenhouse.io", "lever.co", "ashbyhq.com",
+    "workable.com", "smartrecruiters.com",
+)
+
+
+def _is_ats_host(domain: str) -> bool:
+    return any(domain == host or domain.endswith("." + host) for host in ATS_HOSTS)
 
 
 def _domain(url: str) -> Optional[str]:
@@ -32,14 +48,24 @@ def run(db_path: str, dry_run: bool = False, max_domains: int = 200,
         dns_fn=verify.dns_resolves, mx_fn=verify.has_mx,
         fetch_fn=verify.fetch_site) -> dict:
     conn = db.connect(db_path, check_same_thread=False)
-    rows = conn.execute("SELECT DISTINCT apply_url, company_name FROM ingested_jobs "
-                        "WHERE apply_url IS NOT NULL AND apply_url != '' LIMIT ?",
-                        (max_domains,)).fetchall()
+    # Prefer company_domain (populated by the ingest heuristic) over
+    # apply_url extraction. Order by company_domain-first so that when two
+    # rows disagree the guessed domain wins (fixes the ATS-attribution bug).
+    rows = conn.execute(
+        "SELECT DISTINCT company_domain, apply_url, company_name "
+        "FROM ingested_jobs "
+        "WHERE company_domain IS NOT NULL "
+        "   OR (apply_url IS NOT NULL AND apply_url != '') "
+        "LIMIT ?", (max_domains,)).fetchall()
     targets = []
+    seen = set()
     for row in rows:
-        domain = _domain(row["apply_url"])
-        if not domain or any(domain == host or domain.endswith("." + host) for host in ATS_HOSTS):
+        domain = (row["company_domain"] or "").lower().strip() or None
+        if not domain:
+            domain = _domain(row["apply_url"])
+        if not domain or _is_ats_host(domain) or domain in seen:
             continue
+        seen.add(domain)
         existing = db.get_trust_record(conn, domain)
         if existing and conn.execute("SELECT datetime(?) >= datetime('now', ? || ' days')",
                                     (existing["last_checked_at"], f"-{max_age_days}")).fetchone()[0]:

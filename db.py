@@ -15,6 +15,29 @@ import sqlite3
 from typing import Optional
 
 _SCHEMA = """
+-- Users — one row per authenticated Google account. Written by
+-- POST /user/session on every session render (the web tier calls it in
+-- (app)/layout.tsx after auth()) — idempotent upsert of last_seen_at
+-- plus email/name coming from the NextAuth session. Google IdP is the
+-- source of truth for credentials; no password hash lives here.
+--
+-- Historical note: pre-users-table releases stored the user's email in
+-- career_twins.data.email as a JSON field. That's PII in a blob any
+-- admin querying twins for prompt QA would see. This table replaces
+-- that. `workers/notify_users` reads email from users FIRST and falls
+-- back to career_twins.data.email for one release; the blob email will
+-- be removed in the next twin write cycle.
+CREATE TABLE IF NOT EXISTS users (
+    id                     TEXT PRIMARY KEY,   -- Google `sub` claim
+    email                  TEXT NOT NULL,
+    name                   TEXT,
+    email_verified         INTEGER NOT NULL DEFAULT 0,
+    notifications_enabled  INTEGER NOT NULL DEFAULT 1,
+    created_at             TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
 CREATE TABLE IF NOT EXISTS career_twins (
     user_id    TEXT PRIMARY KEY,
     data       TEXT NOT NULL,
@@ -35,18 +58,25 @@ CREATE INDEX IF NOT EXISTS idx_applications_user ON applications(user_id);
 -- source+source_job_id is the dedup key; title+company+description hash
 -- is used when a source lacks stable ids.
 CREATE TABLE IF NOT EXISTS ingested_jobs (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    source        TEXT NOT NULL,
-    source_job_id TEXT NOT NULL,
-    title         TEXT,
-    company_name  TEXT,
-    description   TEXT,
-    location      TEXT,
-    is_remote     INTEGER NOT NULL DEFAULT 0,
-    salary_text   TEXT,
-    apply_url     TEXT,
-    category      TEXT,
-    fetched_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    source         TEXT NOT NULL,
+    source_job_id  TEXT NOT NULL,
+    title          TEXT,
+    company_name   TEXT,
+    description    TEXT,
+    location       TEXT,
+    is_remote      INTEGER NOT NULL DEFAULT 0,
+    salary_text    TEXT,
+    apply_url      TEXT,
+    category       TEXT,
+    -- Guessed employer domain from company_name (workers/ingest_jobs._derive_
+    -- company_domain). Populated at ingest so verify_employers can trust an
+    -- ATS-hosted apply_url without misattributing greenhouse.io / lever.co /
+    -- ashbyhq.com / apply.workable.com / jobs.smartrecruiters.com as the
+    -- employer. Nullable — a company name that doesn't slugify safely leaves
+    -- it NULL and verify_employers falls back to the old apply_url logic.
+    company_domain TEXT,
+    fetched_at     TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(source, source_job_id)
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_category ON ingested_jobs(category);
@@ -152,6 +182,18 @@ def _migrate(conn) -> None:
     for statement in (
         "ALTER TABLE matches ADD COLUMN notified INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE matches ADD COLUMN notified_at TEXT",
+        # Guessed employer domain — see the column comment in ingested_jobs.
+        # Existing rows self-heal on the next ingest run since upsert_job
+        # overwrites the field. Left NULL for rows the ingest hasn't touched
+        # yet, which verify_employers must tolerate.
+        "ALTER TABLE ingested_jobs ADD COLUMN company_domain TEXT",
+        # Outcome tracking: optional user note + audit timestamp so the notify
+        # worker can find applications that are still `applied` with no user
+        # update after N days and include a "how did it go?" nudge. Both are
+        # nullable — `applied` rows written before this migration correctly
+        # show up as "no outcome yet" for the nudge query.
+        "ALTER TABLE applications ADD COLUMN outcome_notes TEXT",
+        "ALTER TABLE applications ADD COLUMN outcome_updated_at TEXT",
     ):
         try:
             conn.execute(statement)
@@ -181,6 +223,62 @@ def connect(path: str, check_same_thread: bool = True) -> sqlite3.Connection:
     conn.executescript(_SCHEMA)
     _migrate(conn)
     return conn
+
+
+# ---------------------------------------------------------------------------
+# Users — session-backed identity, source of truth for email + notifications
+# ---------------------------------------------------------------------------
+
+def upsert_user(conn, user_id: str, email: str, name: Optional[str] = None,
+                email_verified: bool = False) -> None:
+    """Idempotent upsert of a user's session-derived identity.
+
+    The web tier calls this on every render of an authenticated route
+    (`(app)/layout.tsx`) so `last_seen_at` reflects real activity. Only
+    email/name/email_verified are written from the session — notifications_
+    enabled and created_at are preserved once set, so a returning user
+    keeps their preference.
+    """
+    if not user_id:
+        raise ValueError("user_id required")
+    if not email:
+        raise ValueError("email required (Google session must carry one)")
+    existing = conn.execute("SELECT 1 FROM users WHERE id = ?",
+                            (user_id,)).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE users SET email = ?, name = COALESCE(?, name), "
+            "email_verified = ?, last_seen_at = datetime('now') WHERE id = ?",
+            (email, name, 1 if email_verified else 0, user_id))
+    else:
+        conn.execute(
+            "INSERT INTO users (id, email, name, email_verified) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, email, name, 1 if email_verified else 0))
+    conn.commit()
+
+
+def get_user(conn, user_id: str) -> Optional[dict]:
+    """Return the user row or None. Booleans are returned as Python bools."""
+    row = conn.execute("SELECT * FROM users WHERE id = ?",
+                       (user_id,)).fetchone()
+    if not row:
+        return None
+    out = dict(row)
+    out["email_verified"] = bool(out.get("email_verified"))
+    out["notifications_enabled"] = bool(out.get("notifications_enabled", 1))
+    return out
+
+
+def set_notifications_enabled(conn, user_id: str, enabled: bool) -> bool:
+    """Flip the user's email-digest opt-in. Returns True on success, False
+    if the user row doesn't exist (caller should upsert_user first, which
+    the /user/session endpoint does on every render)."""
+    cur = conn.execute(
+        "UPDATE users SET notifications_enabled = ?, last_seen_at = datetime('now') "
+        "WHERE id = ?", (1 if enabled else 0, user_id))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def save_career_twin(conn, user_id: str, data: dict) -> None:
@@ -246,10 +344,15 @@ def list_applications(conn, user_id: str) -> list:
         "ORDER BY id DESC", (user_id,)).fetchall()
     out = []
     for r in rows:
-        item = {"id": r["id"], "company": r["company"], "role": r["role"],
-                "status": r["status"], "created_at": r["created_at"]}
+        # Get columns dynamically so migrations that add new columns
+        # (outcome_notes / outcome_updated_at) surface in the list without
+        # a hand edit here. `extra` JSON still merges last so user-facing
+        # keys override any DB-column shadow (backwards compat).
+        item = dict(r)
+        extra_json = item.pop("extra", None)
         try:
-            item.update(json.loads(r["extra"]) or {})
+            if extra_json:
+                item.update(json.loads(extra_json) or {})
         except Exception:
             pass
         out.append(item)
@@ -263,14 +366,50 @@ def count_applications_this_month(conn, user_id: str) -> int:
         (user_id,)).fetchone()[0]
 
 
-def update_application_status(conn, app_id: int, status: str) -> None:
-    conn.execute("UPDATE applications SET status = ? WHERE id = ?",
-                 (status, app_id))
+def update_application_status(conn, app_id: int, status: str,
+                              outcome_notes: Optional[str] = None) -> None:
+    """Set a new status + audit the outcome update timestamp.
+
+    Any transition off 'applied' counts as an outcome update — it's the
+    signal for `list_applications_needing_outcome_nudge` to stop nudging
+    the user. `outcome_notes` is optional free-text from the user (e.g.
+    "recruiter said Q1"); a None value is preserved so the notes column
+    can be cleared by passing empty string separately.
+    """
+    if outcome_notes is not None:
+        conn.execute(
+            "UPDATE applications SET status = ?, outcome_notes = ?, "
+            "outcome_updated_at = datetime('now') WHERE id = ?",
+            (status, outcome_notes, app_id))
+    else:
+        conn.execute(
+            "UPDATE applications SET status = ?, "
+            "outcome_updated_at = datetime('now') WHERE id = ?",
+            (status, app_id))
     conn.commit()
+
+
+def list_applications_needing_outcome_nudge(conn, user_id: str,
+                                            days: int = 14,
+                                            limit: int = 5) -> list:
+    """Applications still marked `applied` more than `days` ago that have
+    never had an outcome update. Used by the notify worker to add "how did
+    it go?" prompts to the digest. Capped so the digest doesn't feel like
+    homework (default 5 per user)."""
+    rows = conn.execute(
+        "SELECT id, company, role, created_at FROM applications "
+        "WHERE user_id = ? "
+        "AND status = 'applied' "
+        "AND outcome_updated_at IS NULL "
+        "AND created_at <= datetime('now', ? || ' days') "
+        "ORDER BY created_at ASC LIMIT ?",
+        (user_id, f"-{int(days)}", int(limit))).fetchall()
+    return [dict(r) for r in rows]
 
 
 def clear_user(conn, user_id: str) -> None:
     """Delete everything stored for one user (right under NDPA/GDPR)."""
+    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
     conn.execute("DELETE FROM career_twins WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM applications WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM matches WHERE user_id = ?", (user_id,))
@@ -379,23 +518,26 @@ def list_saved_jobs(conn, user_id: str, *, limit: int = 100) -> list:
 def upsert_job(conn, source: str, source_job_id: str, fields: dict) -> int:
     """Insert or replace a job row. Returns the row id (new or existing)."""
     allowed = {"title", "company_name", "description", "location",
-               "is_remote", "salary_text", "apply_url", "category"}
+               "is_remote", "salary_text", "apply_url", "category",
+               "company_domain"}
     data = {k: v for k, v in fields.items() if k in allowed}
     cur = conn.execute(
         "INSERT INTO ingested_jobs "
         "(source, source_job_id, title, company_name, description, location, "
-        " is_remote, salary_text, apply_url, category, fetched_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) "
+        " is_remote, salary_text, apply_url, category, company_domain, fetched_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) "
         "ON CONFLICT(source, source_job_id) DO UPDATE SET "
         "  title=excluded.title, company_name=excluded.company_name, "
         "  description=excluded.description, location=excluded.location, "
         "  is_remote=excluded.is_remote, salary_text=excluded.salary_text, "
         "  apply_url=excluded.apply_url, category=excluded.category, "
+        "  company_domain=excluded.company_domain, "
         "  fetched_at=excluded.fetched_at",
         (source, source_job_id,
          data.get("title"), data.get("company_name"), data.get("description"),
          data.get("location"), int(bool(data.get("is_remote"))),
-         data.get("salary_text"), data.get("apply_url"), data.get("category")))
+         data.get("salary_text"), data.get("apply_url"), data.get("category"),
+         data.get("company_domain")))
     conn.commit()
     if cur.lastrowid:
         return cur.lastrowid

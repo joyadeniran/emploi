@@ -1,0 +1,13 @@
+[
+  {
+    "job_id": "example-001",
+    "title": "Curator-Maintained Role Example",
+    "description": "This is a template entry showing the manual/curated job shape. Delete this file (and its source_sources.json row) once real curated feeds exist.",
+    "location": "Remote",
+    "is_remote": true,
+    "apply_url": "https://emploihq.com/curation-guide",
+    "salary_text": null,
+    "category": "Example",
+    "posted_at": "2026-07-15"
+  }
+]

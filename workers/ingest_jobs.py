@@ -46,6 +46,15 @@ SOURCES_PATH = os.path.join(
 GREENHOUSE_BASE = "https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true"
 LEVER_BASE = "https://api.lever.co/v0/postings/{slug}?mode=json"
 ASHBY_BASE = "https://api.ashbyhq.com/posting-public/apiPostings/{token}"
+WORKABLE_BASE = "https://apply.workable.com/api/v3/accounts/{subdomain}/jobs?limit=100"
+SMARTRECRUITERS_BASE = "https://api.smartrecruiters.com/v1/companies/{identifier}/postings?limit=100"
+MANUAL_JOBS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "manual_jobs")
+# Curated listings older than this are treated as expired and skipped —
+# a stale manual file that hasn't been touched in a month shouldn't keep
+# feeding stale roles into matches.
+MANUAL_JOB_MAX_AGE_DAYS = 30
 REQUEST_TIMEOUT = 15
 RATE_SLEEP = 0.5
 
@@ -68,6 +77,55 @@ def _fetch(url: str) -> Optional[Union[dict, list]]:
 def _stable_id(*parts: str) -> str:
     h = hashlib.sha1("|".join(str(p) for p in parts).encode()).hexdigest()
     return h[:16]
+
+
+# Company suffixes that never belong in a domain slug (Inc, Ltd, GmbH, etc.)
+_COMPANY_STOPWORDS = {
+    "inc", "inc.", "llc", "ltd", "ltd.", "limited", "corp", "corp.",
+    "corporation", "co", "co.", "gmbh", "sa", "ag", "plc", "srl",
+    "bv", "nv", "kk", "kg", "sarl", "s.a.", "s.l.", "s.r.l.",
+    "group", "holdings", "the",
+}
+
+
+def _derive_company_domain(company_name: str) -> Optional[str]:
+    """Best-effort guess at the employer's public web domain from a company name.
+
+    Rationale: apply URLs for ATS-hosted jobs point at greenhouse.io / lever.co /
+    ashbyhq.com / apply.workable.com / jobs.smartrecruiters.com — extracting
+    the domain from apply_url attributes the trust score to the ATS, not the
+    employer. Fixing this by storing a guessed employer domain at ingest lets
+    verify_employers correctly probe the real company's DNS/MX/site.
+
+    Heuristic (deliberately simple + honest):
+      - lowercase
+      - drop parenthetical clarifiers ("Loom (Atlassian)" → "loom")
+      - split on whitespace/punctuation, drop stopwords ("Inc", "Ltd", ...)
+      - join remaining tokens with no separator
+      - append ".com"
+
+    Returns None (not a guess) when: name is empty; the result would be too
+    short (<3 chars) to be a plausible domain; every token is a stopword.
+    A None result tells verify_employers to fall back to its existing logic.
+    False positives (e.g. a `nomba.com` that isn't Nomba's) are handled at
+    the verify layer — a domain that fails DNS produces "unverified", never
+    a fabricated score. See verify.compute_trust.
+    """
+    if not company_name:
+        return None
+    name = company_name.strip().lower()
+    # Drop parenthetical clarifiers like "Loom (Atlassian)" — keep only the
+    # first head phrase, which is almost always the primary brand.
+    name = re.sub(r"\([^)]*\)", "", name).strip()
+    # Split on any non-alphanumeric — keeps letters/digits, drops &, -, ., etc.
+    tokens = [t for t in re.split(r"[^a-z0-9]+", name) if t]
+    tokens = [t for t in tokens if t not in _COMPANY_STOPWORDS]
+    if not tokens:
+        return None
+    slug = "".join(tokens)
+    if len(slug) < 3:
+        return None
+    return f"{slug}.com"
 
 
 # ---- Normalisation helpers --------------------------------------------------
@@ -120,15 +178,17 @@ def _ingest_greenhouse(source: dict, conn, dry_run: bool):
         if job.get("departments"):
             dept = job["departments"][0].get("name", "")
 
+        company_name = source.get("company", token.replace("-", " ").title())
         fields = {
             "title": job.get("title", ""),
-            "company_name": source.get("company", token.replace("-", " ").title()),
+            "company_name": company_name,
             "description": _strip_html(job.get("content", "")),
             "location": location,
             "is_remote": _is_remote(location) or _is_remote(job.get("content", "")),
             "salary_text": _salary_from_greenhouse(job),
             "apply_url": job.get("absolute_url", ""),
             "category": dept,
+            "company_domain": _derive_company_domain(company_name),
         }
 
         source_key = f"greenhouse/{token}"
@@ -164,9 +224,10 @@ def _ingest_lever(source: dict, conn, dry_run: bool):
         description = _strip_html(posting.get("descriptionPlain", "")
                                   or posting.get("description", ""))
 
+        company_name = source.get("company", slug.replace("-", " ").title())
         fields = {
             "title": posting.get("text", ""),
-            "company_name": source.get("company", slug.replace("-", " ").title()),
+            "company_name": company_name,
             "description": description,
             "location": location,
             "is_remote": (workplace.lower() == "remote"
@@ -175,6 +236,7 @@ def _ingest_lever(source: dict, conn, dry_run: bool):
             "salary_text": None,
             "apply_url": posting.get("hostedUrl", ""),
             "category": team,
+            "company_domain": _derive_company_domain(company_name),
         }
 
         source_key = f"lever/{slug}"
@@ -202,13 +264,15 @@ def _ingest_ashby(source: dict, conn, dry_run: bool):
         job_id = str(posting.get("id") or posting.get("jobUrl") or _stable_id(token, posting.get("title", "")))
         location = str(posting.get("location") or posting.get("locationName") or "")
         description = _strip_html(str(posting.get("descriptionHtml") or posting.get("descriptionPlain") or posting.get("description") or ""))
+        company_name = source.get("company", token.replace("-", " ").title())
         fields = {"title": posting.get("title", ""),
-                  "company_name": source.get("company", token.replace("-", " ").title()),
+                  "company_name": company_name,
                   "description": description, "location": location,
                   "is_remote": _is_remote(location) or _is_remote(description),
                   "salary_text": None,
                   "apply_url": posting.get("jobUrl") or posting.get("applyUrl") or "",
-                  "category": posting.get("department") or posting.get("team") or ""}
+                  "category": posting.get("department") or posting.get("team") or "",
+                  "company_domain": _derive_company_domain(company_name)}
         source_key = f"ashby/{token}"
         if dry_run:
             print(f"  [dry-run] {source_key} job {job_id}: {fields['title']}")
@@ -218,10 +282,224 @@ def _ingest_ashby(source: dict, conn, dry_run: bool):
     return len(postings), written
 
 
+def _ingest_workable(source: dict, conn, dry_run: bool):
+    """Fetch published jobs from one Workable subdomain. The list endpoint
+    returns titles/locations/URLs but not full descriptions (Workable exposes
+    those on the per-job detail endpoint, which would multiply HTTP calls per
+    company). v1 stores the title as a description stub — matching still ranks
+    by title/skills; users who want a tailored draft can Import-a-Job to paste
+    the full JD. Supports both {"results": [...]} and bare-list responses."""
+    subdomain = source["token"]
+    data = _fetch(WORKABLE_BASE.format(subdomain=subdomain))
+    if data is None:
+        return 0, 0
+    jobs = data.get("results") if isinstance(data, dict) else data
+    if not isinstance(jobs, list):
+        return 0, 0
+    written = 0
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        # Only ingest published jobs; a missing state field is treated as published
+        # (some tenants omit the field entirely) — a state that IS present must be "published".
+        state = job.get("state")
+        if state and str(state).lower() != "published":
+            continue
+        shortcode = job.get("shortcode") or job.get("id") or ""
+        job_id = str(job.get("id") or shortcode
+                     or _stable_id(subdomain, job.get("title", "")))
+        loc = job.get("location") if isinstance(job.get("location"), dict) else {}
+        location_str = str(
+            loc.get("location_str")
+            or ", ".join(x for x in [loc.get("city"), loc.get("region"),
+                                     loc.get("country")] if x)
+            or "")
+        workplace = str(loc.get("workplace_type") or "")
+        remote = (workplace.lower() == "remote"
+                  or bool(loc.get("telecommuting"))
+                  or _is_remote(location_str))
+        apply_url = (job.get("application_url")
+                     or job.get("url")
+                     or job.get("shortlink") or "")
+        company_name = source.get("company",
+                                   subdomain.replace("-", " ").title())
+        fields = {
+            "title": job.get("title", ""),
+            "company_name": company_name,
+            "description": _strip_html(str(job.get("description")
+                                           or job.get("title") or "")),
+            "location": location_str,
+            "is_remote": remote,
+            "salary_text": None,
+            "apply_url": apply_url,
+            "category": job.get("department") or "",
+            "company_domain": _derive_company_domain(company_name),
+        }
+        source_key = f"workable/{subdomain}"
+        if dry_run:
+            print(f"  [dry-run] {source_key} job {job_id}: {fields['title']}")
+        else:
+            db.upsert_job(conn, source_key, job_id, fields)
+        written += 1
+    return len(jobs), written
+
+
+def _ingest_smartrecruiters(source: dict, conn, dry_run: bool):
+    """Fetch public postings for one SmartRecruiters company identifier.
+    The postings list carries the posting name, location, and department but
+    only a short `jobAd.sections.jobDescription.text` blurb (the full JD sits
+    on a per-posting detail endpoint) — v1 stores whatever blurb is present,
+    falling back to the title so matching always has something non-empty."""
+    identifier = source["token"]
+    data = _fetch(SMARTRECRUITERS_BASE.format(identifier=identifier))
+    if data is None:
+        return 0, 0
+    postings = data.get("content") if isinstance(data, dict) else data
+    if not isinstance(postings, list):
+        return 0, 0
+    written = 0
+    for posting in postings:
+        if not isinstance(posting, dict):
+            continue
+        posting_id = str(posting.get("id") or posting.get("uuid")
+                         or _stable_id(identifier, posting.get("name", "")))
+        loc = posting.get("location") if isinstance(posting.get("location"), dict) else {}
+        location_str = str(
+            loc.get("fullLocation")
+            or ", ".join(x for x in [loc.get("city"), loc.get("region"),
+                                     loc.get("country")] if x)
+            or "")
+        remote_flag = bool(loc.get("remote"))
+        dept = ""
+        dept_obj = posting.get("department")
+        if isinstance(dept_obj, dict):
+            dept = dept_obj.get("label", "") or ""
+        apply_url = posting.get("postingUrl") or posting.get("applyUrl") or ""
+        description_text = ""
+        job_ad = posting.get("jobAd")
+        if isinstance(job_ad, dict):
+            sections = job_ad.get("sections")
+            if isinstance(sections, dict):
+                desc = sections.get("jobDescription")
+                if isinstance(desc, dict):
+                    description_text = desc.get("text", "") or ""
+        company_name = source.get("company",
+                                   identifier.replace("-", " ").title())
+        fields = {
+            "title": posting.get("name", ""),
+            "company_name": company_name,
+            "description": _strip_html(description_text
+                                       or posting.get("name", "")),
+            "location": location_str,
+            "is_remote": remote_flag or _is_remote(location_str),
+            "salary_text": None,
+            "apply_url": apply_url,
+            "category": dept,
+            "company_domain": _derive_company_domain(company_name),
+        }
+        source_key = f"smartrecruiters/{identifier}"
+        if dry_run:
+            print(f"  [dry-run] {source_key} job {posting_id}: {fields['title']}")
+        else:
+            db.upsert_job(conn, source_key, posting_id, fields)
+        written += 1
+    return len(postings), written
+
+
+def _ingest_manual(source: dict, conn, dry_run: bool):
+    """Curated jobs from a human-maintained JSON file at
+    `data/manual_jobs/{token}.json`. This is the honest answer for Nigerian
+    banks / Workday shops / any employer without a public ATS feed —
+    scraping was rejected as legal/reliability risk, aggregators like Jooble
+    are weak on NG coverage, and a human maintaining 5-15 open roles per
+    company for a top-20 curated set is realistic (~30 min/week).
+
+    File shape:
+        [{"job_id": "req-123", "title": "...", "description": "...",
+          "location": "Lagos, Nigeria", "is_remote": false,
+          "apply_url": "https://gtco.com/careers/...",
+          "salary_text": null, "category": "Risk",
+          "posted_at": "2026-07-01"}, ...]
+
+    Jobs with a `posted_at` older than MANUAL_JOB_MAX_AGE_DAYS are silently
+    skipped — a stale file that hasn't been refreshed shouldn't keep feeding
+    30-day-old roles into matches. Missing `posted_at` is tolerated (treated
+    as fresh); the diagnostics endpoint separately warns about file mtime.
+    Malformed entries are skipped with a warning; a single bad row never
+    kills the whole company's ingest.
+    """
+    import json as _json
+    from datetime import datetime, timedelta
+
+    token = source["token"]
+    file_path = os.path.join(MANUAL_JOBS_DIR, f"{token}.json")
+    if not os.path.exists(file_path):
+        log.info("manual/%s — file not found at %s", token, file_path)
+        return 0, 0
+
+    try:
+        payload = _json.loads(open(file_path, encoding="utf-8").read())
+    except Exception as exc:
+        log.warning("manual/%s — could not parse JSON: %s", token, exc)
+        return 0, 0
+
+    if not isinstance(payload, list):
+        log.warning("manual/%s — expected a list at top level, got %s",
+                    token, type(payload).__name__)
+        return 0, 0
+
+    cutoff = datetime.utcnow() - timedelta(days=MANUAL_JOB_MAX_AGE_DAYS)
+    written = 0
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+        posted = entry.get("posted_at")
+        if posted:
+            try:
+                # Accept either date or datetime ISO strings.
+                dt = datetime.fromisoformat(str(posted)[:19])
+                if dt < cutoff:
+                    continue
+            except Exception:
+                # Bad date format doesn't force a skip — better to include
+                # than to hide it; curator will notice on next update.
+                pass
+
+        job_id = str(entry.get("job_id") or entry.get("id")
+                     or _stable_id(token, entry.get("title", ""),
+                                    entry.get("apply_url", "")))
+        company_name = source.get("company",
+                                   token.replace("-", " ").title())
+        location = str(entry.get("location") or "")
+        description = _strip_html(str(entry.get("description") or ""))
+        fields = {
+            "title": entry.get("title", "") or "",
+            "company_name": company_name,
+            "description": description,
+            "location": location,
+            "is_remote": bool(entry.get("is_remote")) or _is_remote(location)
+                         or _is_remote(description),
+            "salary_text": entry.get("salary_text"),
+            "apply_url": entry.get("apply_url", "") or "",
+            "category": entry.get("category", "") or "",
+            "company_domain": _derive_company_domain(company_name),
+        }
+        source_key = f"manual/{token}"
+        if dry_run:
+            print(f"  [dry-run] {source_key} job {job_id}: {fields['title']}")
+        else:
+            db.upsert_job(conn, source_key, job_id, fields)
+        written += 1
+    return len(payload), written
+
+
 _ATS_HANDLERS = {
     "greenhouse": _ingest_greenhouse,
     "lever": _ingest_lever,
     "ashby": _ingest_ashby,
+    "workable": _ingest_workable,
+    "smartrecruiters": _ingest_smartrecruiters,
+    "manual": _ingest_manual,
 }
 
 

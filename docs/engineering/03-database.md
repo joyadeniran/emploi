@@ -85,6 +85,30 @@ CREATE TABLE events (
     payload TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Billing tier per user. No row = free tier (implicit-free pattern).
+-- Never fabricate a paid tier; paid status only comes from Paystack webhooks.
+CREATE TABLE subscriptions (
+    user_id                  TEXT PRIMARY KEY,
+    tier                     TEXT NOT NULL DEFAULT 'free',   -- free | pro | max
+    status                   TEXT NOT NULL DEFAULT 'active', -- active | past_due | canceled
+    paystack_customer_code   TEXT,
+    paystack_subscription_code TEXT,
+    paystack_email           TEXT,
+    current_period_end       TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- One row per successful AI draft completion. Quota metric for billing.
+-- Counting successful AI calls (not applications — skip-draft costs nothing).
+CREATE TABLE generation_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_generation_log_user_time
+    ON generation_log(user_id, created_at);
 ```
 
 Design choices, deliberate:
@@ -97,7 +121,7 @@ Design choices, deliberate:
 ## Access rules
 
 - Every user query filters by `user_id`. There are no cross-user reads. The PATCH ownership check in `api/main.py` is the pattern: verify `user_id` owns the row before mutating.
-- `db.clear_user()` implements the NDPA/GDPR deletion right and deletes from **every** user-keyed table (`career_twins`, `applications`, `matches`, `events`). Any new table with a `user_id` column must be added there in the same commit.
+- `db.clear_user()` implements the NDPA/GDPR deletion right and deletes from **every** user-keyed table (`career_twins`, `applications`, `matches`, `events`, `saved_jobs`, `subscriptions`, `generation_log`). Any new table with a `user_id` column must be added there in the same commit.
 - `ingested_jobs`, `employer_trust_records`, `job_sources` are shared (not user-keyed); only workers and admin endpoints write them.
 
 ## Backups

@@ -15,6 +15,7 @@ The specification is an AI-native document set under [`docs/engineering/`](docs/
 | [07 — Frontend](docs/engineering/07-ui.md) | Design system, pages, components, data flow, UX conventions |
 | [08 — Auth & Security](docs/engineering/08-auth-and-security.md) | Google OAuth, service auth, secrets, security checklists |
 | [09 — Testing, Deployment & Roadmap](docs/engineering/09-deployment.md) | Suites/CI, local + production topology, launch checklist, v1→v3 roadmap |
+| [10 — Billing](docs/engineering/10-billing.md) | Paystack integration, Free/Pro/Max tiers, quota enforcement, webhook lifecycle, deployment checklist |
 
 ## System in one paragraph
 
