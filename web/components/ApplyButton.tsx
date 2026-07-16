@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowUpRight, Check, Copy, Loader2, X } from "lucide-react";
+import { ArrowUpRight, Check, Copy, Download, Loader2, X } from "lucide-react";
 import type { JobMatch } from "@/lib/data";
 import { generateApplication, GenerationError, type GeneratedDraft } from "@/lib/generate";
 
@@ -41,6 +41,20 @@ export function ApplyButton({ match }: { match: JobMatch }) {
     }
   }
 
+  function downloadDraft() {
+    if (!generated) return;
+    const slug = `${match.company}-${match.title}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const blob = new Blob([generated.result], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${slug || "emploi-application"}.md`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   async function trackAndApply() {
     setState("tracking");
     try {
@@ -54,5 +68,5 @@ export function ApplyButton({ match }: { match: JobMatch }) {
     }
   }
 
-  return <><button onClick={() => { setOpen(true); setState("idle"); setErrorMsg(""); }} className="rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-white">Apply</button>{open ? <div role="dialog" aria-modal="true" aria-label={`Apply to ${match.title}`} className="fixed inset-0 z-[60] flex items-center justify-center bg-ink/40 p-4"><div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-card p-6 shadow-card"><div className="flex items-start justify-between gap-4"><div><h2 className="text-xl font-extrabold">Apply to this role</h2><p className="mt-1 text-sm text-muted">{match.title} at {match.company}</p></div><button onClick={() => setOpen(false)} aria-label="Close" className="rounded-lg p-2"><X size={18} /></button></div>{!generated ? <div className="mt-5">{state === "busy" ? <div className="flex items-center gap-3 rounded-xl bg-surface px-4 py-3"><Loader2 size={16} className="shrink-0 animate-spin text-brand" /><p className="text-sm font-semibold text-ink">{progress}</p></div> : <><p className="text-sm text-muted">Want a cover-letter draft grounded only in your Career Twin? That uses <strong>3 AI calls</strong> with review enabled (2 without). Or skip the draft and apply directly — we&apos;ll still track it.</p><div className="mt-5 flex flex-wrap items-center gap-3"><button onClick={generate} disabled={state === "tracking"} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60">Generate application</button><button onClick={trackAndApply} disabled={state === "tracking"} className="inline-flex items-center gap-2 rounded-xl border border-line px-4 py-2.5 text-sm font-bold text-brand hover:bg-brand-soft disabled:opacity-60">{state === "tracking" ? <Loader2 size={15} className="animate-spin" /> : <ArrowUpRight size={15} />}Skip draft — track &amp; apply</button></div></>}{state === "error" ? <p role="alert" className="mt-3 text-sm font-semibold text-warn">{errorMsg}</p> : null}</div> : <div className="mt-5"><div className="flex items-center justify-between"><p className="text-sm font-bold">Fit score: {generated.fit_score ?? "Not available"}{generated.fit_score !== null ? "/100" : ""}</p><button onClick={() => navigator.clipboard.writeText(generated.result)} className="inline-flex items-center gap-1 text-sm font-bold text-brand"><Copy size={14} /> Copy</button></div><pre className="mt-3 whitespace-pre-wrap rounded-xl bg-surface p-4 text-sm leading-relaxed text-ink">{generated.result}</pre><button onClick={trackAndApply} disabled={state === "tracking"} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white">{state === "tracking" ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}Track application and open employer site</button>{state === "error" ? <p role="alert" className="mt-3 text-sm font-semibold text-warn">{errorMsg}</p> : null}</div>}</div></div> : null}</>;
+  return <><button onClick={() => { setOpen(true); setState("idle"); setErrorMsg(""); }} className="rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-white">Apply</button>{open ? <div role="dialog" aria-modal="true" aria-label={`Apply to ${match.title}`} className="fixed inset-0 z-[60] flex items-center justify-center bg-ink/40 p-4"><div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-card p-6 shadow-card"><div className="flex items-start justify-between gap-4"><div><h2 className="text-xl font-extrabold">Apply to this role</h2><p className="mt-1 text-sm text-muted">{match.title} at {match.company}</p></div><button onClick={() => setOpen(false)} aria-label="Close" className="rounded-lg p-2"><X size={18} /></button></div>{!generated ? <div className="mt-5">{state === "busy" ? <div className="flex items-center gap-3 rounded-xl bg-surface px-4 py-3"><Loader2 size={16} className="shrink-0 animate-spin text-brand" /><p className="text-sm font-semibold text-ink">{progress}</p></div> : <><p className="text-sm text-muted">Want a cover-letter draft grounded only in your Career Twin? That uses <strong>3 AI calls</strong> with review enabled (2 without). Or skip the draft and apply directly — we&apos;ll still track it.</p><div className="mt-5 flex flex-wrap items-center gap-3"><button onClick={generate} disabled={state === "tracking"} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60">Generate application</button><button onClick={trackAndApply} disabled={state === "tracking"} className="inline-flex items-center gap-2 rounded-xl border border-line px-4 py-2.5 text-sm font-bold text-brand hover:bg-brand-soft disabled:opacity-60">{state === "tracking" ? <Loader2 size={15} className="animate-spin" /> : <ArrowUpRight size={15} />}Skip draft — track &amp; apply</button></div></>}{state === "error" ? <p role="alert" className="mt-3 text-sm font-semibold text-warn">{errorMsg}</p> : null}</div> : <div className="mt-5"><div className="flex items-center justify-between"><p className="text-sm font-bold">Fit score: {generated.fit_score ?? "Not available"}{generated.fit_score !== null ? "/100" : ""}</p><div className="flex items-center gap-4"><button onClick={() => navigator.clipboard.writeText(generated.result)} className="inline-flex items-center gap-1 text-sm font-bold text-brand"><Copy size={14} /> Copy</button><button onClick={downloadDraft} className="inline-flex items-center gap-1 text-sm font-bold text-brand"><Download size={14} /> Download</button></div></div><pre className="mt-3 whitespace-pre-wrap rounded-xl bg-surface p-4 text-sm leading-relaxed text-ink">{generated.result}</pre><button onClick={trackAndApply} disabled={state === "tracking"} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white">{state === "tracking" ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}Track application and open employer site</button>{state === "error" ? <p role="alert" className="mt-3 text-sm font-semibold text-warn">{errorMsg}</p> : null}</div>}</div></div> : null}</>;
 }

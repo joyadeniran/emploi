@@ -505,14 +505,9 @@ export default function CreateCareerTwinPage() {
             <Sparkles size={18} />
             Create my Career Twin
           </button>
-          <div className="mt-5">
-            <button
-              onClick={() => router.push("/dashboard")}
-              className="text-sm font-semibold text-faint hover:text-muted"
-            >
-              I&apos;ll do this later
-            </button>
-          </div>
+          {/* No "skip" here: the dashboard and every candidate page gate on an
+              activated Career Twin, so skipping only bounced the user straight
+              back to this wizard. Onboarding is the required first step. */}
         </div>
       </div>
     );
