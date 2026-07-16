@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth, signOut } from "@/auth";
 import { AppShell } from "@/components/AppShell";
+import ClientRedirectToLogin from "@/components/ClientRedirectToLogin";
 
 export default async function AppLayout({
   children,
@@ -8,7 +9,12 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const session = await auth();
-  if (!session?.user) redirect("/login");
+  if (!session?.user) {
+    // Server cannot reliably know the original client path here; render a
+    // tiny client-side redirect that preserves the current path as
+    // `callbackUrl` so sign-in returns the user to their intended page.
+    return <ClientRedirectToLogin /> as unknown as JSX.Element;
+  }
 
   async function signOutAction() {
     "use server";
