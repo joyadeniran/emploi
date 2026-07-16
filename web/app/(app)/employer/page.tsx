@@ -77,7 +77,7 @@ export default async function EmployerDashboardPage() {
         </Link>
       </header>
 
-      <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white p-5 shadow-card">
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-card p-5 shadow-card">
         <div className="flex items-center gap-3">
           <Coins className="text-brand" size={20} />
           <div>
@@ -99,7 +99,7 @@ export default async function EmployerDashboardPage() {
       <section className="space-y-3">
         <h2 className="font-extrabold">Your roles</h2>
         {roles.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-line bg-white p-8 text-center">
+          <div className="rounded-2xl border border-dashed border-line bg-card p-8 text-center">
             <p className="font-bold">No roles yet</p>
             <p className="mt-1 text-sm text-muted">
               Post your first role free — paste a job URL or the description text,
@@ -114,7 +114,7 @@ export default async function EmployerDashboardPage() {
             <Link
               key={role.id}
               href={`/employer/roles/${role.id}`}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white p-5 shadow-card transition-shadow hover:shadow-pop"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-card p-5 shadow-card transition-shadow hover:shadow-pop"
             >
               <div>
                 <p className="font-bold">

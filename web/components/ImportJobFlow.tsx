@@ -126,7 +126,7 @@ export function ImportJobFlow() {
       </header>
 
       {/* Step 1 — paste */}
-      <section className="rounded-2xl border border-line bg-white p-6 shadow-card">
+      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
         <h2 className="font-extrabold">1 · Paste the job</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <div>
@@ -161,7 +161,7 @@ export function ImportJobFlow() {
 
       {/* Step 2 — trust verdict */}
       {trust ? (
-        <section className={`rounded-2xl border p-6 shadow-card ${lowTrust ? "border-warn/40 bg-warn-soft/30" : "border-line bg-white"}`}>
+        <section className={`rounded-2xl border p-6 shadow-card ${lowTrust ? "border-warn/40 bg-warn-soft/30" : "border-line bg-card"}`}>
           <h2 className="font-extrabold">2 · Employer trust</h2>
           <p className="mt-3 text-3xl font-extrabold">
             {trust.score}<span className="text-base font-bold text-faint">/100</span>
@@ -203,7 +203,7 @@ export function ImportJobFlow() {
                       </Link>
                     ) : (
                       <button type="button" onClick={track} disabled={busy === "track"}
-                        className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-bold text-brand hover:bg-brand-soft disabled:opacity-60">
+                        className="inline-flex items-center gap-2 rounded-xl border border-line bg-card px-4 py-2.5 text-sm font-bold text-brand hover:bg-brand-soft disabled:opacity-60">
                         {busy === "track" ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
                         Skip draft — just add to tracker
                       </button>
@@ -221,7 +221,7 @@ export function ImportJobFlow() {
 
       {/* Step 3 — draft + track */}
       {generated ? (
-        <section className="rounded-2xl border border-line bg-white p-6 shadow-card">
+        <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
           <div className="flex items-center justify-between gap-3">
             <h2 className="font-extrabold">3 · Your application</h2>
             <p className="text-sm font-bold">

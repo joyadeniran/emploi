@@ -26,7 +26,7 @@ export function UpdateCvButton() {
   }
 
   return (
-    <div className="rounded-2xl border border-line bg-white p-6 shadow-card">
+    <div className="rounded-2xl border border-line bg-card p-6 shadow-card">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="font-extrabold">Update from a new CV</h2>

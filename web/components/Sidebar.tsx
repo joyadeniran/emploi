@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { PlanCard } from "./PlanCard";
+import { ThemeToggle } from "./ThemeToggle";
 
 const mainNav = [
   { href: "/dashboard", label: "Home", icon: Home },
@@ -123,7 +124,10 @@ export function Sidebar({
         ))}
       </nav>
 
-      <div className="p-4">
+      <div className="space-y-3 p-4">
+        <div className="flex justify-center">
+          <ThemeToggle />
+        </div>
         <PlanCard />
       </div>
     </div>
@@ -140,7 +144,7 @@ export function Sidebar({
         aria-hidden="true"
       />
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-72 border-r border-line bg-white transition-transform lg:sticky lg:top-0 lg:z-auto lg:h-dvh lg:translate-x-0 lg:overflow-hidden ${
+        className={`fixed inset-y-0 left-0 z-50 w-72 border-r border-line bg-card transition-transform lg:sticky lg:top-0 lg:z-auto lg:h-dvh lg:translate-x-0 lg:overflow-hidden ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
         aria-label="Sidebar"

@@ -100,7 +100,7 @@ function HeaderSection({ twin, refresh }: { twin: Twin; refresh: () => void }) {
     );
   }
   return (
-    <header className="rounded-2xl border border-brand-soft bg-white p-6 shadow-card">
+    <header className="rounded-2xl border border-brand-soft bg-card p-6 shadow-card">
       <p className="flex items-center gap-2 text-sm font-bold text-brand"><Sparkles size={16} /> Your Career Twin</p>
       <label className="mt-4 block text-xs font-bold text-muted">Full name</label>
       <input value={name} onChange={(e) => setName(e.target.value)}
@@ -132,7 +132,7 @@ function BioSection({ twin, refresh }: { twin: Twin; refresh: () => void }) {
   }
 
   return (
-    <section className="rounded-2xl border border-line bg-white p-6 shadow-card">
+    <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
       <div className="flex items-center justify-between">
         <h2 className="font-extrabold">About</h2>
         {!editing ? <EditButton label="Edit about" onClick={() => { setBio(twin.bio ?? ""); setEditing(true); }} /> : null}
@@ -181,7 +181,7 @@ function ChipListSection({ title, field, values, refresh, empty }: {
   }
 
   return (
-    <section className="rounded-2xl border border-line bg-white p-6 shadow-card">
+    <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
       <div className="flex items-center justify-between">
         <h2 className="font-extrabold">{title}</h2>
         {!editing ? <EditButton label={`Edit ${title.toLowerCase()}`} onClick={() => { setItems(values); setEditing(true); }} /> : null}
@@ -240,7 +240,7 @@ function EntryListSection({ title, field, values, refresh, empty, placeholder }:
   }
 
   return (
-    <section className="rounded-2xl border border-line bg-white p-6 shadow-card">
+    <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
       <div className="flex items-center justify-between">
         <h2 className="font-extrabold">{title}</h2>
         {!editing ? <EditButton label={`Edit ${title.toLowerCase()}`} onClick={() => { setLines(values.map((v) => v.summary)); setEditing(true); }} /> : null}

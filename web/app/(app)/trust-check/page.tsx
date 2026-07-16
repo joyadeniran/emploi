@@ -71,7 +71,7 @@ export default function TrustCheckPage() {
 
       <form
         onSubmit={runCheck}
-        className="rise-in mt-6 space-y-3 rounded-2xl border border-line bg-white p-6 shadow-card"
+        className="rise-in mt-6 space-y-3 rounded-2xl border border-line bg-card p-6 shadow-card"
       >
         <div className="relative">
           <Search
@@ -83,7 +83,7 @@ export default function TrustCheckPage() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Company name, domain, or contact email (e.g. jobs@company.com)"
-            className="w-full rounded-full border border-line bg-surface py-3 pl-11 pr-4 text-sm outline-none placeholder:text-faint focus:border-brand/40 focus:bg-white"
+            className="w-full rounded-full border border-line bg-surface py-3 pl-11 pr-4 text-sm outline-none placeholder:text-faint focus:border-brand/40 focus:bg-card"
             aria-label="Company, domain or contact email"
           />
         </div>
@@ -92,7 +92,7 @@ export default function TrustCheckPage() {
           onChange={(e) => setJobText(e.target.value)}
           rows={3}
           placeholder="Optional: paste the job posting text — we scan it for known scam patterns (fees, WhatsApp-only contact, unrealistic pay...)"
-          className="w-full resize-y rounded-2xl border border-line bg-surface px-4 py-3 text-sm outline-none placeholder:text-faint focus:border-brand/40 focus:bg-white"
+          className="w-full resize-y rounded-2xl border border-line bg-surface px-4 py-3 text-sm outline-none placeholder:text-faint focus:border-brand/40 focus:bg-card"
           aria-label="Job posting text"
         />
         <button
@@ -113,7 +113,7 @@ export default function TrustCheckPage() {
       ) : null}
 
       {result && meta ? (
-        <div className="rise-in mt-4 rounded-2xl border border-line bg-white p-6 shadow-card">
+        <div className="rise-in mt-4 rounded-2xl border border-line bg-card p-6 shadow-card">
           <div className="flex items-center gap-3">
             <span className={`flex h-12 w-12 items-center justify-center rounded-xl ${meta.bg}`}>
               <meta.Icon size={22} className={meta.cls} />

@@ -54,7 +54,7 @@ export default async function JobsPage({
           </p>
         </div>
         <Link href="/import-job"
-          className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft">
+          className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-card px-4 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft">
           <ClipboardPaste size={15} /> Found a job elsewhere? Import it
         </Link>
       </div>
@@ -65,7 +65,7 @@ export default async function JobsPage({
           <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
           <input type="search" name="q" defaultValue={q}
             placeholder="Search title, company or keywords…"
-            className="w-full rounded-full border border-line bg-white py-2.5 pl-10 pr-4 text-sm outline-none focus:border-brand/40" />
+            className="w-full rounded-full border border-line bg-card py-2.5 pl-10 pr-4 text-sm outline-none focus:border-brand/40" />
         </div>
         <label className="inline-flex items-center gap-2 text-sm font-semibold text-muted">
           <input type="checkbox" name="remote" value="true" defaultChecked={remoteOnly}
@@ -79,7 +79,7 @@ export default async function JobsPage({
 
       <div className="mt-6 space-y-3">
         {jobs.length === 0 ? (
-          <p className="rounded-2xl border border-line bg-white p-8 text-center text-sm text-muted shadow-card">
+          <p className="rounded-2xl border border-line bg-card p-8 text-center text-sm text-muted shadow-card">
             {q ? <>No jobs match &ldquo;{q}&rdquo; yet — try broader keywords, or <Link href="/import-job" className="font-bold text-brand hover:underline">import one you found elsewhere</Link>.</>
               : "The job pool is refreshing — check back shortly."}
           </p>
@@ -88,7 +88,7 @@ export default async function JobsPage({
             const card = toJobCard(row);
             return (
               <article key={card.id}
-                className="flex flex-col gap-4 rounded-2xl border border-line bg-white p-4 shadow-card sm:flex-row sm:items-center sm:p-5">
+                className="flex flex-col gap-4 rounded-2xl border border-line bg-card p-4 shadow-card sm:flex-row sm:items-center sm:p-5">
                 <div className="flex min-w-0 flex-1 items-center gap-4">
                   <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-lg font-extrabold text-white"
                     style={{ background: card.companyColor }}>

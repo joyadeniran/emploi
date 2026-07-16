@@ -64,7 +64,7 @@ function BillingInner() {
         </p>
       </header>
 
-      <section className="flex items-center gap-3 rounded-2xl border border-line bg-white p-5 shadow-card">
+      <section className="flex items-center gap-3 rounded-2xl border border-line bg-card p-5 shadow-card">
         <Coins className="text-brand" size={22} />
         <p className="text-sm font-bold">
           {status ? `${status.credit_balance} credit${status.credit_balance === 1 ? "" : "s"} available`
@@ -78,7 +78,7 @@ function BillingInner() {
             key={credits}
             onClick={() => buy(credits)}
             disabled={busyPack !== null}
-            className="rounded-2xl border border-line bg-white p-5 text-left shadow-card transition-shadow hover:shadow-pop disabled:opacity-60"
+            className="rounded-2xl border border-line bg-card p-5 text-left shadow-card transition-shadow hover:shadow-pop disabled:opacity-60"
           >
             <p className="flex items-center gap-2 font-extrabold">
               {busyPack === credits ? <Loader2 className="animate-spin" size={15} /> : null}

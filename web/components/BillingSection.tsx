@@ -108,7 +108,7 @@ export function BillingSection() {
   }
 
   return (
-    <section className="rounded-2xl border border-line bg-white p-6 shadow-card">
+    <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
       <div className="flex items-center gap-2.5">
         <ShieldCheck size={19} className="text-brand" />
         <h2 className="font-extrabold">Billing & plan</h2>
@@ -148,7 +148,7 @@ export function BillingSection() {
                     ))}
                   </ul>
                   {isCurrent ? (
-                    <p className="mt-4 rounded-xl bg-white px-3 py-2 text-center text-xs font-bold text-brand">
+                    <p className="mt-4 rounded-xl bg-card px-3 py-2 text-center text-xs font-bold text-brand">
                       Current plan
                     </p>
                   ) : key === "pro" || key === "max" ? (

@@ -79,7 +79,7 @@ export default async function InvitesPage({
             key={tab.key}
             href={`/invites?status=${tab.key}`}
             className={`rounded-full px-4 py-1.5 text-sm font-bold ${
-              status === tab.key ? "bg-brand text-white" : "border border-line bg-white text-muted hover:bg-surface"
+              status === tab.key ? "bg-brand text-white" : "border border-line bg-card text-muted hover:bg-surface"
             }`}
           >
             {tab.label}
@@ -88,11 +88,11 @@ export default async function InvitesPage({
       </nav>
 
       {offline ? (
-        <p className="rounded-2xl border border-line bg-white p-6 text-sm text-muted">
+        <p className="rounded-2xl border border-line bg-card p-6 text-sm text-muted">
           We couldn&apos;t reach the server — try again in a moment.
         </p>
       ) : invites.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-line bg-white p-8 text-center">
+        <div className="rounded-2xl border border-dashed border-line bg-card p-8 text-center">
           <p className="font-bold">No {status} invites</p>
           {status === "pending" ? (
             <p className="mt-1 text-sm text-muted">
@@ -104,7 +104,7 @@ export default async function InvitesPage({
         </div>
       ) : (
         invites.map((inv) => (
-          <article key={inv.id} className="rounded-2xl border border-line bg-white p-5 shadow-card">
+          <article key={inv.id} className="rounded-2xl border border-line bg-card p-5 shadow-card">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <Link href={`/invites/${inv.id}`} className="font-bold hover:text-brand">

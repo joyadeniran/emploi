@@ -94,7 +94,7 @@ export default async function DashboardPage() {
             "Your Twin scores fresh jobs against your profile every night",
             "You'll get an email digest when your first matches land",
           ].map((line) => (
-            <div key={line} className="flex items-center gap-3 rounded-xl border border-line bg-white px-4 py-3 shadow-card">
+            <div key={line} className="flex items-center gap-3 rounded-xl border border-line bg-card px-4 py-3 shadow-card">
               <CheckCircle2 size={16} className="shrink-0 text-good" />
               <span className="text-sm font-semibold">{line}</span>
             </div>
@@ -105,7 +105,7 @@ export default async function DashboardPage() {
           <Link href="/jobs" className="rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-white transition-transform hover:-translate-y-0.5">
             Browse live jobs now
           </Link>
-          <Link href="/import-job" className="rounded-xl border border-line bg-white px-5 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft">
+          <Link href="/import-job" className="rounded-xl border border-line bg-card px-5 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft">
             Import a job you found
           </Link>
         </div>
@@ -126,12 +126,12 @@ export default async function DashboardPage() {
       <RecruiterVisibilityBanner />
       {sampleData ? <p className="inline-flex items-center gap-2 rounded-xl bg-amber-soft px-4 py-2.5 text-xs font-semibold text-ink"><Info size={14} />Showing sample data — the Emploi API is unavailable{unavailable ? "." : " (demo mode)."}</p> : null}
       <section className="overflow-hidden rounded-3xl border border-brand-soft bg-gradient-to-br from-brand-soft/70 via-white to-white shadow-card"><div className="flex gap-6 p-6 sm:p-8"><div className="min-w-0 flex-1"><p className="text-sm font-bold text-brand">Your Career Twin</p><h2 className="mt-1.5 text-xl font-extrabold">I found {cards.length} job matches</h2><ul className="mt-4 space-y-2 text-sm font-semibold"><li><CheckCircle2 className="mr-2 inline text-good" size={16} />{high} high-match opportunities</li><li><CheckCircle2 className="mr-2 inline text-good" size={16} />{medium} medium-match opportunities</li><li><Circle className="mr-2 inline text-muted" size={16} />Review trust evidence before applying</li></ul><Link href="/matches" className="mt-5 inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-white">View matches <ArrowRight size={15} /></Link></div><div className="hidden sm:block"><CareerTwinBot /></div></div></section>
-      <section><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-extrabold">Top Job Matches</h2><Link className="text-sm font-bold text-brand" href="/matches">View all <ArrowRight className="inline" size={14} /></Link></div><div className="space-y-3">{cards.map((match) => <article key={match.id} className="flex items-center gap-4 rounded-2xl border border-line bg-white p-4 shadow-card"><span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl font-extrabold text-white" style={{ background: match.companyColor }}>{match.companyInitial}</span><div className="min-w-0 flex-1"><h3 className="truncate font-bold">{match.title}</h3><p className="truncate text-sm text-muted">{match.company} · {match.location}</p><p className="mt-1 text-xs text-muted">{match.reason}</p></div><FitRing fit={match.fit} /></article>)}</div></section>
-      <section className="overflow-x-auto rounded-2xl border border-line bg-white shadow-card"><div className="flex justify-between px-5 pt-5"><h2 className="font-extrabold">Recent Applications</h2><Link href="/applications" className="text-sm font-bold text-brand">View all</Link></div><table className="mt-3 w-full min-w-[520px] text-sm"><thead><tr className="border-y border-line bg-surface text-left text-xs font-bold uppercase text-faint"><th className="px-5 py-3">Role</th><th className="px-5 py-3">Company</th><th className="px-5 py-3">Status</th></tr></thead><tbody>{displayApplications.map((application) => { const status = statuses.includes(application.status as ApplicationStatus) ? application.status as ApplicationStatus : "applied"; return <tr key={application.id} className="border-b border-line last:border-0"><td className="px-5 py-4 font-bold">{application.role}</td><td className="px-5 py-4">{application.company}</td><td className="px-5 py-4"><span className={`rounded-full px-3 py-1 text-xs font-bold ${statusMeta[status].className}`}>{statusMeta[status].label}</span></td></tr>; })}</tbody></table></section>
+      <section><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-extrabold">Top Job Matches</h2><Link className="text-sm font-bold text-brand" href="/matches">View all <ArrowRight className="inline" size={14} /></Link></div><div className="space-y-3">{cards.map((match) => <article key={match.id} className="flex items-center gap-4 rounded-2xl border border-line bg-card p-4 shadow-card"><span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl font-extrabold text-white" style={{ background: match.companyColor }}>{match.companyInitial}</span><div className="min-w-0 flex-1"><h3 className="truncate font-bold">{match.title}</h3><p className="truncate text-sm text-muted">{match.company} · {match.location}</p><p className="mt-1 text-xs text-muted">{match.reason}</p></div><FitRing fit={match.fit} /></article>)}</div></section>
+      <section className="overflow-x-auto rounded-2xl border border-line bg-card shadow-card"><div className="flex justify-between px-5 pt-5"><h2 className="font-extrabold">Recent Applications</h2><Link href="/applications" className="text-sm font-bold text-brand">View all</Link></div><table className="mt-3 w-full min-w-[520px] text-sm"><thead><tr className="border-y border-line bg-surface text-left text-xs font-bold uppercase text-faint"><th className="px-5 py-3">Role</th><th className="px-5 py-3">Company</th><th className="px-5 py-3">Status</th></tr></thead><tbody>{displayApplications.map((application) => { const status = statuses.includes(application.status as ApplicationStatus) ? application.status as ApplicationStatus : "applied"; return <tr key={application.id} className="border-b border-line last:border-0"><td className="px-5 py-4 font-bold">{application.role}</td><td className="px-5 py-4">{application.company}</td><td className="px-5 py-4"><span className={`rounded-full px-3 py-1 text-xs font-bold ${statusMeta[status].className}`}>{statusMeta[status].label}</span></td></tr>; })}</tbody></table></section>
     </main>
     <aside className="space-y-6">
       {/* Profile strength — glass card over an ambient brand gradient */}
-      <section className="relative overflow-hidden rounded-3xl border border-white/70 bg-white/60 p-6 shadow-card backdrop-blur-xl">
+      <section className="relative overflow-hidden rounded-3xl border border-glass bg-card-glass-light p-6 shadow-card backdrop-blur-xl">
         <div aria-hidden className="pointer-events-none absolute -right-10 -top-12 h-40 w-40 rounded-full bg-gradient-to-br from-brand-violet/35 to-brand-indigo/25 blur-2xl" />
         <div aria-hidden className="pointer-events-none absolute -bottom-14 -left-10 h-36 w-36 rounded-full bg-brand-soft/80 blur-2xl" />
         <div className="relative">
@@ -157,7 +157,7 @@ export default async function DashboardPage() {
               <span key={item.label}
                 className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ${item.done
                   ? "bg-good-soft text-good"
-                  : "border border-dashed border-line bg-white/70 text-muted"}`}>
+                  : "border border-dashed border-line bg-card-glass text-muted"}`}>
                 {item.done ? <CheckCircle2 size={11} /> : <Circle size={11} />}
                 {item.label}
               </span>
@@ -173,7 +173,7 @@ export default async function DashboardPage() {
       </section>
 
       {/* Trust — glass card, the product promise stays loud */}
-      <section className="relative overflow-hidden rounded-3xl border border-white/70 bg-white/60 p-6 shadow-card backdrop-blur-xl">
+      <section className="relative overflow-hidden rounded-3xl border border-glass bg-card-glass-light p-6 shadow-card backdrop-blur-xl">
         <div aria-hidden className="pointer-events-none absolute -right-12 -bottom-12 h-36 w-36 rounded-full bg-good-soft/90 blur-2xl" />
         <div className="relative">
           <div className="flex items-center gap-2.5">
@@ -183,7 +183,7 @@ export default async function DashboardPage() {
           <p className="mt-3 text-sm leading-relaxed text-muted">
             Never pay a fee or share bank or ID details for a job application. Every employer here can be checked.
           </p>
-          <Link href="/trust-check" className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-white/80 px-4 py-2.5 text-xs font-bold text-brand shadow-card transition hover:bg-brand-soft">
+          <Link href="/trust-check" className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-card-glass px-4 py-2.5 text-xs font-bold text-brand shadow-card transition hover:bg-brand-soft">
             Run a Trust Check <ArrowRight size={13} />
           </Link>
         </div>

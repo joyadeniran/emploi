@@ -49,7 +49,7 @@ export function RecruiterVisibilityToggle() {
   }
 
   return (
-    <section className="rounded-2xl border border-line bg-white p-6 shadow-card">
+    <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="font-extrabold">Employer discovery</h2>
@@ -72,7 +72,7 @@ export function RecruiterVisibilityToggle() {
           disabled={busy || enabled === null || !hasTwin}
           aria-pressed={enabled ?? false}
           className={`inline-flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm font-bold transition-colors disabled:opacity-60 ${
-            enabled ? "bg-brand text-white" : "border border-line bg-white text-muted"
+            enabled ? "bg-brand text-white" : "border border-line bg-card text-muted"
           }`}
         >
           {busy ? <Loader2 className="animate-spin" size={14} />

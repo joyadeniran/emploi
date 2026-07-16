@@ -50,14 +50,14 @@ export default async function AdminPage() {
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {tiles.map(([label, value]) => (
-          <div key={label} className="rounded-2xl border border-line bg-white p-4 shadow-card">
+          <div key={label} className="rounded-2xl border border-line bg-card p-4 shadow-card">
             <p className="text-2xl font-extrabold">{value}</p>
             <p className="mt-0.5 text-xs font-semibold text-muted">{label}</p>
           </div>
         ))}
       </section>
 
-      <section className="rounded-2xl border border-line bg-white p-6 shadow-card">
+      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
         <h2 className="flex items-center gap-2 font-extrabold">
           <ShieldAlert className="text-warn" size={18} /> Trust alerts
         </h2>

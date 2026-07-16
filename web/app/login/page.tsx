@@ -50,7 +50,7 @@ export default async function LoginPage({
       />
 
       <div className="rise-in w-full max-w-md">
-        <div className="rounded-3xl border border-white/70 bg-white/70 p-8 shadow-card backdrop-blur-xl sm:p-10">
+        <div className="glass-card p-8 sm:p-10">
           <div className="flex justify-center">
             <Logo markSize={24} />
           </div>
@@ -71,7 +71,7 @@ export default async function LoginPage({
               >
                 <button
                   type="submit"
-                  className="flex w-full items-center justify-center gap-3 rounded-full border border-line bg-white px-6 py-3.5 text-sm font-bold transition-all hover:-translate-y-0.5 hover:shadow-card"
+                  className="flex w-full items-center justify-center gap-3 rounded-full border border-line bg-card px-6 py-3.5 text-sm font-bold transition-all hover:-translate-y-0.5 hover:shadow-card"
                 >
                   <GoogleIcon />
                   Continue with Google
@@ -107,7 +107,7 @@ export default async function LoginPage({
           {/* Deliberately small — the candidate flow stays the primary funnel. */}
           <p className="mt-6 text-center text-xs text-faint">
             Hiring?{" "}
-            <a href="/employers" className="font-bold text-muted hover:text-brand">
+            <a href="/employer/login" className="font-bold text-muted hover:text-brand">
               Post a role →
             </a>
           </p>

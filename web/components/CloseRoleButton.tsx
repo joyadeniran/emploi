@@ -34,7 +34,7 @@ export function CloseRoleButton({ roleId }: { roleId: number }) {
       </button>
     );
   return (
-    <div className="w-full max-w-xs space-y-2 rounded-2xl border border-line bg-white p-4 shadow-card">
+    <div className="w-full max-w-xs space-y-2 rounded-2xl border border-line bg-card p-4 shadow-card">
       <p className="text-sm font-bold">Close this role?</p>
       <p className="text-xs text-muted">Pending invites will be withdrawn.</p>
       <select

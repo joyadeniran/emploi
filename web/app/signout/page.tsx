@@ -25,7 +25,7 @@ export default async function SignOutPage() {
       />
 
       <div className="rise-in w-full max-w-sm">
-        <div className="rounded-3xl border border-white/70 bg-white/70 p-8 shadow-card backdrop-blur-xl sm:p-10">
+        <div className="glass-card p-8 sm:p-10">
           <div className="flex justify-center">
             <Logo markSize={24} />
           </div>
@@ -54,7 +54,7 @@ export default async function SignOutPage() {
 
             <a
               href="/dashboard"
-              className="flex w-full items-center justify-center rounded-full border border-line bg-white px-6 py-3.5 text-sm font-bold transition-all hover:-translate-y-0.5 hover:shadow-card"
+              className="flex w-full items-center justify-center rounded-full border border-line bg-card px-6 py-3.5 text-sm font-bold transition-all hover:-translate-y-0.5 hover:shadow-card"
             >
               Go back to dashboard
             </a>

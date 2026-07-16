@@ -64,7 +64,7 @@ export default async function InviteDetailPage({
       ) : null}
 
       {invite.status === "pending" ? (
-        <div className="rounded-2xl border border-line bg-white p-5 shadow-card">
+        <div className="rounded-2xl border border-line bg-card p-5 shadow-card">
           <InviteActions inviteId={invite.id} />
           <p className="mt-3 text-xs text-muted">
             Accepting shares your Career Twin contact details with this employer
@@ -72,19 +72,19 @@ export default async function InviteDetailPage({
           </p>
         </div>
       ) : (
-        <p className="rounded-2xl border border-line bg-white p-4 text-sm font-bold capitalize shadow-card">
+        <p className="rounded-2xl border border-line bg-card p-4 text-sm font-bold capitalize shadow-card">
           Status: {invite.status}
         </p>
       )}
 
-      <section className="rounded-2xl border border-line bg-white p-5 shadow-card">
+      <section className="rounded-2xl border border-line bg-card p-5 shadow-card">
         <h2 className="font-extrabold">Role description</h2>
         <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-muted">
           {invite.role.description}
         </p>
       </section>
 
-      <section className="rounded-2xl border border-line bg-white p-5 shadow-card">
+      <section className="rounded-2xl border border-line bg-card p-5 shadow-card">
         <h2 className="flex items-center gap-2 font-extrabold">
           {invite.employer.verified ? <BadgeCheck className="text-good" size={18} /> : null}
           Employer trust check

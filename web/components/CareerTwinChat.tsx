@@ -103,7 +103,7 @@ export function CareerTwinChat() {
         </p>
       </header>
 
-      <div className="flex-1 space-y-4 overflow-y-auto rounded-2xl border border-line bg-white p-4 shadow-card sm:p-6">
+      <div className="flex-1 space-y-4 overflow-y-auto rounded-2xl border border-line bg-card p-4 shadow-card sm:p-6">
         {messages.map((m, i) => (
           <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
             <div className={
@@ -155,7 +155,7 @@ export function CareerTwinChat() {
           onClick={() => fileRef.current?.click()}
           disabled={busy}
           aria-label="Attach a PDF (CV or job listing)"
-          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-line bg-white text-muted transition hover:border-brand/40 hover:text-brand disabled:opacity-50"
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-line bg-card text-muted transition hover:border-brand/40 hover:text-brand disabled:opacity-50"
         >
           <Paperclip size={18} />
         </button>
@@ -167,7 +167,7 @@ export function CareerTwinChat() {
           }}
           rows={1}
           placeholder="Ask your Career Twin anything…"
-          className="max-h-32 min-h-[3rem] w-full resize-y rounded-2xl border border-line bg-white px-4 py-3 text-sm leading-relaxed outline-none focus:border-brand"
+          className="max-h-32 min-h-[3rem] w-full resize-y rounded-2xl border border-line bg-card px-4 py-3 text-sm leading-relaxed outline-none focus:border-brand"
         />
         <button
           type="submit"

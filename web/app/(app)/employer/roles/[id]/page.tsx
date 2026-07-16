@@ -67,7 +67,7 @@ export default async function RoleDetailPage({
         {role.status === "open" ? <CloseRoleButton roleId={role.id} /> : null}
       </header>
 
-      <details className="rounded-2xl border border-line bg-white p-5 shadow-card">
+      <details className="rounded-2xl border border-line bg-card p-5 shadow-card">
         <summary className="cursor-pointer text-sm font-bold">Job description</summary>
         <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-muted">
           {role.description}

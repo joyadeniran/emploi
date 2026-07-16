@@ -107,7 +107,7 @@ function ProgressDots({ step }: { step: number }) {
                   ? "bg-brand-violet"
                   : active
                     ? "bg-brand-violet ring-2 ring-brand-violet/30 ring-offset-1"
-                    : "border-2 border-line bg-white"
+                    : "border-2 border-line bg-card"
               }`}
             />
             <span className={`text-[10px] font-semibold ${active ? "text-brand" : done ? "text-brand/60" : "text-faint"}`}>
@@ -185,7 +185,7 @@ function TagInput({
   }
 
   return (
-    <div className="flex flex-wrap gap-2 rounded-xl border border-line bg-white p-3 focus-within:ring-2 focus-within:ring-brand/20">
+    <div className="flex flex-wrap gap-2 rounded-xl border border-line bg-card p-3 focus-within:ring-2 focus-within:ring-brand/20">
       {tags.map((tag) => (
         <span
           key={tag}
@@ -256,7 +256,7 @@ function PillSelect({
             className={`rounded-full border px-4 py-1.5 text-sm font-semibold transition-all ${
               on
                 ? "border-brand bg-brand-soft text-brand"
-                : "border-line bg-white text-muted hover:border-brand/40 hover:text-brand"
+                : "border-line bg-card text-muted hover:border-brand/40 hover:text-brand"
             }`}
           >
             {on && <Check size={12} className="mr-1 inline" />}
@@ -298,7 +298,7 @@ function Input({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className={`w-full rounded-xl border border-line bg-white py-3 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20 ${icon ? "pl-9 pr-4" : "px-4"}`}
+        className={`w-full rounded-xl border border-line bg-card py-3 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20 ${icon ? "pl-9 pr-4" : "px-4"}`}
       />
     </div>
   );
@@ -317,7 +317,7 @@ function Select({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-xl border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
+      className="w-full rounded-xl border border-line bg-card px-4 py-3 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
     >
       {options.map((o) => (
         <option key={o} value={o}>{o}</option>
@@ -535,7 +535,7 @@ export default function CreateCareerTwinPage() {
       </div>
 
       {/* Card */}
-      <div className="rise-in w-full max-w-lg rounded-3xl border border-white/70 bg-white/80 p-8 shadow-card backdrop-blur-xl">
+      <div className="rise-in w-full max-w-lg glass-card p-8">
 
         {/* ── Step 2: Upload resume ───────────────────────────────────────── */}
         {step === 2 && (
@@ -739,7 +739,7 @@ export default function CreateCareerTwinPage() {
                   onChange={(e) => set("bio", e.target.value)}
                   placeholder="A short summary of your experience and what you're looking for…"
                   rows={4}
-                  className="w-full rounded-xl border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
+                  className="w-full rounded-xl border border-line bg-card px-4 py-3 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
                 />
               </div>
             </div>
@@ -789,7 +789,7 @@ export default function CreateCareerTwinPage() {
                     value={twin.salary_min || ""}
                     onChange={(e) => set("salary_min", Number(e.target.value))}
                     placeholder="Min"
-                    className="w-full rounded-xl border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
+                    className="w-full rounded-xl border border-line bg-card px-4 py-3 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
                   />
                   <span className="text-muted">–</span>
                   <input
@@ -797,7 +797,7 @@ export default function CreateCareerTwinPage() {
                     value={twin.salary_max || ""}
                     onChange={(e) => set("salary_max", Number(e.target.value))}
                     placeholder="Max"
-                    className="w-full rounded-xl border border-line bg-white px-4 py-3 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
+                    className="w-full rounded-xl border border-line bg-card px-4 py-3 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
                   />
                   <Select
                     value={twin.currency}
@@ -860,7 +860,7 @@ export default function CreateCareerTwinPage() {
                 <Label>What&apos;s most important to you right now?</Label>
                 <div className="space-y-2">
                   {GOAL_OPTIONS.map((g) => (
-                    <label key={g} className="flex cursor-pointer items-center gap-3 rounded-xl border border-line bg-white px-4 py-3 transition hover:border-brand/40">
+                    <label key={g} className="flex cursor-pointer items-center gap-3 rounded-xl border border-line bg-card px-4 py-3 transition hover:border-brand/40">
                       <input
                         type="radio"
                         name="goal"

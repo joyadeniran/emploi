@@ -13,7 +13,7 @@ export default function NotFound() {
       />
 
       <div className="rise-in w-full max-w-sm text-center">
-        <div className="rounded-3xl border border-white/70 bg-white/70 p-8 shadow-card backdrop-blur-xl sm:p-10">
+        <div className="glass-card p-8 sm:p-10">
           <div className="flex justify-center">
             <LogoMark size={36} />
           </div>

@@ -59,8 +59,8 @@ export default async function MatchesPage({
           </p>
         </div>
         <div className="flex gap-2">
-          <Link href="/jobs" className="rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft">Browse all jobs</Link>
-          <Link href="/import-job" className="rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft">Import a job</Link>
+          <Link href="/jobs" className="rounded-xl border border-line bg-card px-4 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft">Browse all jobs</Link>
+          <Link href="/import-job" className="rounded-xl border border-line bg-card px-4 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft">Import a job</Link>
         </div>
       </div>
 
@@ -81,7 +81,7 @@ export default async function MatchesPage({
 
       <div className="mt-4 space-y-4">
         {matchData.map((m) => (
-          <article key={m.id} className="rise-in rounded-2xl border border-line bg-white p-5 shadow-card sm:p-6">
+          <article key={m.id} className="rise-in rounded-2xl border border-line bg-card p-5 shadow-card sm:p-6">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
               <span
                 className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-lg font-extrabold text-white"
@@ -118,7 +118,7 @@ export default async function MatchesPage({
         ))}
 
         {!sampleData && !error && matchData.length === 0 ? (
-          <div className="rounded-2xl border border-line bg-white p-10 text-center shadow-card">
+          <div className="rounded-2xl border border-line bg-card p-10 text-center shadow-card">
             <h2 className="font-extrabold">Your Career Twin is getting to work</h2>
             <p className="mt-2 text-sm text-muted">No matches yet. We&apos;ll show verified opportunities here after the next matching run.</p>
           </div>
@@ -130,7 +130,7 @@ export default async function MatchesPage({
           {page > 1 ? (
             <Link
               href={`/matches?page=${page - 1}`}
-              className="flex items-center gap-1 rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft"
+              className="flex items-center gap-1 rounded-xl border border-line bg-card px-4 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft"
             >
               <ChevronLeft size={16} /> Previous
             </Link>
@@ -147,7 +147,7 @@ export default async function MatchesPage({
           {page < totalPages ? (
             <Link
               href={`/matches?page=${page + 1}`}
-              className="flex items-center gap-1 rounded-xl border border-line bg-white px-4 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft"
+              className="flex items-center gap-1 rounded-xl border border-line bg-card px-4 py-2.5 text-sm font-bold text-brand shadow-card hover:bg-brand-soft"
             >
               Next <ChevronRight size={16} />
             </Link>

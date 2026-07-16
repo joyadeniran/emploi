@@ -79,7 +79,7 @@ export default function EmployerOnboardingPage() {
         </div>
       ) : null}
 
-      <form onSubmit={submit} className="space-y-5 rounded-2xl border border-line bg-white p-6 shadow-card">
+      <form onSubmit={submit} className="space-y-5 rounded-2xl border border-line bg-card p-6 shadow-card">
         <div>
           <label htmlFor="company" className="text-sm font-bold">Company name</label>
           <input

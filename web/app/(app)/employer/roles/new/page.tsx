@@ -54,7 +54,7 @@ export default function NewRolePage() {
         </p>
       </header>
 
-      <form onSubmit={submit} className="space-y-5 rounded-2xl border border-line bg-white p-6 shadow-card">
+      <form onSubmit={submit} className="space-y-5 rounded-2xl border border-line bg-card p-6 shadow-card">
         <div>
           <label htmlFor="url" className="flex items-center gap-1.5 text-sm font-bold">
             <Link2 size={15} /> Job URL <span className="font-normal text-muted">(optional)</span>

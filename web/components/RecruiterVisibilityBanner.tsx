@@ -45,7 +45,7 @@ export function RecruiterVisibilityBanner() {
           try { window.localStorage.setItem(DISMISS_KEY, "1"); } catch { /* noop */ }
           setShow(false);
         }}
-        className="rounded-lg p-1 text-muted hover:bg-white"
+        className="rounded-lg p-1 text-muted hover:bg-card"
       >
         <X size={16} />
       </button>

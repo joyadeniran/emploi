@@ -140,21 +140,21 @@ export function RoleWorkbench({
         {error ? <p role="alert" className="text-sm font-semibold text-warn">{error}</p> : null}
 
         {shortlist === null && !loadError ? (
-          <div className="flex items-center gap-2 rounded-2xl border border-line bg-white p-6 text-sm text-muted">
+          <div className="flex items-center gap-2 rounded-2xl border border-line bg-card p-6 text-sm text-muted">
             <Loader2 className="animate-spin" size={16} /> Curating your shortlist…
           </div>
         ) : loadError || shortlist === null ? (
-          <p className="rounded-2xl border border-line bg-white p-6 text-sm text-muted">
+          <p className="rounded-2xl border border-line bg-card p-6 text-sm text-muted">
             Couldn&apos;t load the shortlist — refresh the page to retry.
           </p>
         ) : shortlist.length === 0 ? (
-          <p className="rounded-2xl border border-dashed border-line bg-white p-6 text-sm text-muted">
+          <p className="rounded-2xl border border-dashed border-line bg-card p-6 text-sm text-muted">
             No candidates to show yet. As more professionals opt in to employer
             discovery, your shortlist fills in automatically.
           </p>
         ) : (
           shortlist.map((c) => (
-            <article key={c.candidate_id} className="rounded-2xl border border-line bg-white p-5 shadow-card">
+            <article key={c.candidate_id} className="rounded-2xl border border-line bg-card p-5 shadow-card">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="font-bold">
@@ -216,12 +216,12 @@ export function RoleWorkbench({
       <aside className="space-y-3">
         <h2 className="font-extrabold">Invited</h2>
         {invites.length === 0 ? (
-          <p className="rounded-2xl border border-dashed border-line bg-white p-5 text-xs text-muted">
+          <p className="rounded-2xl border border-dashed border-line bg-card p-5 text-xs text-muted">
             Nobody invited yet.
           </p>
         ) : (
           invites.map((inv) => (
-            <article key={inv.invite_id} className="rounded-2xl border border-line bg-white p-4 shadow-card">
+            <article key={inv.invite_id} className="rounded-2xl border border-line bg-card p-4 shadow-card">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-bold">

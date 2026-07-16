@@ -60,7 +60,7 @@ export default function EmployersLandingPage() {
             { icon: BadgeCheck, title: "Interview-ready, not CV spam",
               body: "You see structured Career Twins — skills, experience, fit score, and why. Invite the ones worth an hour of your time." },
           ].map(({ icon: Icon, title, body }) => (
-            <div key={title} className="rounded-2xl border border-line bg-white p-6 shadow-card">
+            <div key={title} className="rounded-2xl border border-line bg-card p-6 shadow-card">
               <Icon className="text-brand" size={22} />
               <h2 className="mt-3 font-extrabold">{title}</h2>
               <p className="mt-2 text-sm leading-relaxed text-muted">{body}</p>
@@ -73,7 +73,7 @@ export default function EmployersLandingPage() {
           <p className="mt-1 text-center text-xs text-faint">Illustrative examples — real candidates appear once you post a role.</p>
           <div className="mt-6 grid gap-4 sm:grid-cols-3">
             {EXAMPLE_CANDIDATES.map((candidate) => (
-              <div key={candidate.headline} className="rounded-2xl border border-line bg-white p-5 shadow-card">
+              <div key={candidate.headline} className="rounded-2xl border border-line bg-card p-5 shadow-card">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="font-bold">{candidate.headline}</p>
@@ -96,7 +96,7 @@ export default function EmployersLandingPage() {
           </div>
         </section>
 
-        <section className="mt-16 rounded-3xl border border-line bg-white p-8 text-center shadow-card">
+        <section className="mt-16 rounded-3xl border border-line bg-card p-8 text-center shadow-card">
           <h2 className="text-xl font-extrabold">Simple pricing</h2>
           <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-muted">
             Your first role is completely free, from posting to interviewing.

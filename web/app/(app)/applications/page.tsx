@@ -151,7 +151,7 @@ export default function ApplicationsPage() {
             className={`rounded-full px-4 py-2 text-xs font-bold capitalize transition-colors ${
               filter === f
                 ? "bg-brand text-white"
-                : "border border-line bg-white text-muted hover:bg-surface"
+                : "border border-line bg-card text-muted hover:bg-surface"
             }`}
             aria-pressed={filter === f}
           >
@@ -160,7 +160,7 @@ export default function ApplicationsPage() {
         ))}
       </div>
 
-      <div className="rise-in mt-4 overflow-x-auto rounded-2xl border border-line bg-white shadow-card">
+      <div className="rise-in mt-4 overflow-x-auto rounded-2xl border border-line bg-card shadow-card">
         <table className="w-full min-w-[680px] text-sm">
           <thead>
             <tr className="border-b border-line bg-surface/60 text-left text-xs font-bold uppercase tracking-wide text-faint">

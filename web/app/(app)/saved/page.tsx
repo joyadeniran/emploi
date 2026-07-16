@@ -37,7 +37,7 @@ export default async function SavedPage() {
 
       <div className="mt-6 space-y-3">
         {saved.length === 0 ? (
-          <div className="rounded-2xl border border-line bg-white p-10 text-center shadow-card">
+          <div className="rounded-2xl border border-line bg-card p-10 text-center shadow-card">
             <Bookmark className="mx-auto text-brand" size={28} />
             <p className="mt-3 font-bold">Nothing saved yet</p>
             <p className="mt-1 text-sm text-muted">
@@ -51,7 +51,7 @@ export default async function SavedPage() {
             const card = toJobCard(row);
             return (
               <article key={card.id}
-                className="flex flex-col gap-4 rounded-2xl border border-line bg-white p-4 shadow-card sm:flex-row sm:items-center sm:p-5">
+                className="flex flex-col gap-4 rounded-2xl border border-line bg-card p-4 shadow-card sm:flex-row sm:items-center sm:p-5">
                 <div className="flex min-w-0 flex-1 items-center gap-4">
                   <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-lg font-extrabold text-white"
                     style={{ background: card.companyColor }}>

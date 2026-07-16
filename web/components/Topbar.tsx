@@ -70,7 +70,7 @@ export function Topbar({
       .toUpperCase() ?? "U";
 
   return (
-    <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-white/80 px-4 py-3 backdrop-blur-md lg:px-8">
+    <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-card-glass px-4 py-3 backdrop-blur-md lg:px-8">
       <button
         onClick={onMenu}
         className="rounded-xl border border-line p-2 text-muted hover:bg-surface lg:hidden"
@@ -95,9 +95,9 @@ export function Topbar({
           ref={searchRef}
           type="search"
           placeholder="Search jobs, companies or skills..."
-          className="w-full rounded-full border border-line bg-surface py-2.5 pl-10 pr-12 text-sm outline-none transition-colors placeholder:text-faint focus:border-brand/40 focus:bg-white"
+          className="w-full rounded-full border border-line bg-surface py-2.5 pl-10 pr-12 text-sm outline-none transition-colors placeholder:text-faint focus:border-brand/40 focus:bg-card"
         />
-        <kbd className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 rounded-md border border-line bg-white px-1.5 py-0.5 text-[10px] font-semibold text-faint">
+        <kbd className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 rounded-md border border-line bg-card px-1.5 py-0.5 text-[10px] font-semibold text-faint">
           ⌘K
         </kbd>
       </form>
@@ -117,7 +117,7 @@ export function Topbar({
             ) : null}
           </button>
           {bellOpen ? (
-            <div role="menu" className="absolute right-0 top-12 z-40 w-80 rounded-2xl border border-line bg-white p-2 shadow-pop">
+            <div role="menu" className="absolute right-0 top-12 z-40 w-80 rounded-2xl border border-line bg-card p-2 shadow-pop">
               <p className="px-3 py-2 text-xs font-bold uppercase tracking-wide text-faint">Latest matches</p>
               {notices === null ? (
                 <p className="flex items-center gap-2 px-3 py-3 text-sm text-muted">
@@ -184,7 +184,7 @@ export function Topbar({
           {menuOpen ? (
             <div
               role="menu"
-              className="absolute right-0 mt-2 w-56 rounded-2xl border border-line bg-white p-1.5 shadow-card"
+              className="absolute right-0 mt-2 w-56 rounded-2xl border border-line bg-card p-1.5 shadow-card"
             >
               <div className="px-3 py-2">
                 <p className="text-sm font-bold">{user.name}</p>
