@@ -13,7 +13,7 @@ export default async function AppLayout({
     // Server cannot reliably know the original client path here; render a
     // tiny client-side redirect that preserves the current path as
     // `callbackUrl` so sign-in returns the user to their intended page.
-    return <ClientRedirectToLogin /> as unknown as JSX.Element;
+    return <ClientRedirectToLogin /> as unknown as any;
   }
 
   async function signOutAction() {
