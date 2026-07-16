@@ -209,5 +209,28 @@ ok &= check("load_lists on missing file -> empty sets, never raises",
 ok &= check("default lists file ships empty (no behavior change)",
             load_lists() == {"blacklist": set(), "whitelist": set()})
 
+# ---------------------------------------------------------------------------
+# Phase 2 — employer_portal_level (spec §5.9 mapping, distinct from the
+# candidate-facing level strings)
+# ---------------------------------------------------------------------------
+from verify import employer_portal_level
+
+ok &= check("portal level: >=75 -> high", employer_portal_level(80) == "high")
+ok &= check("portal level: 75 boundary -> high", employer_portal_level(75) == "high")
+ok &= check("portal level: 40-74 -> medium",
+            employer_portal_level(40) == "medium" and employer_portal_level(74) == "medium")
+ok &= check("portal level: 20-39 -> low",
+            employer_portal_level(20) == "low" and employer_portal_level(39) == "low")
+ok &= check("portal level: <20 -> avoid (blocked)", employer_portal_level(19) == "avoid")
+ok &= check("portal level: ANY red flag -> avoid regardless of score",
+            employer_portal_level(90, ["asks applicants to pay a fee"]) == "avoid")
+ok &= check("portal level: None score treated as 0 -> avoid",
+            employer_portal_level(None) == "avoid")
+ok &= check("portal level: dead DNS caps at low even with a bonus-inflated score",
+            employer_portal_level(40, None, {"dns": False}) == "low"
+            and employer_portal_level(90, None, {"dns": False}) == "low")
+ok &= check("portal level: dns True doesn't cap",
+            employer_portal_level(90, None, {"dns": True}) == "high")
+
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

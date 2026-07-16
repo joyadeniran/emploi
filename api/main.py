@@ -16,6 +16,7 @@ Run: python3 -m uvicorn api.main:app --port 8000
 """
 import json
 import os
+import re
 import secrets
 import sys
 import logging
@@ -39,6 +40,7 @@ import workers.match_users as match_worker  # noqa: E402
 import workers.verify_employers as verify_worker  # noqa: E402
 import workers.notify_users as notify_worker  # noqa: E402
 import workers.backup_db as backup_worker  # noqa: E402
+import workers.expire_invites as expire_invites_worker  # noqa: E402
 
 log = logging.getLogger("emploi.api")
 logging.basicConfig(level=logging.INFO)
@@ -78,7 +80,17 @@ RATE_LIMITS = {
     "/applications/generate": (10, 3600),
     "/chat": (20, 60),
     "/chat/attach": (5, 300),
+    # Employer Portal (Phase 2). Numeric path segments are normalized to
+    # {id} before lookup so per-role paths share one bucket per user.
+    "/employer/roles": (20, 3600),
+    "/employer/roles/{id}/shortlist": (30, 60),
+    "/employer/roles/{id}/shortlist/refresh": (3, 3600),
+    "/employer/roles/{id}/invites": (30, 60),
+    "/employer/roles/{id}/unlocks": (30, 60),
+    "/invites/count": (60, 60),
 }
+
+_NUMERIC_SEGMENT_RE = re.compile(r"/\d+")
 
 
 def get_conn():
@@ -214,9 +226,10 @@ def rate_limit(request: Request, user_id: str = Depends(auth)) -> str:
     restart; that limitation is preferable to leaving Gemini and DNS calls
     unlimited until shared rate-limit infrastructure is warranted.
     """
-    limit, window = RATE_LIMITS.get(request.url.path, RATE_LIMITS["default"])
+    path = _NUMERIC_SEGMENT_RE.sub("/{id}", request.url.path)
+    limit, window = RATE_LIMITS.get(path, RATE_LIMITS["default"])
     now = time()
-    key = f"{user_id}:{request.url.path}"
+    key = f"{user_id}:{path}"
     calls = [stamp for stamp in _rate_counters[key] if now - stamp < window]
     if len(calls) >= limit:
         raise HTTPException(status_code=429,
@@ -677,6 +690,21 @@ async def billing_webhook(request: Request):
 
     if kind == "charge.success":
         metadata = data.get("metadata") or {}
+        # Employer unlock-credit packs (one-time payments). The ledger's
+        # UNIQUE paystack_reference makes webhook replays a no-op — never
+        # double-credit.
+        if metadata.get("kind") == "employer_credits":
+            try:
+                employer_id = int(metadata.get("employer_id"))
+                credits = int(metadata.get("credits"))
+            except (TypeError, ValueError):
+                return {"received": True}
+            if credits > 0 and data.get("reference"):
+                db.add_credits(conn, employer_id, credits, "purchase",
+                               paystack_reference=data["reference"])
+                db.log_event(conn, "CreditPurchase",
+                             {"employer_id": employer_id, "credits": credits})
+            return {"received": True}
         user_id = metadata.get("user_id")
         tier = metadata.get("tier")
         if user_id and tier in ("pro", "max"):
@@ -866,6 +894,734 @@ def delete_user(user_id: str = Depends(auth)):
     """NDPA/GDPR deletion right — removes everything stored for the user."""
     db.clear_user(get_conn(), user_id)
     return {"ok": True}
+
+
+# ===========================================================================
+# Employer Portal (Phase 2) — Interview Marketplace + pay-per-unlock billing
+#
+# Decisions locked with Joy 2026-07-16 (PHASE_2_EMPLOYER_PORTAL.md addendum):
+# role #1 free (contact on candidate ACCEPT, 10-invite cap); roles 2+ free to
+# post, but inviting requires unlocking the candidate (1 credit = ₦1,000,
+# packs of min 5) and unlock reveals contact immediately. Trust gating per
+# verify.employer_portal_level; 'avoid' employers are never created. Every
+# endpoint here is dispatch only — rules live in core.py / verify.py / db.py.
+# ===========================================================================
+
+class EmployerOnboardIn(BaseModel):
+    company_name: str = Field(min_length=2, max_length=200)
+    company_domain: Optional[str] = Field(default=None, max_length=200)
+
+
+class EmployerPatchIn(BaseModel):
+    company_name: Optional[str] = Field(default=None, min_length=2, max_length=200)
+    company_domain: Optional[str] = Field(default=None, max_length=200)
+
+
+class RoleCreateIn(BaseModel):
+    url: Optional[str] = Field(default=None, max_length=1000)
+    jd_text: Optional[str] = Field(default=None, max_length=30000)
+    title_override: Optional[str] = Field(default=None, max_length=200)
+
+
+class RolePatchIn(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=30000)
+    location: Optional[str] = Field(default=None, max_length=200)
+    is_remote: Optional[bool] = None
+    salary_text: Optional[str] = Field(default=None, max_length=200)
+
+
+class RoleCloseIn(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=200)  # nudge, never forced
+
+
+class HireIn(BaseModel):
+    invite_id: int
+
+
+class ShortlistRefreshIn(BaseModel):
+    refinement_note: Optional[str] = Field(default=None, max_length=1000)
+
+
+class InviteCreateIn(BaseModel):
+    candidate_user_id: str = Field(min_length=1, max_length=200)
+    invite_note: Optional[str] = Field(default=None, max_length=500)
+
+
+class UnlockIn(BaseModel):
+    candidate_user_id: str = Field(min_length=1, max_length=200)
+
+
+class CreditCheckoutIn(BaseModel):
+    credits: int = Field(ge=1, le=1000)
+
+
+class DeclineIn(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+
+class VisibilityIn(BaseModel):
+    enabled: bool
+
+
+def require_employer(user_id: str) -> dict:
+    employer = db.get_employer_for_user(get_conn(), user_id)
+    if not employer:
+        raise HTTPException(status_code=404,
+                            detail="no employer account — complete employer onboarding first")
+    return employer
+
+
+def require_owned_role(role_id: int, employer: dict) -> dict:
+    role = db.get_role(get_conn(), role_id, employer_id=employer["id"])
+    if not role:
+        raise HTTPException(status_code=404, detail="role not found")
+    return role
+
+
+def block_avoid_tier(employer: dict) -> None:
+    """Avoid-tier employers can't be CREATED via onboarding, but a domain
+    change through PATCH /employer can re-verify an existing row into
+    'avoid'. Posting and inviting are blocked for them (vouch overrides)."""
+    if employer.get("trust_level") == "avoid" and not employer.get("warm_intro_by"):
+        raise HTTPException(status_code=403,
+                            detail="We couldn't verify this employer, so posting "
+                                   "and inviting are paused. Contact "
+                                   "hello@emploihq.com and we'll review it with you.")
+
+
+def _employer_trust_check(company_name: str, domain: str, conn) -> tuple:
+    """Run the deterministic trust engine on a cold employer signup.
+    Returns (score, portal_level). Verifies the company domain the same way
+    workers/verify_employers does. (Session-email free-mail capping from the
+    original spec was dropped with Joy 2026-07-16: all signups are Google
+    auth — frequently personal gmail — and it would flatten every cold
+    signup to 'low'.)"""
+    result = verify.verify_employer(
+        company_name, domain or "", model=app.state.model_factory(),
+        dns_fn=dns_fn, mx_fn=mx_fn, fetch_fn=fetch_fn, cache=_verify_cache)
+    level = verify.employer_portal_level(
+        result.get("score"), (result.get("signals") or {}).get("red_flags"),
+        result.get("signals"))
+    if domain:
+        db.upsert_trust_record(conn, domain, company_name, result)
+    return result.get("score"), level
+
+
+def _free_role_used(conn, employer_id: int) -> bool:
+    return conn.execute("SELECT COUNT(*) FROM employer_roles WHERE employer_id = ?",
+                        (employer_id,)).fetchone()[0] > 0
+
+
+def _contact_visible(role: dict, invite_status: Optional[str],
+                     unlocked: bool) -> bool:
+    """The contact-reveal rule (locked with Joy): free role -> candidate must
+    have ACCEPTED; paid role -> the employer must have unlocked (paid)."""
+    if role.get("is_free"):
+        return invite_status in ("accepted", "hired")
+    return unlocked
+
+
+def _candidate_contact_view(conn, candidate_user_id: str) -> dict:
+    twin = db.load_career_twin(conn, candidate_user_id)
+    user = db.get_user(conn, candidate_user_id)
+    merged = dict(twin)
+    if user and user.get("email"):
+        merged["email"] = user["email"]
+        merged.setdefault("name", user.get("name") or "")
+    return core.format_employer_contact_view(merged)
+
+
+def _generate_shortlist(role_id: int, refinement_note: str = "") -> int:
+    """Rank all opted-in twins against a role and cache the result. One
+    model call. Returns rows written. Raises on provider failure."""
+    conn = get_conn()
+    role = db.get_role(conn, role_id)
+    if not role:
+        return 0
+    candidates = db.list_visible_twins(conn)
+    if not candidates:
+        return 0
+    model = app.state.model_factory()
+    if model is None:
+        return 0
+    ranked = core.rank_candidates_for_role(model, role, candidates,
+                                           refinement_note or "")
+    return db.replace_shortlist(conn, role_id, ranked)
+
+
+# ---- employer onboarding / identity ----
+
+@app.post("/employer/onboarding", status_code=201)
+def employer_onboarding(body: EmployerOnboardIn, user_id: str = Depends(auth)):
+    conn = get_conn()
+    if db.get_employer_for_user(conn, user_id):
+        raise HTTPException(status_code=409, detail="you already have an employer account")
+    domain = (body.company_domain or "").strip().lower() or \
+        ingest_worker._derive_company_domain(body.company_name)
+    score, level = _employer_trust_check(body.company_name, domain, conn)
+    if level == "avoid":
+        # Never create the row — an avoid-tier employer must not exist.
+        raise HTTPException(status_code=403,
+                            detail="We couldn't verify this employer, so we can't "
+                                   "open an account automatically. Contact "
+                                   "hello@emploihq.com and we'll review it with you.")
+    employer_id = db.create_employer(conn, body.company_name.strip(), domain,
+                                     user_id, trust_score=score, trust_level=level)
+    db.log_event(conn, "EmployerOnboarded",
+                 {"employer_id": employer_id, "trust_level": level}, user_id=user_id)
+    return {"employer_id": employer_id, "trust_score": score,
+            "trust_level": level, "warm_intro_by": None}
+
+
+@app.get("/employer")
+def get_employer_endpoint(user_id: str = Depends(auth)):
+    employer = require_employer(user_id)
+    conn = get_conn()
+    return {"employer": {
+        "id": employer["id"],
+        "company_name": employer["company_name"],
+        "company_domain": employer["company_domain"],
+        "trust_score": employer["trust_score"],
+        "trust_level": employer["trust_level"],
+        "warm_intro_by": employer["warm_intro_by"],
+        "verified_at": employer["verified_at"],
+        "free_role_used": _free_role_used(conn, employer["id"]),
+        "credit_balance": db.credit_balance(conn, employer["id"]),
+    }}
+
+
+@app.patch("/employer")
+def patch_employer(body: EmployerPatchIn, user_id: str = Depends(auth)):
+    employer = require_employer(user_id)
+    conn = get_conn()
+    fields = {}
+    if body.company_name:
+        fields["company_name"] = body.company_name.strip()
+    score, level = employer["trust_score"], employer["trust_level"]
+    if body.company_domain and body.company_domain.strip().lower() != (employer["company_domain"] or ""):
+        fields["company_domain"] = body.company_domain.strip().lower()
+        score, level = _employer_trust_check(
+            fields.get("company_name", employer["company_name"]),
+            fields["company_domain"], conn)
+        fields["trust_score"], fields["trust_level"] = score, level
+        fields["verified_at"] = None  # set by set_employer_trust below
+    if fields:
+        db.update_employer(conn, employer["id"], **{k: v for k, v in fields.items()
+                                                    if k != "verified_at"})
+        if "trust_score" in fields:
+            db.set_employer_trust(conn, employer["id"], score, level)
+    return {"ok": True, "trust_score": score, "trust_level": level}
+
+
+# ---- roles ----
+
+@app.post("/employer/roles", status_code=201)
+def create_role_endpoint(body: RoleCreateIn, user_id: str = Depends(rate_limit)):
+    employer = require_employer(user_id)
+    block_avoid_tier(employer)
+    conn = get_conn()
+    fields = None
+    extracted_from = None
+    if body.url:
+        extracted = core.extract_job_from_url(body.url)
+        if isinstance(extracted, dict) and extracted.get("error") == "unsupported_host":
+            if not body.jd_text:
+                raise HTTPException(status_code=422, detail=extracted["detail"])
+        elif extracted:
+            fields = extracted
+            extracted_from = "url"
+        elif not body.jd_text:
+            raise HTTPException(status_code=422,
+                                detail="we couldn't extract that URL — paste the "
+                                       "JD text directly")
+    if fields is None:
+        if not (body.jd_text or "").strip():
+            raise HTTPException(status_code=422,
+                                detail="provide a supported job URL or paste the JD text")
+        model = require_model()
+        fields = run_extraction(core.extract_single_job, model, body.jd_text)
+        if not fields:
+            raise HTTPException(status_code=422,
+                                detail="we couldn't extract a role from that text — "
+                                       "check it's a job description")
+        extracted_from = "text"
+    if body.title_override:
+        fields["title"] = body.title_override.strip()
+    if not (fields.get("title") or "").strip():
+        raise HTTPException(status_code=422, detail="couldn't determine the role title")
+    fields.setdefault("source_url", body.url)
+    created = db.create_role(conn, employer["id"], user_id, fields)
+    db.log_event(conn, "EmployerRoleCreated",
+                 {"role_id": created["id"], "is_free": created["is_free"],
+                  "extracted_from": extracted_from}, user_id=user_id)
+    # Kick off shortlist generation in the background — non-fatal if the
+    # provider is down; GET /shortlist regenerates synchronously on demand.
+    _run_in_background(f"shortlist-{created['id']}", _generate_shortlist, created["id"])
+    return {"role_id": created["id"], "title": fields.get("title"),
+            "location": fields.get("location"),
+            "is_remote": bool(fields.get("is_remote")),
+            "is_free": created["is_free"], "extracted_from": extracted_from}
+
+
+@app.get("/employer/roles")
+def list_roles_endpoint(status: Optional[str] = None, user_id: str = Depends(auth)):
+    employer = require_employer(user_id)
+    if status and status not in ("open", "closed", "hired"):
+        raise HTTPException(status_code=422, detail="status must be open|closed|hired")
+    roles = db.list_roles(get_conn(), employer["id"], status=status)
+    return {"roles": [{
+        "id": r["id"], "title": r["title"], "status": r["status"],
+        "is_free": bool(r["is_free"]), "invites_sent": r["invites_sent"],
+        "accepted_count": r["accepted_count"],
+        "unread_responses": r["unread_responses"],
+        "created_at": r["created_at"],
+    } for r in roles]}
+
+
+@app.get("/employer/roles/{role_id}")
+def get_role_endpoint(role_id: int, user_id: str = Depends(auth)):
+    employer = require_employer(user_id)
+    role = require_owned_role(role_id, employer)
+    conn = get_conn()
+    invites = []
+    for inv in db.list_role_invites(conn, role_id):
+        unlocked = db.is_unlocked(conn, role_id, inv["candidate_user_id"])
+        item = {
+            "invite_id": inv["id"],
+            "candidate_user_id": inv["candidate_user_id"],
+            "candidate_name": (inv["twin"].get("name") or ""),
+            "candidate_headline": (inv["twin"].get("headline")
+                                   or inv["twin"].get("title") or ""),
+            "fit_score": inv["fit_score"], "status": inv["status"],
+            "invited_at": inv["created_at"], "expires_at": inv["expires_at"],
+            "responded_at": inv["responded_at"],
+            "decline_reason": inv["decline_reason"],
+            "contact": None,
+        }
+        if _contact_visible(role, inv["status"], unlocked):
+            item["contact"] = _candidate_contact_view(conn, inv["candidate_user_id"])
+        invites.append(item)
+    db.touch_role_viewed(conn, role_id)
+    return {"role": {k: role[k] for k in (
+        "id", "title", "description", "location", "is_remote", "salary_text",
+        "source_url", "source_ats", "status", "is_free", "invites_sent",
+        "close_reason", "created_at", "closed_at", "hired_at")},
+        "invites": invites}
+
+
+@app.patch("/employer/roles/{role_id}")
+def patch_role_endpoint(role_id: int, body: RolePatchIn, user_id: str = Depends(auth)):
+    employer = require_employer(user_id)
+    role = require_owned_role(role_id, employer)
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    conn = get_conn()
+    if fields:
+        db.update_role(conn, role_id, **fields)
+        # A materially different description invalidates the cached shortlist.
+        if "description" in fields and fields["description"] != role["description"]:
+            db.clear_shortlist(conn, role_id)
+    return {"ok": True}
+
+
+@app.post("/employer/roles/{role_id}/close")
+def close_role_endpoint(role_id: int, body: RoleCloseIn = None,
+                        user_id: str = Depends(auth)):
+    employer = require_employer(user_id)
+    require_owned_role(role_id, employer)
+    expired = db.close_role(get_conn(), role_id,
+                            reason=(body.reason if body else None))
+    return {"ok": True, "expired_invites": expired}
+
+
+@app.post("/employer/roles/{role_id}/hire")
+def hire_endpoint(role_id: int, body: HireIn, user_id: str = Depends(auth)):
+    employer = require_employer(user_id)
+    role = require_owned_role(role_id, employer)
+    conn = get_conn()
+    result = db.hire_candidate(conn, role_id, body.invite_id)
+    if result["error"] == "not_found":
+        raise HTTPException(status_code=404, detail="invite not found for this role")
+    if result["error"] == "not_accepted":
+        raise HTTPException(status_code=422,
+                            detail="only an accepted invite can be marked hired")
+    db.log_event(conn, "HireCompleted",
+                 {"role_id": role_id, "employer_id": employer["id"],
+                  "was_free_role": bool(role["is_free"])}, user_id=user_id)
+    return {"ok": True, "hired_at": db.get_role(conn, role_id)["hired_at"],
+            "expired_other_invites": result["expired_others"]}
+
+
+# ---- shortlist ----
+
+@app.get("/employer/roles/{role_id}/shortlist")
+def get_shortlist_endpoint(role_id: int, limit: int = 20, offset: int = 0,
+                           user_id: str = Depends(rate_limit)):
+    employer = require_employer(user_id)
+    require_owned_role(role_id, employer)
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=422, detail="limit must be 1–100")
+    conn = get_conn()
+    if db.shortlist_cache_age_seconds(conn, role_id) is None:
+        # Empty cache: generate synchronously (one model call).
+        if not db.list_visible_twins(conn, limit=1):
+            return {"shortlist": [], "total": 0, "cache_age": None,
+                    "note": "no opted-in candidates yet"}
+        require_model()
+        run_extraction(_generate_shortlist, role_id)
+    rows = db.list_shortlist(conn, role_id, limit=limit, offset=offset)
+    role = db.get_role(conn, role_id)
+    shortlist = []
+    for r in rows:
+        if r["already_invited"]:
+            continue  # invited candidates live on the role's invites rail
+        twin = r["twin"]
+        shortlist.append({
+            "candidate_id": r["candidate_user_id"],
+            "fit_score": r["fit_score"], "reason": r["reason"],
+            "headline": twin.get("headline") or twin.get("title") or "",
+            "skills": twin.get("skills") if isinstance(twin.get("skills"), list)
+                      else core.normalize_skills(twin.get("skills")),
+            "experience_summary": core._entries_or_text(twin.get("experience"),
+                                                        twin.get("bio")),
+            "location": twin.get("location") or "",
+            "already_invited": False,
+            "unlocked": r["unlocked"],
+            "contact": (_candidate_contact_view(conn, r["candidate_user_id"])
+                        if _contact_visible(role, None, r["unlocked"]) else None),
+        })
+    return {"shortlist": shortlist, "total": db.count_shortlist(conn, role_id),
+            "cache_age": db.shortlist_cache_age_seconds(conn, role_id)}
+
+
+@app.post("/employer/roles/{role_id}/shortlist/refresh", status_code=202)
+def refresh_shortlist_endpoint(role_id: int, body: ShortlistRefreshIn = None,
+                               user_id: str = Depends(rate_limit)):
+    employer = require_employer(user_id)
+    require_owned_role(role_id, employer)
+    require_model()
+    conn = get_conn()
+    db.clear_shortlist(conn, role_id)
+    note = (body.refinement_note if body else "") or ""
+    _run_in_background(f"shortlist-refresh-{role_id}", _generate_shortlist,
+                       role_id, note)
+    return {"started": True}
+
+
+# ---- invites (employer side) ----
+
+@app.post("/employer/roles/{role_id}/invites", status_code=201)
+def create_invite_endpoint(role_id: int, body: InviteCreateIn,
+                           user_id: str = Depends(rate_limit)):
+    employer = require_employer(user_id)
+    block_avoid_tier(employer)
+    role = require_owned_role(role_id, employer)
+    if role["status"] != "open":
+        raise HTTPException(status_code=409, detail="this role is not open")
+    conn = get_conn()
+    if not db.get_recruiter_visibility(conn, body.candidate_user_id):
+        raise HTTPException(status_code=404, detail="candidate not found or not opted in")
+    unlocked = db.is_unlocked(conn, role_id, body.candidate_user_id)
+    allowed, reason = core.invite_gate(bool(role["is_free"]),
+                                       role["invites_sent"], unlocked)
+    if not allowed:
+        # Free-role cap -> 429 (abuse guard); missing unlock -> 402 (payment)
+        raise HTTPException(status_code=429 if role["is_free"] else 402,
+                            detail=reason)
+    fit = conn.execute(
+        "SELECT fit_score FROM role_shortlists WHERE employer_role_id = ? "
+        "AND candidate_user_id = ?", (role_id, body.candidate_user_id)).fetchone()
+    invite_id = db.create_invite(conn, role_id, body.candidate_user_id, user_id,
+                                 fit_score=fit["fit_score"] if fit else None,
+                                 invite_note=body.invite_note)
+    if invite_id is None:
+        raise HTTPException(status_code=409, detail="candidate already invited to this role")
+    invite = db.get_invite(conn, invite_id)
+    db.log_event(conn, "InterviewInviteSent",
+                 {"invite_id": invite_id, "role_id": role_id}, user_id=user_id)
+    # Email notification rides the nightly notify worker digest; the
+    # dashboard badge (GET /invites/count) is immediate.
+    return {"invite_id": invite_id, "expires_at": invite["expires_at"]}
+
+
+# ---- unlocks + credit billing (employer side) ----
+
+@app.post("/employer/roles/{role_id}/unlocks", status_code=201)
+def unlock_candidate_endpoint(role_id: int, body: UnlockIn,
+                              user_id: str = Depends(rate_limit)):
+    employer = require_employer(user_id)
+    role = require_owned_role(role_id, employer)
+    if role["is_free"]:
+        raise HTTPException(status_code=422,
+                            detail="your free role doesn't need unlocks — invite "
+                                   "directly; contact is shared when the candidate accepts")
+    conn = get_conn()
+    if not db.get_recruiter_visibility(conn, body.candidate_user_id):
+        raise HTTPException(status_code=404, detail="candidate not found or not opted in")
+    result = db.create_unlock(conn, role_id, employer["id"],
+                              body.candidate_user_id, user_id)
+    if result == "no_credits":
+        raise HTTPException(status_code=402,
+                            detail=f"you have no unlock credits — buy a pack "
+                                   f"(min {core.MIN_UNLOCK_PACK} × "
+                                   f"₦{core.UNLOCK_PRICE_NGN:,}) at "
+                                   "/employer/billing")
+    if result == "ok":
+        db.log_event(conn, "CandidateUnlocked",
+                     {"role_id": role_id, "employer_id": employer["id"]},
+                     user_id=user_id)
+    # 'exists' falls through — idempotent, contact returned either way.
+    return {"ok": True, "already_unlocked": result == "exists",
+            "credit_balance": db.credit_balance(conn, employer["id"]),
+            "contact": _candidate_contact_view(conn, body.candidate_user_id)}
+
+
+@app.get("/employer/billing/status")
+def employer_billing_status(user_id: str = Depends(auth)):
+    employer = require_employer(user_id)
+    conn = get_conn()
+    return {"credit_balance": db.credit_balance(conn, employer["id"]),
+            "free_role_used": _free_role_used(conn, employer["id"]),
+            "unlock_price_ngn": core.UNLOCK_PRICE_NGN,
+            "min_pack": core.MIN_UNLOCK_PACK}
+
+
+@app.post("/employer/billing/checkout")
+def employer_credit_checkout(body: CreditCheckoutIn, user_id: str = Depends(auth)):
+    require_paystack()
+    employer = require_employer(user_id)
+    if body.credits < core.MIN_UNLOCK_PACK:
+        raise HTTPException(status_code=422,
+                            detail=f"minimum pack is {core.MIN_UNLOCK_PACK} unlocks")
+    conn = get_conn()
+    user = db.get_user(conn, user_id)
+    email = (user or {}).get("email") or ""
+    if not email:
+        raise HTTPException(status_code=422,
+                            detail="we need your email on file before checkout — "
+                                   "sign in again to refresh your session")
+    amount = body.credits * core.UNLOCK_PRICE_NGN
+    try:
+        data = billing.initialize_onetime_transaction(
+            PAYSTACK_SECRET_KEY, email, amount,
+            callback_url=f"{WEB_APP_URL}/employer/billing?return=1",
+            metadata={"kind": "employer_credits", "employer_id": employer["id"],
+                      "credits": body.credits, "user_id": user_id})
+    except Exception:
+        log.exception("Paystack credit checkout init failed for employer %s",
+                      employer["id"])
+        raise HTTPException(status_code=502,
+                            detail="Couldn't start checkout — try again in a moment.")
+    return {"authorization_url": data["authorization_url"],
+            "reference": data["reference"], "amount_ngn": amount}
+
+
+@app.post("/employer/billing/verify")
+def employer_credit_verify(body: VerifyIn, user_id: str = Depends(auth)):
+    """Instant post-redirect feedback; the webhook stays authoritative. The
+    ledger's UNIQUE reference makes calling both paths safe."""
+    require_paystack()
+    employer = require_employer(user_id)
+    try:
+        data = billing.verify_transaction(PAYSTACK_SECRET_KEY, body.reference)
+    except Exception:
+        raise HTTPException(status_code=502,
+                            detail="Couldn't verify that payment yet — try refreshing shortly.")
+    metadata = data.get("metadata") or {}
+    if (metadata.get("kind") != "employer_credits"
+            or str(metadata.get("employer_id")) != str(employer["id"])):
+        raise HTTPException(status_code=404, detail="transaction not found for this employer")
+    try:
+        credits = int(metadata.get("credits"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=404, detail="transaction not found for this employer")
+    conn = get_conn()
+    if credits > 0 and data.get("reference"):
+        db.add_credits(conn, employer["id"], credits, "purchase",
+                       paystack_reference=data["reference"])
+    return {"ok": True, "credit_balance": db.credit_balance(conn, employer["id"])}
+
+
+# ---- candidate side: interview invites ----
+
+_INVITE_STATUSES = {"pending", "accepted", "declined", "expired", "hired", "all"}
+
+
+def _shape_candidate_invite(inv: dict, full: bool = False) -> dict:
+    desc = inv.get("role_description") or ""
+    shaped = {
+        "id": inv["id"],
+        "role": {
+            "title": inv["role_title"],
+            "description_preview": desc[:240],
+            "location": inv["role_location"],
+            "is_remote": bool(inv["role_is_remote"]),
+            "salary_text": inv["role_salary_text"],
+        },
+        "employer": {
+            "company_name": inv["company_name"],
+            "trust_score": inv["trust_score"],
+            "trust_level": inv["trust_level"],
+            "verified": bool(inv["warm_intro_by"]) or inv["trust_level"] == "high",
+        },
+        "fit_score": inv["fit_score"],
+        "invite_note": inv["invite_note"],
+        "status": inv["status"],
+        "expires_at": inv["expires_at"],
+        "created_at": inv["created_at"],
+        "responded_at": inv["responded_at"],
+    }
+    if full:
+        shaped["role"]["description"] = desc
+    return shaped
+
+
+@app.get("/invites")
+def list_invites_endpoint(status: str = "pending", user_id: str = Depends(auth)):
+    if status not in _INVITE_STATUSES:
+        raise HTTPException(status_code=422,
+                            detail=f"status must be one of {sorted(_INVITE_STATUSES)}")
+    invites = db.list_candidate_invites(get_conn(), user_id,
+                                        status=None if status == "all" else status)
+    return {"invites": [_shape_candidate_invite(i) for i in invites]}
+
+
+@app.get("/invites/count")
+def invites_count_endpoint(user_id: str = Depends(rate_limit)):
+    return db.count_candidate_invites(get_conn(), user_id)
+
+
+@app.get("/invites/{invite_id}")
+def get_invite_endpoint(invite_id: int, user_id: str = Depends(auth)):
+    inv = db.get_invite_detail(get_conn(), invite_id)
+    if not inv or inv["candidate_user_id"] != user_id:
+        raise HTTPException(status_code=404, detail="invite not found")
+    shaped = _shape_candidate_invite(inv, full=True)
+    # Employer trust evidence for the candidate's decision.
+    record = db.get_trust_record(get_conn(), inv.get("company_domain") or "")
+    shaped["employer"]["trust_evidence"] = (record or {}).get("evidence", [])
+    return shaped
+
+
+@app.post("/invites/{invite_id}/accept")
+def accept_invite_endpoint(invite_id: int, user_id: str = Depends(auth)):
+    conn = get_conn()
+    inv = db.get_invite_detail(conn, invite_id)
+    if not inv or inv["candidate_user_id"] != user_id:
+        raise HTTPException(status_code=404, detail="invite not found")
+    result = db.respond_invite(conn, invite_id, accept=True)
+    if result == "expired":
+        raise HTTPException(status_code=410, detail="this invite has expired")
+    if result != "ok":
+        raise HTTPException(status_code=409, detail="this invite is no longer pending")
+    db.log_event(conn, "InterviewInviteAccepted", {"invite_id": invite_id},
+                 user_id=user_id)
+    # Keep agency with the candidate: hand them the employer's email so they
+    # can reach out first if they want to (decision #9, confirmed).
+    return {"ok": True,
+            "employer_contact_email": db.get_employer_owner_email(
+                conn, inv["employer_id"]) or ""}
+
+
+@app.post("/invites/{invite_id}/decline")
+def decline_invite_endpoint(invite_id: int, body: DeclineIn = None,
+                            user_id: str = Depends(auth)):
+    conn = get_conn()
+    inv = db.get_invite(conn, invite_id)
+    if not inv or inv["candidate_user_id"] != user_id:
+        raise HTTPException(status_code=404, detail="invite not found")
+    result = db.respond_invite(conn, invite_id, accept=False,
+                               decline_reason=(body.reason if body else None))
+    if result == "expired":
+        raise HTTPException(status_code=410, detail="this invite has expired")
+    if result != "ok":
+        raise HTTPException(status_code=409, detail="this invite is no longer pending")
+    return {"ok": True}
+
+
+@app.get("/career-twin/recruiter-visibility")
+def get_recruiter_visibility_endpoint(user_id: str = Depends(auth)):
+    conn = get_conn()
+    return {"recruiter_visibility": db.get_recruiter_visibility(conn, user_id),
+            "has_twin": bool(db.load_career_twin(conn, user_id))}
+
+
+@app.patch("/career-twin/recruiter-visibility")
+def recruiter_visibility_endpoint(body: VisibilityIn, user_id: str = Depends(auth)):
+    conn = get_conn()
+    was_on = db.get_recruiter_visibility(conn, user_id)
+    if not db.set_recruiter_visibility(conn, user_id, body.enabled):
+        raise HTTPException(status_code=409,
+                            detail="complete your Career Twin first")
+    if body.enabled and not was_on:
+        db.log_event(conn, "UserOptedInToRecruiterVisibility", {}, user_id=user_id)
+    return {"ok": True, "recruiter_visibility": body.enabled}
+
+
+# ---- admin: vouch + MVP metrics dashboard ----
+
+class VouchIn(BaseModel):
+    vouched_by: str = Field(default="joy", max_length=100)
+
+
+@app.post("/admin/employers/{employer_id}/vouch")
+def admin_vouch_employer(employer_id: int, body: VouchIn = None,
+                         _: None = Depends(admin_key_auth)):
+    """Joy's post-signup warm-intro override: marks the employer personally
+    vouched, clearing trust-badge restrictions. The recorded trust score
+    stays for honesty."""
+    conn = get_conn()
+    if not db.vouch_employer(conn, employer_id,
+                             (body.vouched_by if body else "joy")):
+        raise HTTPException(status_code=404, detail="employer not found")
+    db.log_event(conn, "EmployerVouched", {"employer_id": employer_id})
+    return {"ok": True}
+
+
+@app.get("/admin/metrics")
+def admin_metrics(_: None = Depends(admin_key_auth)):
+    """MVP admin dashboard rollup (Next.js /admin). Counts only — no PII."""
+    conn = get_conn()
+
+    def _scalar(sql: str, *params) -> int:
+        try:
+            return int(conn.execute(sql, params).fetchone()[0])
+        except Exception:
+            return 0
+
+    invites_by_status = {}
+    for row in conn.execute(
+            "SELECT status, COUNT(*) n FROM interview_invites GROUP BY status"):
+        invites_by_status[row["status"]] = row["n"]
+    trust_alerts = [dict(r) for r in conn.execute(
+        "SELECT id, company_name, company_domain, trust_score, trust_level "
+        "FROM employers WHERE trust_level = 'low' AND warm_intro_by IS NULL "
+        "ORDER BY id DESC LIMIT 20")]
+    return {
+        "career_twins": _scalar("SELECT COUNT(*) FROM career_twins"),
+        "twins_opted_in": _scalar(
+            "SELECT COUNT(*) FROM career_twins WHERE recruiter_visibility = 1"),
+        "employers": _scalar("SELECT COUNT(*) FROM employers"),
+        "employers_vouched": _scalar(
+            "SELECT COUNT(*) FROM employers WHERE warm_intro_by IS NOT NULL"),
+        "roles_open": _scalar(
+            "SELECT COUNT(*) FROM employer_roles WHERE status = 'open'"),
+        "roles_hired": _scalar(
+            "SELECT COUNT(*) FROM employer_roles WHERE status = 'hired'"),
+        "invites": invites_by_status,
+        "unlocks_total": _scalar("SELECT COUNT(*) FROM candidate_unlocks"),
+        "credits_purchased": _scalar(
+            "SELECT COALESCE(SUM(delta), 0) FROM employer_credit_ledger "
+            "WHERE reason = 'purchase'"),
+        "jobs_ingested_today": _scalar(
+            "SELECT COUNT(*) FROM ingested_jobs "
+            "WHERE fetched_at >= datetime('now', '-1 days')"),
+        "applications": _scalar("SELECT COUNT(*) FROM applications"),
+        "generations_last_30d": _scalar(
+            "SELECT COUNT(*) FROM generation_log "
+            "WHERE created_at >= datetime('now', '-30 days')"),
+        "trust_alerts": trust_alerts,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1104,6 +1860,16 @@ def admin_run_notify(_: None = Depends(admin_key_auth)):
     return result
 
 
+@app.post("/admin/run/expire-invites")
+def admin_run_expire_invites(_: None = Depends(admin_key_auth)):
+    """Worker 6 — flip pending interview invites past their expiry to
+    'expired'. Fast single UPDATE; stays synchronous."""
+    result = expire_invites_worker.run(DB_PATH)
+    if not result["ok"]:
+        raise HTTPException(status_code=500, detail=result)
+    return result
+
+
 @app.post("/admin/run/backup")
 def admin_run_backup(_: None = Depends(admin_key_auth)):
     """Worker 5 — snapshot the SQLite file and upload it to Cloudflare R2."""
@@ -1124,7 +1890,7 @@ def admin_run_backup(_: None = Depends(admin_key_auth)):
 
 _WORKER_EVENT_TYPES = (
     "JobIngestionRun", "MatchingWorkerRun", "VerificationWorkerRun",
-    "NotifyWorkerRun", "BackupWorkerRun",
+    "NotifyWorkerRun", "BackupWorkerRun", "ExpireInvitesRun",
 )
 
 

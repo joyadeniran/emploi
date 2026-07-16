@@ -270,6 +270,30 @@ def compute_trust(signals: dict):
     return score, level, evidence
 
 
+def employer_portal_level(score, red_flags=None, signals=None) -> str:
+    """Map a verify_employer result onto the Employer Portal's trust levels
+    (spec §5.9 — distinct from the candidate-facing level strings above):
+      avoid  — score < 20 OR any red flags (onboarding is BLOCKED)
+      low    — score < 40 (allowed; warning badge shown to candidates)
+      medium — 40–74
+      high   — ≥ 75
+    One portal-specific cap on top of the score mapping: a company domain
+    that does not resolve can never rate better than 'low' — at onboarding
+    there is no job text for red flags to fire on, and the domain-as-contact
+    corporate bonus would otherwise let a nonexistent domain reach 'medium'.
+    Computed in code from the deterministic score, never by an LLM."""
+    if red_flags:
+        return "avoid"
+    s = score if isinstance(score, (int, float)) else 0
+    if s < 20:
+        return "avoid"
+    if s < 40 or (signals or {}).get("dns") is False:
+        return "low"
+    if s < 75:
+        return "medium"
+    return "high"
+
+
 def verify_employer(company: str, contact: str, job_text: str = "", role: str = "",
                     model=None, dns_fn=dns_resolves, mx_fn=has_mx,
                     fetch_fn=fetch_site, cache: dict = None,

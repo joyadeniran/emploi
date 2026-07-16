@@ -81,6 +81,26 @@ with tempfile.TemporaryDirectory() as directory:
     check("exactly three real employer domains verified from four rows",
           result["verified"] == 3)
 
+# ---- Phase 2: registered Employer Portal accounts get refreshed too ---------
+with tempfile.TemporaryDirectory() as directory:
+    path = os.path.join(directory, "emp.sqlite3")
+    conn = db.connect(path)
+    cold = db.create_employer(conn, "Cold Co", "coldco.com", "hm-1")
+    vouched = db.create_employer(conn, "Warm Co", "warmco.com", "hm-2")
+    db.vouch_employer(conn, vouched, "joy")
+    result = run(path, dns_fn=lambda d: True, mx_fn=lambda d: True,
+                 fetch_fn=lambda d: (200, ""), sleep_fn=lambda _: None)
+    check("cold employer's domain verified by the worker",
+          db.get_trust_record(conn, "coldco.com") is not None)
+    check("vouched employer's domain skipped (Joy vouches personally)",
+          db.get_trust_record(conn, "warmco.com") is None)
+    refreshed = db.get_employer(conn, cold)
+    check("refreshed score written back to the employers row (portal level)",
+          refreshed["trust_score"] is not None
+          and refreshed["trust_level"] in ("high", "medium", "low", "avoid"))
+    check("vouched employer's trust untouched",
+          db.get_employer(conn, vouched)["trust_score"] is None)
+
 # _is_ats_host smoke tests — defensive filter against all 5 ATS hosts.
 check("_is_ats_host: boards.greenhouse.io", _is_ats_host("boards.greenhouse.io"))
 check("_is_ats_host: jobs.lever.co", _is_ats_host("jobs.lever.co"))

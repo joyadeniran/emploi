@@ -7,6 +7,7 @@ import {
   Sparkles,
   Briefcase,
   FileText,
+  Inbox,
   MessageSquare,
   Bookmark,
   Mic,
@@ -25,6 +26,7 @@ const mainNav = [
   { href: "/career-twin", label: "Career Twin", icon: Sparkles, badge: "New" },
   { href: "/matches", label: "Job Matches", icon: Briefcase },
   { href: "/jobs", label: "Browse Jobs", icon: Search },
+  { href: "/invites", label: "Interview Invites", icon: Inbox, badge: "New" },
   { href: "/applications", label: "Applications", icon: FileText },
   { href: "/messages", label: "Messages", icon: MessageSquare },
   { href: "/saved", label: "Saved Jobs", icon: Bookmark },
@@ -35,7 +37,7 @@ const mainNav = [
 ];
 
 const recruiterNav = [
-  { href: "/recruiter", label: "Recruiter Workspace", icon: Users, badge: "Beta" },
+  { href: "/employer", label: "Employer Portal", icon: Users, badge: "New" },
 ];
 
 function NavLink({

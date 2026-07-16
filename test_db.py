@@ -276,5 +276,257 @@ ok &= check("unknown domain -> None", get_trust_record(jconn, "unknowndomain.io"
 log_event(jconn, "CrashTest", {"x": object()}, user_id="u3")  # non-serialisable
 ok &= check("log_event swallows serialisation errors (never raises)", True)
 
+# ===========================================================================
+# Phase 2 — Employer Portal tables
+# ===========================================================================
+from db import (create_employer, get_employer, get_employer_for_user,
+                update_employer, set_employer_trust, vouch_employer,
+                get_employer_owner_email,
+                create_role, get_role, list_roles, update_role,
+                touch_role_viewed, close_role, hire_candidate,
+                replace_shortlist, list_shortlist, count_shortlist,
+                clear_shortlist, shortlist_cache_age_seconds,
+                create_invite, get_invite, get_invite_detail,
+                list_candidate_invites, count_candidate_invites,
+                list_role_invites, respond_invite,
+                add_credits, credit_balance, create_unlock, is_unlocked,
+                set_recruiter_visibility, get_recruiter_visibility,
+                list_visible_twins)
+
+econn = connect(":memory:")
+
+# 18. recruiter_visibility: default OFF, toggle, no-twin case
+save_career_twin(econn, "cand-1", {"name": "Ada", "headline": "Data Analyst",
+                                   "skills": ["Python"], "onboarding_complete": True})
+ok &= check("recruiter_visibility defaults to OFF (locked product decision)",
+            get_recruiter_visibility(econn, "cand-1") is False)
+ok &= check("set_recruiter_visibility flips opt-in on",
+            set_recruiter_visibility(econn, "cand-1", True) is True
+            and get_recruiter_visibility(econn, "cand-1") is True)
+ok &= check("set_recruiter_visibility without a twin returns False",
+            set_recruiter_visibility(econn, "no-twin-user", True) is False)
+ok &= check("list_visible_twins returns only opted-in candidates",
+            [t["user_id"] for t in list_visible_twins(econn)] == ["cand-1"])
+save_career_twin(econn, "cand-2", {"name": "Bola", "headline": "PM"})
+ok &= check("save_career_twin preserves recruiter_visibility on upsert",
+            get_recruiter_visibility(econn, "cand-1") is True)
+ok &= check("non-opted-in candidate stays invisible",
+            all(t["user_id"] != "cand-2" for t in list_visible_twins(econn)))
+
+# 19. employers + employer_users CRUD
+emp_id = create_employer(econn, "Acme Corp", "acmecorp.com", "hm-1",
+                         trust_score=80, trust_level="high")
+ok &= check("create_employer returns id", emp_id > 0)
+emp = get_employer(econn, emp_id)
+ok &= check("employer fields round-trip",
+            emp["company_name"] == "Acme Corp" and emp["trust_level"] == "high")
+ok &= check("verified_at set when trust provided", emp["verified_at"] is not None)
+ok &= check("get_employer_for_user finds membership",
+            get_employer_for_user(econn, "hm-1")["id"] == emp_id)
+ok &= check("get_employer_for_user None for stranger",
+            get_employer_for_user(econn, "someone-else") is None)
+update_employer(econn, emp_id, company_domain="acme.io", nonsense="dropped")
+ok &= check("update_employer updates allowed fields, drops unknown",
+            get_employer(econn, emp_id)["company_domain"] == "acme.io")
+set_employer_trust(econn, emp_id, 42, "medium")
+ok &= check("set_employer_trust updates score+level",
+            get_employer(econn, emp_id)["trust_score"] == 42
+            and get_employer(econn, emp_id)["trust_level"] == "medium")
+ok &= check("vouch_employer sets warm_intro_by",
+            vouch_employer(econn, emp_id, "joy") is True
+            and get_employer(econn, emp_id)["warm_intro_by"] == "joy")
+ok &= check("vouch_employer on unknown id returns False",
+            vouch_employer(econn, 99999, "joy") is False)
+upsert_user(econn, "hm-1", "hm@acmecorp.com", "Hiring Manager")
+ok &= check("get_employer_owner_email resolves via users table",
+            get_employer_owner_email(econn, emp_id) == "hm@acmecorp.com")
+
+# 20. roles: first role is free, later roles are not
+r1 = create_role(econn, emp_id, "hm-1", {"title": "Data Analyst",
+                                         "description": "Analyse data",
+                                         "location": "Lagos", "is_remote": True})
+ok &= check("first role is marked free", r1["is_free"] is True)
+r2 = create_role(econn, emp_id, "hm-1", {"title": "Backend Engineer",
+                                         "description": "Build APIs"})
+ok &= check("second role is NOT free (pay-per-unlock)", r2["is_free"] is False)
+role1 = get_role(econn, r1["id"])
+ok &= check("role fields round-trip", role1["title"] == "Data Analyst"
+            and role1["is_remote"] == 1 and role1["status"] == "open")
+ok &= check("get_role with wrong employer_id returns None (ownership)",
+            get_role(econn, r1["id"], employer_id=99999) is None)
+update_role(econn, r1["id"], title="Senior Data Analyst", status="hacked")
+ok &= check("update_role updates allowed fields only",
+            get_role(econn, r1["id"])["title"] == "Senior Data Analyst"
+            and get_role(econn, r1["id"])["status"] == "open")
+
+# 21. invites: create, dedup, counters, state machine
+inv1 = create_invite(econn, r1["id"], "cand-1", "hm-1", fit_score=88,
+                     invite_note="Loved your profile")
+ok &= check("create_invite returns id", inv1 is not None and inv1 > 0)
+ok &= check("duplicate invite for same (role, candidate) returns None",
+            create_invite(econn, r1["id"], "cand-1", "hm-1") is None)
+ok &= check("invites_sent counter bumped once",
+            get_role(econn, r1["id"])["invites_sent"] == 1)
+inv = get_invite(econn, inv1)
+ok &= check("invite defaults pending with 14-day expiry",
+            inv["status"] == "pending" and inv["expires_at"] > inv["created_at"])
+detail = get_invite_detail(econn, inv1)
+ok &= check("invite detail joins role + employer",
+            detail["role_title"] == "Senior Data Analyst"
+            and detail["company_name"] == "Acme Corp")
+counts = count_candidate_invites(econn, "cand-1")
+ok &= check("count_candidate_invites pending=1 all=1",
+            counts == {"pending": 1, "all": 1})
+ok &= check("candidate invite listing joined",
+            list_candidate_invites(econn, "cand-1")[0]["company_name"] == "Acme Corp")
+ok &= check("invites are per-candidate",
+            list_candidate_invites(econn, "cand-2") == [])
+
+# accept flow
+ok &= check("respond_invite accept -> ok", respond_invite(econn, inv1, True) == "ok")
+ok &= check("accepted invite recorded",
+            get_invite(econn, inv1)["status"] == "accepted"
+            and get_invite(econn, inv1)["responded_at"] is not None)
+ok &= check("accepting a non-pending invite -> not_pending",
+            respond_invite(econn, inv1, True) == "not_pending")
+
+# decline flow (fresh candidate)
+save_career_twin(econn, "cand-3", {"name": "Chidi"})
+set_recruiter_visibility(econn, "cand-3", True)
+inv2 = create_invite(econn, r1["id"], "cand-3", "hm-1")
+ok &= check("respond_invite decline records reason",
+            respond_invite(econn, inv2, False, "role not a fit") == "ok"
+            and get_invite(econn, inv2)["decline_reason"] == "role not a fit")
+
+# expired-at-accept flow
+save_career_twin(econn, "cand-4", {"name": "Dayo"})
+inv3 = create_invite(econn, r1["id"], "cand-4", "hm-1")
+econn.execute("UPDATE interview_invites SET expires_at = datetime('now', '-1 days') "
+              "WHERE id = ?", (inv3,))
+econn.commit()
+ok &= check("accepting past expires_at -> expired (and marked so)",
+            respond_invite(econn, inv3, True) == "expired"
+            and get_invite(econn, inv3)["status"] == "expired")
+ok &= check("expired invite not counted as pending",
+            count_candidate_invites(econn, "cand-4")["pending"] == 0)
+
+# 22. hire: only accepted invites; siblings auto-expire
+save_career_twin(econn, "cand-5", {"name": "Efe"})
+inv4 = create_invite(econn, r1["id"], "cand-5", "hm-1")  # stays pending
+res = hire_candidate(econn, r1["id"], inv2)  # declined invite
+ok &= check("hire on a declined invite refused", res["error"] == "not_accepted")
+res = hire_candidate(econn, r1["id"], 99999)
+ok &= check("hire on unknown invite refused", res["error"] == "not_found")
+res = hire_candidate(econn, r1["id"], inv1)  # accepted earlier
+ok &= check("hire on accepted invite succeeds", res["ok"] is True)
+role1 = get_role(econn, r1["id"])
+ok &= check("role marked hired with candidate recorded",
+            role1["status"] == "hired"
+            and role1["hired_candidate_user_id"] == "cand-1"
+            and role1["hired_at"] is not None)
+ok &= check("hired invite terminal state", get_invite(econn, inv1)["status"] == "hired")
+ok &= check("sibling pending invites auto-expired on hire",
+            res["expired_others"] == 1
+            and get_invite(econn, inv4)["status"] == "expired")
+
+# 23. close_role expires pending invites, records nudge reason
+r3 = create_role(econn, emp_id, "hm-1", {"title": "Ops", "description": "Ops role"})
+inv5 = create_invite(econn, r3["id"], "cand-3", "hm-1")
+expired = close_role(econn, r3["id"], reason="not hiring")
+role3 = get_role(econn, r3["id"])
+ok &= check("close_role sets status/closed_at/reason and expires pending",
+            role3["status"] == "closed" and role3["closed_at"] is not None
+            and role3["close_reason"] == "not hiring"
+            and expired == 1 and get_invite(econn, inv5)["status"] == "expired")
+
+# 24. list_roles counts + unread tracking
+roles = list_roles(econn, emp_id)
+ok &= check("list_roles returns all roles newest first",
+            [r["id"] for r in roles] == sorted([r["id"] for r in roles], reverse=True))
+r1row = [r for r in roles if r["id"] == r1["id"]][0]
+ok &= check("accepted_count includes hired invite", r1row["accepted_count"] == 1)
+ok &= check("unread_responses counts responses never viewed",
+            r1row["unread_responses"] >= 1)
+touch_role_viewed(econn, r1["id"])
+import time as _t2
+_t2.sleep(1.05)  # sqlite datetime second resolution
+r1row = [r for r in list_roles(econn, emp_id) if r["id"] == r1["id"]][0]
+ok &= check("unread_responses drops to 0 after touch_role_viewed",
+            r1row["unread_responses"] == 0)
+ok &= check("list_roles status filter",
+            all(r["status"] == "closed" for r in list_roles(econn, emp_id, status="closed")))
+
+# 25. shortlist cache
+rows = [{"candidate_user_id": "cand-1", "fit_score": 88, "reason": "strong"},
+        {"candidate_user_id": "cand-2", "fit_score": 70, "reason": "ok"},
+        {"candidate_user_id": "cand-3", "fit_score": 60, "reason": "meh"}]
+written = replace_shortlist(econn, r2["id"], rows)
+ok &= check("replace_shortlist writes rows", written == 3)
+sl = list_shortlist(econn, r2["id"])
+ok &= check("shortlist hides candidates who are NOT opted in (cand-2)",
+            [s["candidate_user_id"] for s in sl] == ["cand-1", "cand-3"])
+ok &= check("shortlist joined with twin data",
+            sl[0]["twin"].get("name") == "Ada")
+ok &= check("shortlist best fit first", sl[0]["fit_score"] == 88)
+ok &= check("count_shortlist respects visibility", count_shortlist(econn, r2["id"]) == 2)
+ok &= check("cache age is a small non-negative integer",
+            0 <= (shortlist_cache_age_seconds(econn, r2["id"]) or 0) < 60)
+inv6 = create_invite(econn, r2["id"], "cand-3", "hm-1")
+sl = list_shortlist(econn, r2["id"])
+c3 = [s for s in sl if s["candidate_user_id"] == "cand-3"][0]
+ok &= check("already_invited flag set after invite", c3["already_invited"] is True)
+clear_shortlist(econn, r2["id"])
+ok &= check("clear_shortlist empties cache + age None",
+            list_shortlist(econn, r2["id"]) == []
+            and shortlist_cache_age_seconds(econn, r2["id"]) is None)
+
+# 26. credits: purchase, replay protection, balance, unlock spend
+ok &= check("balance starts at 0", credit_balance(econn, emp_id) == 0)
+ok &= check("add_credits purchase", add_credits(econn, emp_id, 5, "purchase", "ref_1") is True)
+ok &= check("balance reflects purchase", credit_balance(econn, emp_id) == 5)
+ok &= check("webhook replay (same reference) never double-credits",
+            add_credits(econn, emp_id, 5, "purchase", "ref_1") is False
+            and credit_balance(econn, emp_id) == 5)
+ok &= check("unlock spends one credit",
+            create_unlock(econn, r2["id"], emp_id, "cand-1", "hm-1") == "ok"
+            and credit_balance(econn, emp_id) == 4
+            and is_unlocked(econn, r2["id"], "cand-1") is True)
+ok &= check("unlock is idempotent per (role, candidate) — no double spend",
+            create_unlock(econn, r2["id"], emp_id, "cand-1", "hm-1") == "exists"
+            and credit_balance(econn, emp_id) == 4)
+econn.execute("INSERT INTO employer_credit_ledger (employer_id, delta, reason) "
+              "VALUES (?, -4, 'admin_grant')", (emp_id,))
+econn.commit()
+ok &= check("unlock with zero balance refused",
+            create_unlock(econn, r2["id"], emp_id, "cand-3", "hm-1") == "no_credits"
+            and is_unlocked(econn, r2["id"], "cand-3") is False)
+
+# 27. clear_user: candidate side wipes invites/shortlists/unlocks
+replace_shortlist(econn, r2["id"], [{"candidate_user_id": "cand-1", "fit_score": 88,
+                                     "reason": "strong"}])
+clear_user(econn, "cand-1")
+ok &= check("clear_user wipes candidate's invites",
+            list_candidate_invites(econn, "cand-1") == []
+            and econn.execute("SELECT COUNT(*) FROM interview_invites "
+                              "WHERE candidate_user_id='cand-1'").fetchone()[0] == 0)
+ok &= check("clear_user wipes candidate's shortlist rows",
+            econn.execute("SELECT COUNT(*) FROM role_shortlists "
+                          "WHERE candidate_user_id='cand-1'").fetchone()[0] == 0)
+ok &= check("clear_user wipes candidate's unlock rows",
+            is_unlocked(econn, r2["id"], "cand-1") is False)
+ok &= check("clear_user leaves other candidates' invites intact",
+            get_invite(econn, inv6) is not None)
+
+# 28. clear_user: employer side closes open roles, drops membership, keeps employers row
+emp2 = create_employer(econn, "Halo Ltd", "halo.com", "hm-2")
+r4 = create_role(econn, emp2, "hm-2", {"title": "VA", "description": "Assist"})
+clear_user(econn, "hm-2")
+ok &= check("clear_user closes the employer's open roles",
+            get_role(econn, r4["id"])["status"] == "closed")
+ok &= check("clear_user drops employer_users membership",
+            get_employer_for_user(econn, "hm-2") is None)
+ok &= check("employers row survives for audit",
+            get_employer(econn, emp2) is not None)
+
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

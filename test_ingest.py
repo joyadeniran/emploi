@@ -521,5 +521,128 @@ with tempfile.TemporaryDirectory() as tmpdir:
     ok &= check("preference gate: remote jobs still matched for that user",
                 len(u3_titles) > 0 and all(t != "Onsite Office Manager" for t in u3_titles))
 
+# =====================================================================
+# Phase 2 — core.extract_job_from_url (employer paste-a-URL)
+# =====================================================================
+from core import extract_job_from_url
+
+# Single-job API responses per ATS (single objects, not lists).
+GH_SINGLE = {"id": 4000, "title": "Platform Engineer",
+             "content": "&lt;p&gt;Build infra. Remote friendly.&lt;/p&gt;",
+             "location": {"name": "Remote"},
+             "absolute_url": "https://boards.greenhouse.io/testco/jobs/4000",
+             "departments": [{"name": "Infrastructure"}]}
+LEVER_SINGLE = {"id": "ab-1", "text": "Payments Engineer",
+                "descriptionPlain": "Build payment rails. Remote.",
+                "hostedUrl": "https://jobs.lever.co/stripe/ab-1",
+                "workplaceType": "remote",
+                "categories": {"location": "Remote", "team": "Payments"}}
+ASHBY_SINGLE = {"id": "az-9", "title": "AI Engineer",
+                "descriptionHtml": "<p>Ship models. Remote worldwide.</p>",
+                "location": "Remote",
+                "jobUrl": "https://jobs.ashbyhq.com/ashbyco/az-9",
+                "department": "AI"}
+WORKABLE_SINGLE = {"id": "wk-9", "shortcode": "WK009", "title": "Design Lead",
+                   "state": "published", "department": "Design",
+                   "description": "<p>Lead design. Lagos office.</p>",
+                   "url": "https://apply.workable.com/testwk/j/WK009",
+                   "location": {"location_str": "Lagos, Nigeria",
+                                "workplace_type": "on_site"}}
+SR_SINGLE = {"id": "sr-9", "name": "Support Engineer",
+             "location": {"fullLocation": "Remote", "remote": True},
+             "department": {"label": "Support"},
+             "postingUrl": "https://jobs.smartrecruiters.com/testsr/sr-9",
+             "jobAd": {"sections": {"jobDescription": {
+                 "text": "<p>Help customers with the API.</p>"}}}}
+
+url_calls = []
+
+
+def fake_single_fetch(url: str):
+    url_calls.append(url)
+    if url.startswith("https://boards-api.greenhouse.io/v1/boards/testco/jobs/4000"):
+        return GH_SINGLE
+    if url.startswith("https://api.lever.co/v0/postings/stripe/ab-1"):
+        return LEVER_SINGLE
+    if url.startswith("https://api.ashbyhq.com/posting-public/apiPostings/ashbyco/az-9"):
+        return ASHBY_SINGLE
+    if url.startswith("https://apply.workable.com/api/v3/accounts/testwk/jobs/WK009"):
+        return WORKABLE_SINGLE
+    if url.startswith("https://api.smartrecruiters.com/v1/companies/testsr/postings/sr-9"):
+        return SR_SINGLE
+    return None
+
+
+j = extract_job_from_url("https://boards.greenhouse.io/testco/jobs/4000",
+                         fetch_fn=fake_single_fetch)
+ok &= check("url-extract greenhouse: title + entity-soup description stripped",
+            j["title"] == "Platform Engineer" and "Build infra" in j["description"]
+            and "<p>" not in j["description"] and "&lt;" not in j["description"])
+ok &= check("url-extract greenhouse: source_ats + source_url recorded",
+            j["source_ats"] == "greenhouse"
+            and j["source_url"] == "https://boards.greenhouse.io/testco/jobs/4000")
+ok &= check("url-extract greenhouse: company_domain derived", j["company_domain"] == "testco.com")
+
+j = extract_job_from_url("https://job-boards.greenhouse.io/testco/jobs/4000",
+                         fetch_fn=fake_single_fetch)
+ok &= check("url-extract greenhouse job-boards variant recognized",
+            j is not None and j["title"] == "Platform Engineer")
+
+j = extract_job_from_url("https://jobs.lever.co/stripe/ab-1", fetch_fn=fake_single_fetch)
+ok &= check("url-extract lever: normalized with remote flag",
+            j["title"] == "Payments Engineer" and j["is_remote"] and j["source_ats"] == "lever")
+
+j = extract_job_from_url("https://jobs.ashbyhq.com/ashbyco/az-9", fetch_fn=fake_single_fetch)
+ok &= check("url-extract ashby: bare-object response normalized",
+            j["title"] == "AI Engineer" and j["source_ats"] == "ashby")
+
+wrapped_calls = []
+j = extract_job_from_url(
+    "https://jobs.ashbyhq.com/ashbyco/az-9",
+    fetch_fn=lambda u: {"jobs": [ASHBY_SINGLE]})
+ok &= check("url-extract ashby: {jobs:[...]} wrapper also supported",
+            j is not None and j["title"] == "AI Engineer")
+
+j = extract_job_from_url("https://apply.workable.com/testwk/j/WK009",
+                         fetch_fn=fake_single_fetch)
+ok &= check("url-extract workable: on-site Lagos job normalized",
+            j["title"] == "Design Lead" and not j["is_remote"]
+            and j["source_ats"] == "workable")
+j = extract_job_from_url(
+    "https://apply.workable.com/testwk/j/WK009",
+    fetch_fn=lambda u: {**WORKABLE_SINGLE, "state": "draft"})
+ok &= check("url-extract workable: unpublished job -> None", j is None)
+
+j = extract_job_from_url("https://jobs.smartrecruiters.com/testsr/sr-9",
+                         fetch_fn=fake_single_fetch)
+ok &= check("url-extract smartrecruiters: JD text + remote flag",
+            j["title"] == "Support Engineer" and j["is_remote"]
+            and "Help customers" in j["description"])
+
+# Rejection list — LinkedIn/Indeed/Workday/Taleo are refused with guidance.
+for bad_url, host in (
+        ("https://www.linkedin.com/jobs/view/123", "linkedin.com"),
+        ("https://indeed.com/viewjob?jk=abc", "indeed.com"),
+        ("https://acme.wd1.myworkdayjobs.com/en-US/careers/job/123", "myworkdayjobs.com"),
+        ("https://acme.taleo.net/careersection/job/456", "taleo.net")):
+    r = extract_job_from_url(bad_url, fetch_fn=fake_single_fetch)
+    ok &= check(f"url-extract rejects {host} with unsupported_host guidance",
+                isinstance(r, dict) and r.get("error") == "unsupported_host"
+                and "paste the JD text" in r.get("detail", ""))
+
+ok &= check("url-extract unknown host -> None (caller falls back to text)",
+            extract_job_from_url("https://careers.acme.com/jobs/1",
+                                 fetch_fn=fake_single_fetch) is None)
+ok &= check("url-extract malformed path on known host -> None",
+            extract_job_from_url("https://boards.greenhouse.io/testco",
+                                 fetch_fn=fake_single_fetch) is None)
+ok &= check("url-extract fetch failure -> None (never raises)",
+            extract_job_from_url("https://jobs.lever.co/nope/xy-1",
+                                 fetch_fn=lambda u: None) is None)
+ok &= check("url-extract empty/garbage input -> None",
+            extract_job_from_url("", fetch_fn=fake_single_fetch) is None
+            and extract_job_from_url("not a url at all !!!",
+                                     fetch_fn=fake_single_fetch) is None)
+
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

@@ -156,6 +156,134 @@ def _salary_from_greenhouse(job: dict) -> Optional[str]:
     return None
 
 
+# ---- Per-ATS normalization (shared) ------------------------------------------
+# One normalizer per ATS turning ONE raw job/posting object into the
+# db.upsert_job fields dict. Used by both the ingest loops below AND
+# core.extract_job_from_url (employer paste-a-URL role extraction) — the
+# spec's "do not duplicate" rule for ATS normalization lives here.
+
+def normalize_greenhouse_job(job: dict, company_name: str) -> dict:
+    location = (job.get("location") or {}).get("name", "")
+    dept = ""
+    if job.get("departments"):
+        dept = job["departments"][0].get("name", "")
+    return {
+        "title": job.get("title", ""),
+        "company_name": company_name,
+        "description": _strip_html(job.get("content", "")),
+        "location": location,
+        "is_remote": _is_remote(location) or _is_remote(job.get("content", "")),
+        "salary_text": _salary_from_greenhouse(job),
+        "apply_url": job.get("absolute_url", ""),
+        "category": dept,
+        "company_domain": _derive_company_domain(company_name),
+    }
+
+
+def normalize_lever_posting(posting: dict, company_name: str) -> dict:
+    cats = posting.get("categories") or {}
+    location = cats.get("location", "")
+    team = cats.get("team", "") or cats.get("department", "")
+    workplace = posting.get("workplaceType", "")
+    description = _strip_html(posting.get("descriptionPlain", "")
+                              or posting.get("description", ""))
+    return {
+        "title": posting.get("text", ""),
+        "company_name": company_name,
+        "description": description,
+        "location": location,
+        "is_remote": (workplace.lower() == "remote"
+                      or _is_remote(location)
+                      or _is_remote(description)),
+        "salary_text": None,
+        "apply_url": posting.get("hostedUrl", ""),
+        "category": team,
+        "company_domain": _derive_company_domain(company_name),
+    }
+
+
+def normalize_ashby_posting(posting: dict, company_name: str) -> dict:
+    location = str(posting.get("location") or posting.get("locationName") or "")
+    description = _strip_html(str(posting.get("descriptionHtml")
+                                  or posting.get("descriptionPlain")
+                                  or posting.get("description") or ""))
+    return {"title": posting.get("title", ""),
+            "company_name": company_name,
+            "description": description, "location": location,
+            "is_remote": _is_remote(location) or _is_remote(description),
+            "salary_text": None,
+            "apply_url": posting.get("jobUrl") or posting.get("applyUrl") or "",
+            "category": posting.get("department") or posting.get("team") or "",
+            "company_domain": _derive_company_domain(company_name)}
+
+
+def normalize_workable_job(job: dict, company_name: str) -> Optional[dict]:
+    """Returns None for non-published jobs (missing state = published)."""
+    state = job.get("state")
+    if state and str(state).lower() != "published":
+        return None
+    loc = job.get("location") if isinstance(job.get("location"), dict) else {}
+    location_str = str(
+        loc.get("location_str")
+        or ", ".join(x for x in [loc.get("city"), loc.get("region"),
+                                 loc.get("country")] if x)
+        or "")
+    workplace = str(loc.get("workplace_type") or "")
+    remote = (workplace.lower() == "remote"
+              or bool(loc.get("telecommuting"))
+              or _is_remote(location_str))
+    apply_url = (job.get("application_url")
+                 or job.get("url")
+                 or job.get("shortlink") or "")
+    return {
+        "title": job.get("title", ""),
+        "company_name": company_name,
+        "description": _strip_html(str(job.get("description")
+                                       or job.get("title") or "")),
+        "location": location_str,
+        "is_remote": remote,
+        "salary_text": None,
+        "apply_url": apply_url,
+        "category": job.get("department") or "",
+        "company_domain": _derive_company_domain(company_name),
+    }
+
+
+def normalize_smartrecruiters_posting(posting: dict, company_name: str) -> dict:
+    loc = posting.get("location") if isinstance(posting.get("location"), dict) else {}
+    location_str = str(
+        loc.get("fullLocation")
+        or ", ".join(x for x in [loc.get("city"), loc.get("region"),
+                                 loc.get("country")] if x)
+        or "")
+    remote_flag = bool(loc.get("remote"))
+    dept = ""
+    dept_obj = posting.get("department")
+    if isinstance(dept_obj, dict):
+        dept = dept_obj.get("label", "") or ""
+    apply_url = posting.get("postingUrl") or posting.get("applyUrl") or ""
+    description_text = ""
+    job_ad = posting.get("jobAd")
+    if isinstance(job_ad, dict):
+        sections = job_ad.get("sections")
+        if isinstance(sections, dict):
+            desc = sections.get("jobDescription")
+            if isinstance(desc, dict):
+                description_text = desc.get("text", "") or ""
+    return {
+        "title": posting.get("name", ""),
+        "company_name": company_name,
+        "description": _strip_html(description_text
+                                   or posting.get("name", "")),
+        "location": location_str,
+        "is_remote": remote_flag or _is_remote(location_str),
+        "salary_text": None,
+        "apply_url": apply_url,
+        "category": dept,
+        "company_domain": _derive_company_domain(company_name),
+    }
+
+
 # ---- Per-ATS ingestion ------------------------------------------------------
 
 def _ingest_greenhouse(source: dict, conn, dry_run: bool):
@@ -173,23 +301,8 @@ def _ingest_greenhouse(source: dict, conn, dry_run: bool):
     written = 0
     for job in jobs:
         job_id = str(job.get("id") or _stable_id(token, job.get("title", "")))
-        location = (job.get("location") or {}).get("name", "")
-        dept = ""
-        if job.get("departments"):
-            dept = job["departments"][0].get("name", "")
-
         company_name = source.get("company", token.replace("-", " ").title())
-        fields = {
-            "title": job.get("title", ""),
-            "company_name": company_name,
-            "description": _strip_html(job.get("content", "")),
-            "location": location,
-            "is_remote": _is_remote(location) or _is_remote(job.get("content", "")),
-            "salary_text": _salary_from_greenhouse(job),
-            "apply_url": job.get("absolute_url", ""),
-            "category": dept,
-            "company_domain": _derive_company_domain(company_name),
-        }
+        fields = normalize_greenhouse_job(job, company_name)
 
         source_key = f"greenhouse/{token}"
         if dry_run:
@@ -217,27 +330,8 @@ def _ingest_lever(source: dict, conn, dry_run: bool):
     for posting in postings:
         job_id = posting.get("id") or _stable_id(
             slug, posting.get("text", ""), str(posting.get("createdAt", "")))
-        cats = posting.get("categories") or {}
-        location = cats.get("location", "")
-        team = cats.get("team", "") or cats.get("department", "")
-        workplace = posting.get("workplaceType", "")
-        description = _strip_html(posting.get("descriptionPlain", "")
-                                  or posting.get("description", ""))
-
         company_name = source.get("company", slug.replace("-", " ").title())
-        fields = {
-            "title": posting.get("text", ""),
-            "company_name": company_name,
-            "description": description,
-            "location": location,
-            "is_remote": (workplace.lower() == "remote"
-                          or _is_remote(location)
-                          or _is_remote(description)),
-            "salary_text": None,
-            "apply_url": posting.get("hostedUrl", ""),
-            "category": team,
-            "company_domain": _derive_company_domain(company_name),
-        }
+        fields = normalize_lever_posting(posting, company_name)
 
         source_key = f"lever/{slug}"
         if dry_run:
@@ -262,17 +356,8 @@ def _ingest_ashby(source: dict, conn, dry_run: bool):
         if not isinstance(posting, dict):
             continue
         job_id = str(posting.get("id") or posting.get("jobUrl") or _stable_id(token, posting.get("title", "")))
-        location = str(posting.get("location") or posting.get("locationName") or "")
-        description = _strip_html(str(posting.get("descriptionHtml") or posting.get("descriptionPlain") or posting.get("description") or ""))
         company_name = source.get("company", token.replace("-", " ").title())
-        fields = {"title": posting.get("title", ""),
-                  "company_name": company_name,
-                  "description": description, "location": location,
-                  "is_remote": _is_remote(location) or _is_remote(description),
-                  "salary_text": None,
-                  "apply_url": posting.get("jobUrl") or posting.get("applyUrl") or "",
-                  "category": posting.get("department") or posting.get("team") or "",
-                  "company_domain": _derive_company_domain(company_name)}
+        fields = normalize_ashby_posting(posting, company_name)
         source_key = f"ashby/{token}"
         if dry_run:
             print(f"  [dry-run] {source_key} job {job_id}: {fields['title']}")
@@ -302,39 +387,14 @@ def _ingest_workable(source: dict, conn, dry_run: bool):
             continue
         # Only ingest published jobs; a missing state field is treated as published
         # (some tenants omit the field entirely) — a state that IS present must be "published".
-        state = job.get("state")
-        if state and str(state).lower() != "published":
+        company_name = source.get("company",
+                                   subdomain.replace("-", " ").title())
+        fields = normalize_workable_job(job, company_name)
+        if fields is None:
             continue
         shortcode = job.get("shortcode") or job.get("id") or ""
         job_id = str(job.get("id") or shortcode
                      or _stable_id(subdomain, job.get("title", "")))
-        loc = job.get("location") if isinstance(job.get("location"), dict) else {}
-        location_str = str(
-            loc.get("location_str")
-            or ", ".join(x for x in [loc.get("city"), loc.get("region"),
-                                     loc.get("country")] if x)
-            or "")
-        workplace = str(loc.get("workplace_type") or "")
-        remote = (workplace.lower() == "remote"
-                  or bool(loc.get("telecommuting"))
-                  or _is_remote(location_str))
-        apply_url = (job.get("application_url")
-                     or job.get("url")
-                     or job.get("shortlink") or "")
-        company_name = source.get("company",
-                                   subdomain.replace("-", " ").title())
-        fields = {
-            "title": job.get("title", ""),
-            "company_name": company_name,
-            "description": _strip_html(str(job.get("description")
-                                           or job.get("title") or "")),
-            "location": location_str,
-            "is_remote": remote,
-            "salary_text": None,
-            "apply_url": apply_url,
-            "category": job.get("department") or "",
-            "company_domain": _derive_company_domain(company_name),
-        }
         source_key = f"workable/{subdomain}"
         if dry_run:
             print(f"  [dry-run] {source_key} job {job_id}: {fields['title']}")
@@ -363,40 +423,9 @@ def _ingest_smartrecruiters(source: dict, conn, dry_run: bool):
             continue
         posting_id = str(posting.get("id") or posting.get("uuid")
                          or _stable_id(identifier, posting.get("name", "")))
-        loc = posting.get("location") if isinstance(posting.get("location"), dict) else {}
-        location_str = str(
-            loc.get("fullLocation")
-            or ", ".join(x for x in [loc.get("city"), loc.get("region"),
-                                     loc.get("country")] if x)
-            or "")
-        remote_flag = bool(loc.get("remote"))
-        dept = ""
-        dept_obj = posting.get("department")
-        if isinstance(dept_obj, dict):
-            dept = dept_obj.get("label", "") or ""
-        apply_url = posting.get("postingUrl") or posting.get("applyUrl") or ""
-        description_text = ""
-        job_ad = posting.get("jobAd")
-        if isinstance(job_ad, dict):
-            sections = job_ad.get("sections")
-            if isinstance(sections, dict):
-                desc = sections.get("jobDescription")
-                if isinstance(desc, dict):
-                    description_text = desc.get("text", "") or ""
         company_name = source.get("company",
                                    identifier.replace("-", " ").title())
-        fields = {
-            "title": posting.get("name", ""),
-            "company_name": company_name,
-            "description": _strip_html(description_text
-                                       or posting.get("name", "")),
-            "location": location_str,
-            "is_remote": remote_flag or _is_remote(location_str),
-            "salary_text": None,
-            "apply_url": apply_url,
-            "category": dept,
-            "company_domain": _derive_company_domain(company_name),
-        }
+        fields = normalize_smartrecruiters_posting(posting, company_name)
         source_key = f"smartrecruiters/{identifier}"
         if dry_run:
             print(f"  [dry-run] {source_key} job {posting_id}: {fields['title']}")

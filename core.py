@@ -720,6 +720,295 @@ def generate_cv(model, profile: dict, job_text: str, company: str = "") -> str:
     return model.generate_content(build_cv_prompt(profile, job_text, company)).text
 
 
+# ---------------- Employer Portal (Phase 2) ----------------
+# Decisions locked with Joy 2026-07-16: role #1 free (accept-gated contact,
+# 10-invite cap); roles 2+ unlock-gated (₦1,000/candidate, packs of min 5).
+
+INVITE_CAP_FREE_ROLE = 10
+UNLOCK_PRICE_NGN = 1000
+MIN_UNLOCK_PACK = 5
+
+_ATS_URL_PATTERNS = [
+    # (host suffix, path regex, ats name, api url template)
+    ("boards.greenhouse.io", r"^/([^/]+)/jobs/(\d+)", "greenhouse",
+     "https://boards-api.greenhouse.io/v1/boards/{0}/jobs/{1}"),
+    ("job-boards.greenhouse.io", r"^/([^/]+)/jobs/(\d+)", "greenhouse",
+     "https://boards-api.greenhouse.io/v1/boards/{0}/jobs/{1}"),
+    ("job-boards.eu.greenhouse.io", r"^/([^/]+)/jobs/(\d+)", "greenhouse",
+     "https://boards-api.eu.greenhouse.io/v1/boards/{0}/jobs/{1}"),
+    ("jobs.lever.co", r"^/([^/]+)/([0-9a-f-]+)", "lever",
+     "https://api.lever.co/v0/postings/{0}/{1}?mode=json"),
+    ("jobs.ashbyhq.com", r"^/([^/]+)/([^/?#]+)", "ashby",
+     "https://api.ashbyhq.com/posting-public/apiPostings/{0}/{1}"),
+    ("apply.workable.com", r"^/([^/]+)/j/([^/?#]+)", "workable",
+     "https://apply.workable.com/api/v3/accounts/{0}/jobs/{1}"),
+    ("jobs.smartrecruiters.com", r"^/([^/]+)/([^/?#]+)", "smartrecruiters",
+     "https://api.smartrecruiters.com/v1/companies/{0}/postings/{1}"),
+]
+
+# Hosts we explicitly refuse to scrape — legal/ToS decision, not a gap to fix.
+_REJECTED_HOSTS = ("linkedin.com", "indeed.com", "workday.com",
+                   "myworkdayjobs.com", "taleo.net")
+
+_UNSUPPORTED_HOST_DETAIL = (
+    "{host} doesn't allow us to read their job pages. Two options: "
+    "(1) paste the JD text directly, or (2) on the {host} page, click "
+    "'Apply on Company Site' — if that link goes to Greenhouse/Lever/Ashby/"
+    "Workable/SmartRecruiters, paste THAT URL instead.")
+
+
+def extract_job_from_url(url: str, fetch_fn=None):
+    """Employer paste-a-URL role extraction. Dispatches on hostname to the
+    supported ATS single-job public APIs and normalizes via the shared
+    workers.ingest_jobs normalizers (never duplicated).
+
+    Returns: a db.upsert_job-shaped dict on success; None for an unknown
+    host or a fetch/parse failure; {"error": "unsupported_host", "detail"}
+    for hosts we deliberately refuse (LinkedIn/Indeed/Workday/Taleo)."""
+    from urllib.parse import urlparse
+    from workers.ingest_jobs import (_fetch, normalize_greenhouse_job,
+                                     normalize_lever_posting,
+                                     normalize_ashby_posting,
+                                     normalize_workable_job,
+                                     normalize_smartrecruiters_posting)
+    fetch_fn = fetch_fn or _fetch
+    try:
+        parsed = urlparse(url if "://" in (url or "") else f"https://{url or ''}")
+        host = (parsed.hostname or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+    except Exception:
+        return None
+    if not host:
+        return None
+
+    for rejected in _REJECTED_HOSTS:
+        if host == rejected or host.endswith("." + rejected):
+            return {"error": "unsupported_host",
+                    "detail": _UNSUPPORTED_HOST_DETAIL.format(host=rejected)}
+
+    for suffix, path_re, ats, api_template in _ATS_URL_PATTERNS:
+        if host != suffix:
+            continue
+        m = re.match(path_re, parsed.path or "")
+        if not m:
+            return None
+        token, job_ref = m.group(1), m.group(2)
+        data = fetch_fn(api_template.format(token, job_ref))
+        if data is None:
+            return None
+        company_name = token.replace("-", " ").title()
+        try:
+            if ats == "greenhouse":
+                fields = normalize_greenhouse_job(data, company_name)
+            elif ats == "lever":
+                fields = normalize_lever_posting(data, company_name)
+            elif ats == "ashby":
+                # Single-posting endpoint has varied between a bare object
+                # and {jobs: [...]} — support both.
+                posting = data
+                if isinstance(data, dict) and isinstance(data.get("jobs"), list):
+                    posting = data["jobs"][0] if data["jobs"] else None
+                if not isinstance(posting, dict):
+                    return None
+                fields = normalize_ashby_posting(posting, company_name)
+            elif ats == "workable":
+                fields = normalize_workable_job(data, company_name)
+                if fields is None:
+                    return None  # unpublished job
+            else:
+                fields = normalize_smartrecruiters_posting(data, company_name)
+        except Exception:
+            return None
+        if not (fields.get("title") or "").strip():
+            return None
+        fields["source_ats"] = ats
+        fields["source_url"] = url
+        return fields
+    return None
+
+
+def extract_single_job(model, text: str):
+    """Gemini-backed extraction of ONE job from pasted JD text. Wraps the
+    extract_jobs primitive; defensive parsing throughout — returns None for
+    garbage input, never raises. is_remote is a regex heuristic over the
+    extracted text (shared with the ingest worker)."""
+    if not (text or "").strip():
+        return None
+    try:
+        jobs = extract_jobs(model, text)
+    except Exception:
+        return None
+    if not jobs:
+        return None
+    job = jobs[0]
+    from workers.ingest_jobs import _is_remote
+    combined = f"{job.get('title', '')} {job.get('description', '')}"
+    return {
+        "title": job.get("title", ""),
+        "company_name": job.get("company", ""),
+        "description": job.get("description", ""),
+        "location": "",
+        "is_remote": _is_remote(combined),
+        "salary_text": None,
+        "contact": job.get("contact", ""),
+        "source_ats": "raw",
+    }
+
+
+def build_role_shortlist_prompt(role: dict, candidates: list,
+                                refinement_note: str = "") -> str:
+    """Role-anchored ranking prompt: one role, many Career Twin summaries.
+    Mirrors build_match_prompt's JSON-array contract (fit_score 0-100 per the
+    evaluation rubric)."""
+    listing = "\n\n".join(
+        f"[{i}] {_profile_block(c.get('twin', c))}"
+        for i, c in enumerate(candidates))
+    note = ""
+    if (refinement_note or "").strip():
+        note = ("\nThe employer reviewed a previous shortlist and asked for "
+                f"this refinement — weight it heavily:\n{refinement_note.strip()}\n")
+    return f"""You are a recruiter. Score how well EACH candidate below fits this ONE role,
+using this rubric (fit_score = the weighted average it defines):
+{load_skill('evaluation')}
+
+The role:
+Title: {role.get('title', '')}
+Location: {role.get('location') or 'Unspecified'}{' (remote)' if role.get('is_remote') else ''}
+Description: {str(role.get('description', ''))[:4000]}
+{note}
+Candidates:
+{listing}
+
+Return ONLY a JSON array, one item per candidate:
+[{{"index": 0, "fit_score": 0-100, "reason": "one short sentence naming the biggest strength AND biggest gap"}}]"""
+
+
+def rank_candidates_for_role(model, role: dict, candidates: list,
+                             refinement_note: str = "") -> list:
+    """Score opted-in candidates against one role in a single model call.
+    candidates: [{user_id, twin}]. Returns [{candidate_user_id, fit_score,
+    reason}] ranked best-first; unscored candidates sort last."""
+    if not candidates:
+        return []
+    scores = {int(s["index"]): s for s in parse_json_array(
+        model.generate_content(
+            build_role_shortlist_prompt(role, candidates, refinement_note)).text)
+        if isinstance(s, dict) and "index" in s}
+    ranked = []
+    for i, c in enumerate(candidates):
+        s = scores.get(i, {})
+        fit = s.get("fit_score")
+        ranked.append({"candidate_user_id": c.get("user_id"),
+                       "fit_score": int(fit) if isinstance(fit, (int, float)) else None,
+                       "reason": str(s.get("reason", "") or "")})
+    ranked.sort(key=lambda r: (r["fit_score"] is None, -(r["fit_score"] or 0)))
+    return ranked
+
+
+def invite_gate(is_free_role: bool, invites_sent: int,
+                candidate_unlocked: bool) -> tuple:
+    """Deterministic rule for whether an employer may send one more invite.
+    Free role: hard cap of INVITE_CAP_FREE_ROLE invites, no unlock needed.
+    Paid role: the candidate must have been unlocked (1 credit). Returns
+    (allowed: bool, reason: str)."""
+    if is_free_role:
+        if invites_sent >= INVITE_CAP_FREE_ROLE:
+            return (False,
+                    f"Your free role includes {INVITE_CAP_FREE_ROLE} invites and "
+                    f"you've used them all. This is a reasonable-use limit — "
+                    "contact hello@emploihq.com if you need more.")
+        return (True, "")
+    if not candidate_unlocked:
+        return (False,
+                "Unlock this candidate first — on paid roles each invite uses "
+                f"one unlock credit (₦{UNLOCK_PRICE_NGN:,} per candidate, "
+                f"packs start at {MIN_UNLOCK_PACK}).")
+    return (True, "")
+
+
+_NOTE_SANITIZE_RE = re.compile(r"[\r\t]|\n{2,}")
+
+
+def format_invite_email(invite: dict, role: dict, employer: dict,
+                        candidate: dict) -> tuple:
+    """(subject, body) for the invite notification. Plain text (Brevo
+    textContent). The employer-written note is user-generated content:
+    control characters are stripped and every line is quoted so it can't
+    impersonate Emploi copy."""
+    company = employer.get("company_name", "an employer")
+    title = role.get("title", "a role")
+    location = ("Remote" if role.get("is_remote")
+                else (role.get("location") or "Location unspecified"))
+    trust_level = (employer.get("trust_level") or "").lower()
+    vouched = bool(employer.get("warm_intro_by"))
+    if vouched or trust_level == "high":
+        trust_line = "Verified employer ✅"
+    elif trust_level == "medium":
+        trust_line = "Employer trust: medium"
+    elif trust_level == "low":
+        trust_line = ("Employer trust: LOW — verify this employer before "
+                      "responding, and never pay a fee or share bank/ID details.")
+    else:
+        trust_line = "Employer trust: not yet verified"
+    subject = f"Interview invite: {title} at {company}"
+    lines = [
+        f"Hi {candidate.get('name') or 'there'},",
+        "",
+        f"{company} looked at your Career Twin and wants to interview you for:",
+        f"  {title} — {location}",
+        f"  {trust_line}",
+    ]
+    note = str(invite.get("invite_note") or "").strip()
+    if note:
+        note = _NOTE_SANITIZE_RE.sub(" ", note)[:500]
+        lines += ["", "Their message:"]
+        lines += [f"> {line}" for line in note.split("\n") if line.strip()]
+    lines += [
+        "",
+        f"Review and respond here: https://app.emploihq.com/invites/{invite.get('id', '')}",
+        "",
+        "This invite expires in 14 days. You're in control — your contact "
+        "details are only shared per your visibility settings.",
+        "",
+        "— Emploi",
+    ]
+    return subject, "\n".join(lines)
+
+
+_CONTACT_VIEW_FIELDS = ("name", "email", "phone", "headline", "location")
+_CONTACT_VIEW_LISTS = ("skills", "experience", "education", "career_goals")
+
+
+def format_employer_contact_view(candidate_twin: dict) -> dict:
+    """The structured Twin view an employer gets AFTER contact is unlocked
+    (accept on the free role; paid unlock on paid roles). Explicitly excludes
+    the raw CV, chat history, and any application history — Emploi is the
+    curation layer, not a résumé passthrough. Missing scalars render as ""
+    (never None); list fields as []."""
+    twin = candidate_twin if isinstance(candidate_twin, dict) else {}
+    out = {}
+    for key in _CONTACT_VIEW_FIELDS:
+        value = twin.get(key)
+        if key == "headline" and not value:
+            value = twin.get("title") or twin.get("current_role")
+        out[key] = str(value).strip() if value else ""
+    for key in _CONTACT_VIEW_LISTS:
+        value = twin.get(key)
+        if key == "career_goals" and not value:
+            value = twin.get("goals")
+        if isinstance(value, str):
+            value = [value] if value.strip() else []
+        if not isinstance(value, list):
+            value = []
+        out[key] = [
+            (str(v.get("summary", "")).strip() if isinstance(v, dict) else str(v).strip())
+            for v in value
+            if (str(v.get("summary", "")).strip() if isinstance(v, dict) else str(v).strip())
+        ]
+    return out
+
+
 # ---------------- Exports ----------------
 
 def _pdf_safe(s: str) -> str:

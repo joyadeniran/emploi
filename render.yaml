@@ -150,6 +150,24 @@ services:
       - key: EMPLOI_API_KEY
         sync: false
 
+  # Worker 6 — expire pending interview invites past their 14-day window
+  # (before notify, so digests never advertise an already-dead invite).
+  - type: cron
+    name: emploi-expire-invites
+    runtime: python
+    plan: starter
+    schedule: "15 2 * * *"
+    buildCommand: "true"
+    startCommand: >-
+      curl -sf --max-time 60 -X POST
+      -H "X-API-Key: $EMPLOI_API_KEY"
+      "$EMPLOI_API_URL/admin/run/expire-invites"
+    envVars:
+      - key: EMPLOI_API_URL
+        value: https://emploi-api.onrender.com
+      - key: EMPLOI_API_KEY
+        sync: false
+
   # Worker 5 — nightly SQLite backup to Cloudflare R2 (after ingest/verify/match).
   - type: cron
     name: emploi-backup

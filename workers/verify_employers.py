@@ -57,9 +57,18 @@ def run(db_path: str, dry_run: bool = False, max_domains: int = 200,
         "WHERE company_domain IS NOT NULL "
         "   OR (apply_url IS NOT NULL AND apply_url != '') "
         "LIMIT ?", (max_domains,)).fetchall()
+    # Phase 2: registered Employer Portal accounts get the same freshness
+    # refresh on their own domain. Vouched employers (warm_intro_by set) are
+    # skipped — Joy vouches for them personally. Keep the ATS filter
+    # defensively even though employers should never carry an ATS host.
+    employer_rows = conn.execute(
+        "SELECT DISTINCT company_domain, company_name FROM employers "
+        "WHERE company_domain IS NOT NULL AND warm_intro_by IS NULL").fetchall()
     targets = []
     seen = set()
-    for row in rows:
+    for row in list(rows) + [
+            {"company_domain": r["company_domain"], "apply_url": "",
+             "company_name": r["company_name"]} for r in employer_rows]:
         domain = (row["company_domain"] or "").lower().strip() or None
         if not domain:
             domain = _domain(row["apply_url"])
@@ -80,6 +89,16 @@ def run(db_path: str, dry_run: bool = False, max_domains: int = 200,
             result = verify.verify_employer(company, domain, model=model, dns_fn=dns_fn,
                                              mx_fn=mx_fn, fetch_fn=fetch_fn, cache={})
             db.upsert_trust_record(conn, domain, company, result)
+            # Registered employer accounts on this domain get the refreshed
+            # score written back (portal-level mapping), unless vouched.
+            for emp in conn.execute(
+                    "SELECT id FROM employers WHERE company_domain = ? "
+                    "AND warm_intro_by IS NULL", (domain,)).fetchall():
+                level = verify.employer_portal_level(
+                    result.get("score"),
+                    (result.get("signals") or {}).get("red_flags"),
+                    result.get("signals"))
+                db.set_employer_trust(conn, emp["id"], result.get("score"), level)
             verified += 1
         except Exception as exc:
             errors.append(f"{domain}: {exc}")
