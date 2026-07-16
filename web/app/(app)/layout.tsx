@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import { auth, signOut } from "@/auth";
 import { AppShell } from "@/components/AppShell";
 import ClientRedirectToLogin from "@/components/ClientRedirectToLogin";
@@ -13,7 +12,7 @@ export default async function AppLayout({
     // Server cannot reliably know the original client path here; render a
     // tiny client-side redirect that preserves the current path as
     // `callbackUrl` so sign-in returns the user to their intended page.
-    return <ClientRedirectToLogin /> as unknown as any;
+    return <ClientRedirectToLogin />;
   }
 
   async function signOutAction() {

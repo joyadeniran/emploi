@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { firstName } from "@/lib/data";
 import ClientRedirectToLogin from "@/components/ClientRedirectToLogin";
@@ -10,7 +9,7 @@ export default async function CreateCareerTwinLayout({
 }) {
   const session = await auth();
   if (!session?.user) {
-    return <ClientRedirectToLogin /> as unknown as any;
+    return <ClientRedirectToLogin />;
   }
 
   // Inject the user's first name into a meta tag the client wizard can read
