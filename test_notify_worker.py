@@ -89,6 +89,57 @@ with tempfile.TemporaryDirectory() as d:
  check("recent applied (< 14d) does NOT trigger a nudge",
        all("How did these go?" not in b for b in fresh_bodies))
 
+# ---- Phase 2: interview-invite digests --------------------------------------
+with tempfile.TemporaryDirectory() as d:
+ path=os.path.join(d,"inv.sqlite3"); conn=db.connect(path)
+ emp=db.create_employer(conn,"Acme Corp","acme.com","hm-1")
+ db.update_employer(conn,emp,trust_score=80,trust_level="high")
+ role=db.create_role(conn,emp,"hm-1",{"title":"Data Analyst","description":"d","is_remote":True})
+ # Candidate WITH a fresh invite but NO new matches must still get a digest.
+ db.save_career_twin(conn,"ci",{"name":"Ada"})
+ db.upsert_user(conn,"ci","ada@example.com","Ada")
+ db.create_invite(conn,role["id"],"ci","hm-1",fit_score=88)
+ bodies=[]; subjects=[]
+ r=run(path,send_fn=lambda to,s,b:(subjects.append(s),bodies.append(b)))
+ check("invite-only candidate still gets a digest", r["sent"]==1)
+ check("invite digest subject names the invite",
+       any("interview invite" in s for s in subjects))
+ check("invite digest line has company, role, Remote and trust level",
+       any("Acme Corp — Data Analyst (Remote) — trust high" in b for b in bodies))
+ check("invite digest links /invites", any("app.emploihq.com/invites" in b for b in bodies))
+ # Dedup: the same invite must not ride a second nightly digest.
+ check("invite marked notified after the digest",
+       conn.execute("SELECT notified FROM interview_invites").fetchone()[0]==1)
+ r2=run(path,send_fn=lambda to,s,b: bodies.append(b))
+ check("an invite rides exactly one digest (notified flag)", r2["sent"]==0)
+ # A user with matches AND a fresh invite gets ONE email with both sections.
+ db.save_career_twin(conn,"cm",{"name":"Bola"})
+ db.upsert_user(conn,"cm","bola@example.com","Bola")
+ j=db.upsert_job(conn,"t","1",{"title":"PM","company_name":"Halo"})
+ db.upsert_match(conn,"cm",j,82,"fit")
+ db.create_invite(conn,role["id"],"cm","hm-1")
+ both=[]
+ r3=run(path,send_fn=lambda to,s,b: both.append((to,s,b)))
+ check("matches + invite in one digest",
+       r3["sent"]==1 and "new jobs" in both[0][1]
+       and "interview invites" in both[0][2] and "matches" in both[0][2])
+ # An EXPIRED pending invite never appears in a digest.
+ db.save_career_twin(conn,"ce",{"name":"Chi"})
+ db.upsert_user(conn,"ce","chi@example.com","Chi")
+ inv=db.create_invite(conn,role["id"],"ce","hm-1")
+ conn.execute("UPDATE interview_invites SET expires_at = datetime('now', '-1 days') WHERE id=?",(inv,))
+ conn.commit()
+ r4=run(path,send_fn=lambda to,s,b: None)
+ check("expired invite never advertised in a digest", r4["sent"]==0)
+ # dry-run reports without sending
+ db.save_career_twin(conn,"cd",{"name":"Didi"})
+ db.upsert_user(conn,"cd","didi@example.com","Didi")
+ db.create_invite(conn,role["id"],"cd","hm-1")
+ sent_dry=[]
+ r5=run(path,dry_run=True,send_fn=lambda *a: sent_dry.append(a))
+ check("dry-run counts invite digests but sends nothing",
+       r5["dry_run"] is True and r5["sent"]>=1 and sent_dry==[])
+
 # ---- Brevo sender (mocked HTTP, no real network/API key) -------------------
 with patch("requests.post") as mock_post:
     mock_post.return_value = MagicMock(status_code=201, ok=True)

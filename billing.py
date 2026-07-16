@@ -50,6 +50,33 @@ def initialize_transaction(secret_key: str, email: str, amount_ngn: int,
     return body["data"]
 
 
+def initialize_onetime_transaction(secret_key: str, email: str, amount_ngn: int,
+                                   callback_url: str, metadata: dict,
+                                   post_fn=None) -> dict:
+    """One-time (non-subscription) hosted checkout — used for employer
+    unlock-credit packs. Identical contract to initialize_transaction but
+    sends no plan code, so Paystack charges once and never creates a
+    subscription."""
+    import requests
+    post_fn = post_fn or requests.post
+    resp = post_fn(
+        f"{PAYSTACK_BASE}/transaction/initialize",
+        headers=_headers(secret_key),
+        json={
+            "email": email,
+            "amount": amount_ngn * 100,  # kobo
+            "callback_url": callback_url,
+            "metadata": metadata,
+        },
+        timeout=20,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    if not body.get("status"):
+        raise RuntimeError(f"Paystack initialize failed: {body.get('message', 'unknown error')}")
+    return body["data"]
+
+
 def verify_transaction(secret_key: str, reference: str, get_fn=None) -> dict:
     """Confirm a transaction actually succeeded. Returns Paystack's `data`
     object; raises if the transaction wasn't found or wasn't successful."""

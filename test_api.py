@@ -640,6 +640,16 @@ r = client.post("/admin/run/backup", headers={"X-API-Key": "test-key"})
 check("admin run backup surfaces worker failure as 500, never a false 200",
       r.status_code == 500)
 
+# Worker 6 — expire-invites trigger (Phase 2)
+import workers.expire_invites as _expire_mod
+_orig_expire_run = _expire_mod.run
+_expire_mod.run = lambda db_path: {"ok": True, "expired": 3}
+r = client.post("/admin/run/expire-invites", headers={"X-API-Key": "test-key"})
+check("admin run expire-invites -> 200", r.status_code == 200 and r.json()["expired"] == 3)
+check("admin run expire-invites requires the key",
+      client.post("/admin/run/expire-invites").status_code == 401)
+_expire_mod.run = _orig_expire_run
+
 # Restore real worker functions for any later test / import in this process.
 _ingest_mod.run = _orig_ingest_run
 _match_mod.run = _orig_match_run
@@ -665,10 +675,10 @@ check("diagnostics.config has every launch-blocker section",
 check("diagnostics reports emploi_api_key=True when set",
       diag["config"]["emploi_api_key"] is True)
 # Every worker event type has a slot (may be null when nothing has run yet).
-check("diagnostics.last_worker_runs has all five worker event types",
+check("diagnostics.last_worker_runs has all six worker event types",
       set(diag["last_worker_runs"].keys()) == {
           "JobIngestionRun", "MatchingWorkerRun", "VerificationWorkerRun",
-          "NotifyWorkerRun", "BackupWorkerRun"})
+          "NotifyWorkerRun", "BackupWorkerRun", "ExpireInvitesRun"})
 check("diagnostics.counts has every launch-facing scale metric",
       set(diag["counts"].keys()) >= {"career_twins", "applications",
                                      "ingested_jobs", "matches",

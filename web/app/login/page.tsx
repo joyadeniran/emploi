@@ -26,9 +26,16 @@ function GoogleIcon() {
   );
 }
 
-export default async function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ callbackUrl?: string }>;
+}) {
+  const { callbackUrl } = await searchParams;
+  // Only same-site paths are honoured — never an absolute URL.
+  const target = callbackUrl?.startsWith("/") ? callbackUrl : "/dashboard";
   const session = await auth();
-  if (session?.user) redirect("/dashboard");
+  if (session?.user) redirect(target);
 
   return (
     <div className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-surface px-4">
@@ -59,7 +66,7 @@ export default async function LoginPage() {
               <form
                 action={async () => {
                   "use server";
-                  await signIn("google", { redirectTo: "/dashboard" });
+                  await signIn("google", { redirectTo: target });
                 }}
               >
                 <button
@@ -83,7 +90,7 @@ export default async function LoginPage() {
               <form
                 action={async () => {
                   "use server";
-                  await signIn("dev-login", { redirectTo: "/dashboard" });
+                  await signIn("dev-login", { redirectTo: target });
                 }}
               >
                 <button
@@ -97,6 +104,13 @@ export default async function LoginPage() {
             ) : null}
           </div>
 
+          {/* Deliberately small — the candidate flow stays the primary funnel. */}
+          <p className="mt-6 text-center text-xs text-faint">
+            Hiring?{" "}
+            <a href="/employers" className="font-bold text-muted hover:text-brand">
+              Post a role →
+            </a>
+          </p>
         </div>
 
         <p className="mt-6 text-center text-xs leading-relaxed text-faint">

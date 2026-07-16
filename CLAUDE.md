@@ -21,7 +21,14 @@ Read this whole file before changing anything. The invariants below are load-bea
 
 ```bash
 python3 -m pip install -r requirements.txt   # never bare `pip` (user machines lack it)
-python3 test_e2e.py && python3 test_verify.py # must BOTH print ALL TESTS PASSED before any commit
+# ALL FIFTEEN suites must print ALL TESTS PASSED ✅ before any commit:
+python3 test_e2e.py && python3 test_verify.py && python3 test_db.py \
+  && python3 test_api.py && python3 test_ingest.py \
+  && python3 test_billing.py && python3 test_landing.py \
+  && python3 test_backup_db.py && python3 test_notify_worker.py \
+  && python3 test_verify_worker.py && python3 test_spot_check.py \
+  && python3 test_heal_sources.py && python3 test_employer.py \
+  && python3 test_invites.py && python3 test_expire_invites.py
 python3 -m streamlit run app.py               # local run; needs Streamlit >= 1.43
 ```
 

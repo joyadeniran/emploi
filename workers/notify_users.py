@@ -44,6 +44,24 @@ def _get_send_fn():
         return None
     return brevo_send_fn(api_key, sender)
 
+def _pending_invites(conn, user_id):
+    """Un-notified pending interview invites for one candidate (Phase 2).
+    The `notified` flag is the dedup — an invite rides exactly one digest,
+    then the dashboard badge takes over. Same pattern as matches.notified."""
+    return conn.execute(
+        "SELECT ii.id, ii.invite_note, ii.fit_score, ii.expires_at, "
+        "       er.title AS role_title, er.location AS role_location, er.is_remote, "
+        "       e.company_name, e.trust_score, e.trust_level "
+        "FROM interview_invites ii "
+        "JOIN employer_roles er ON er.id = ii.employer_role_id "
+        "JOIN employers e ON e.id = er.employer_id "
+        "WHERE ii.candidate_user_id = ? "
+        "  AND ii.status = 'pending' "
+        "  AND ii.notified = 0 "
+        "  AND ii.expires_at > datetime('now') "
+        "ORDER BY ii.created_at DESC LIMIT 5", (user_id,)).fetchall()
+
+
 def run(db_path, dry_run=False, send_fn=None):
     conn = db.connect(db_path, check_same_thread=False)
     # LEFT JOIN the new `users` table (source of truth for email + digest
@@ -58,10 +76,26 @@ def run(db_path, dry_run=False, send_fn=None):
         "JOIN career_twins ct ON ct.user_id = m.user_id "
         "LEFT JOIN users u ON u.id = m.user_id "
         "WHERE m.notified = 0 GROUP BY m.user_id").fetchall()
+    # Phase 2: candidates with FRESH pending invites must hear about them even
+    # with zero new matches — an invite expires in 14 days and email is the
+    # channel. (Deviation from the spec snippet, which only decorated the
+    # matches digest; flagged in the CHANGELOG.) Same email/opt-in columns.
+    match_user_ids = {r["user_id"] for r in rows}
+    invite_only_rows = [r for r in conn.execute(
+        "SELECT DISTINCT ii.candidate_user_id AS user_id, NULL AS n, NULL AS top, "
+        "ct.data, u.email AS user_email, u.name AS user_name, "
+        "COALESCE(u.notifications_enabled, 1) AS notifications_enabled "
+        "FROM interview_invites ii "
+        "JOIN career_twins ct ON ct.user_id = ii.candidate_user_id "
+        "LEFT JOIN users u ON u.id = ii.candidate_user_id "
+        "WHERE ii.status = 'pending' AND ii.notified = 0 "
+        "  AND ii.expires_at > datetime('now')").fetchall()
+        if r["user_id"] not in match_user_ids]
     # `sent: 0` alone is ambiguous (no users? no emails? no sender?) — count
     # every skip reason so a quiet run is diagnosable from the summary alone.
     sent, skipped_no_email, skipped_opted_out, send_failures = 0, 0, 0, []
-    for row in rows:
+    for row in list(rows) + invite_only_rows:
+        has_matches = row["n"] is not None
         # Respect the user's opt-out even before we look at email — an
         # opted-out user with no email should still count as opted-out,
         # not "missing email" (avoids re-nudging Joy to fix a backfill
@@ -77,15 +111,31 @@ def run(db_path, dry_run=False, send_fn=None):
             skipped_no_email += 1
             continue
         name = row["user_name"] or (twin.get("name") if isinstance(twin, dict) else None)
-        subject = f"Your Career Twin found {row['n']} new jobs for you"
-        body_parts = [
-            f"Hi {name or 'there'},",
-            "",
-            f"Your Career Twin found {row['n']} new matches. "
-            f"Best fit: {row['top']}/100.",
-            "",
-            "https://app.emploihq.com/matches",
-        ]
+        pending_invites = _pending_invites(conn, row["user_id"])
+        if has_matches:
+            subject = f"Your Career Twin found {row['n']} new jobs for you"
+            body_parts = [
+                f"Hi {name or 'there'},",
+                "",
+                f"Your Career Twin found {row['n']} new matches. "
+                f"Best fit: {row['top']}/100.",
+                "",
+                "https://app.emploihq.com/matches",
+            ]
+        elif pending_invites:
+            plural = "s" if len(pending_invites) != 1 else ""
+            subject = f"You have {len(pending_invites)} new interview invite{plural}"
+            body_parts = [f"Hi {name or 'there'},"]
+        else:
+            continue  # nothing to say
+        if pending_invites:
+            body_parts += ["", "You have new interview invites:"]
+            for inv in pending_invites:
+                body_parts.append(
+                    f"- {inv['company_name']} — {inv['role_title']} "
+                    f"({'Remote' if inv['is_remote'] else (inv['role_location'] or 'Location unspecified')}) "
+                    f"— trust {inv['trust_level'] or 'unverified'}")
+            body_parts += ["", "Review them: https://app.emploihq.com/invites"]
         # Outcome-tracking nudge: applications still `applied` 14+ days ago
         # with no user update get a "how did it go?" prompt appended. Capped
         # at 5 (default in db.list_applications_needing_outcome_nudge) so the
@@ -115,8 +165,14 @@ def run(db_path, dry_run=False, send_fn=None):
                 continue
         elif not dry_run:
             continue
-        if not dry_run:
+        if not dry_run and has_matches:
             conn.execute("UPDATE matches SET notified=1, notified_at=datetime('now') WHERE user_id=? AND notified=0", (row["user_id"],)); conn.commit()
+        if not dry_run and pending_invites:
+            conn.execute(
+                "UPDATE interview_invites SET notified=1, notified_at=datetime('now') "
+                "WHERE id IN (%s)" % ",".join("?" * len(pending_invites)),
+                [inv["id"] for inv in pending_invites])
+            conn.commit()
         sent += 1
     result = {"ok": True, "sent": sent, "users_with_unnotified": len(rows),
               "skipped_no_email": skipped_no_email,

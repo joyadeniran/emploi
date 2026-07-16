@@ -34,6 +34,18 @@ jobs:
         run: python3 test_notify_worker.py
       - name: Backup worker (offline)
         run: python3 test_backup_db.py
+      - name: Billing suite (offline, mocked Paystack)
+        run: python3 test_billing.py
+      - name: Source spot-check worker (offline)
+        run: python3 test_spot_check.py
+      - name: Source heal worker (offline)
+        run: python3 test_heal_sources.py
+      - name: Employer Portal suite (offline)
+        run: python3 test_employer.py
+      - name: Interview Invites suite (offline)
+        run: python3 test_invites.py
+      - name: Invite expiry worker (offline)
+        run: python3 test_expire_invites.py
 
   web-build:
     runs-on: ubuntu-latest
