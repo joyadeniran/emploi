@@ -10,7 +10,7 @@ export default async function CreateCareerTwinLayout({
 }) {
   const session = await auth();
   if (!session?.user) {
-    return <ClientRedirectToLogin /> as unknown as JSX.Element;
+    return <ClientRedirectToLogin /> as unknown as any;
   }
 
   // Inject the user's first name into a meta tag the client wizard can read
