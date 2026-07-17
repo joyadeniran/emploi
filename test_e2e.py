@@ -547,5 +547,77 @@ ok &= check("contact view renders missing scalars as '' (never None)",
 ok &= check("contact view falls back headline <- title/current_role",
             format_employer_contact_view({"title": "PM"})["headline"] == "PM")
 
+# --- split_application ------------------------------------------------------
+# The evaluation must never reach an exported file: it carries the candidate's
+# own gap analysis and "(stretch — verify)" markers.
+from core import split_application  # noqa: E402
+
+FULL_DRAFT = """## Cover Letter
+Dear Hiring Manager,
+I built payment rails at Paystack.
+
+## CV Bullet Points
+- Shipped X, cutting latency 40%
+- Led Y (stretch — verify)
+
+## Fit Evaluation
+| Skills | 9/10 | strong overlap |
+Biggest gaps: no Kafka experience.
+Fit Score: 88/100"""
+
+split = split_application(FULL_DRAFT)
+ok &= check("split_application extracts the cover letter body",
+            "Dear Hiring Manager," in split["cover_letter"]
+            and "I built payment rails" in split["cover_letter"])
+ok &= check("split_application extracts CV bullets",
+            "Shipped X" in split["cv_bullets"] and "Led Y" in split["cv_bullets"])
+ok &= check("split_application extracts the evaluation",
+            "Biggest gaps" in split["evaluation"]
+            and "Fit Score: 88/100" in split["evaluation"])
+ok &= check("evaluation NEVER bleeds into the exportable sections",
+            "Fit Score" not in split["cover_letter"]
+            and "Fit Score" not in split["cv_bullets"]
+            and "Biggest gaps" not in split["cover_letter"]
+            and "Biggest gaps" not in split["cv_bullets"])
+ok &= check("split_application drops the header lines themselves",
+            not split["cover_letter"].lower().startswith("## cover letter"))
+ok &= check("fit score still parses off the full draft (contract intact)",
+            parse_fit_score(FULL_DRAFT) == 88)
+
+# Real generated output goes through the real prompt/section headers.
+generated = generate_application(FakeModel([FULL_DRAFT]), PROFILE, "Fintech PM role", "OPay", review=False)
+gen_split = split_application(generated["result"])
+ok &= check("split_application handles real generate_application output",
+            isinstance(gen_split["cover_letter"], str)
+            and set(gen_split) == {"cover_letter", "cv_bullets", "evaluation"})
+
+# Defensive: model drift / garbage must never raise or lose the draft.
+ok &= check("split_application never loses a draft with no headers",
+            split_application("Just a letter, no headers.")["cover_letter"]
+            == "Just a letter, no headers.")
+ok &= check("split_application tolerates empty/None input",
+            split_application("") == {"cover_letter": "", "cv_bullets": "", "evaluation": ""}
+            and split_application(None)["cover_letter"] == "")
+loose = split_application("# COVER LETTER\nHi.\n### Fit Evaluation\nFit Score: 50/100")
+ok &= check("split_application matches headers case/level-insensitively",
+            loose["cover_letter"] == "Hi." and "50/100" in loose["evaluation"])
+ok &= check("split_application handles a missing section (empty, not error)",
+            split_application("## Cover Letter\nHi.")["cv_bullets"] == "")
+
+# Regression: real output uses "## Fit Score" as well as "## Fit Evaluation".
+# Recognising only one variant let the other fall into cv_bullets — i.e. it got
+# EXPORTED into the CV. split_application and strip_evaluation must agree.
+canned_split = split_application(CANNED.format(score=88))
+ok &= check("split_application recognises the '## Fit Score' header variant",
+            "88/100" in canned_split["evaluation"])
+ok &= check("'## Fit Score' evaluation NEVER leaks into exportable sections",
+            "88/100" not in canned_split["cv_bullets"]
+            and "88/100" not in canned_split["cover_letter"]
+            and "Built a B2B BNPL platform" in canned_split["cv_bullets"])
+ok &= check("split_application and strip_evaluation agree on both header variants",
+            all("Fit Score:" not in strip_evaluation(t)
+                and "Fit Score:" not in split_application(t)["cv_bullets"]
+                for t in (CANNED.format(score=88), FULL_DRAFT)))
+
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

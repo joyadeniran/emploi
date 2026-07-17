@@ -14,7 +14,6 @@ import {
   BarChart3,
   Search,
   ShieldCheck,
-  Users,
   Settings,
   X,
 } from "lucide-react";
@@ -35,10 +34,6 @@ const mainNav = [
   { href: "/insights", label: "Career Insights", icon: BarChart3 },
   { href: "/trust-check", label: "Trust Check", icon: ShieldCheck },
   { href: "/settings", label: "Settings", icon: Settings },
-];
-
-const recruiterNav = [
-  { href: "/employer", label: "Employer Portal", icon: Users, badge: "New" },
 ];
 
 function NavLink({
@@ -104,17 +99,6 @@ export function Sidebar({
 
       <nav className="nav-scroll flex-1 space-y-0.5 overflow-y-auto px-3" aria-label="Main">
         {mainNav.map((item) => (
-          <NavLink
-            key={item.href}
-            {...item}
-            active={pathname === item.href}
-            onNavigate={onClose}
-          />
-        ))}
-        <div className="px-3.5 pb-1 pt-6 text-[11px] font-bold uppercase tracking-widest text-faint">
-          For recruiters
-        </div>
-        {recruiterNav.map((item) => (
           <NavLink
             key={item.href}
             {...item}

@@ -215,8 +215,10 @@ ok &= check("default lists file ships empty (no behavior change)",
 # ---------------------------------------------------------------------------
 from verify import employer_portal_level
 
-ok &= check("portal level: >=75 -> high", employer_portal_level(80) == "high")
-ok &= check("portal level: 75 boundary -> high", employer_portal_level(75) == "high")
+ok &= check("portal level: >=75 + proven domain control -> high",
+            employer_portal_level(80, domain_verified=True) == "high")
+ok &= check("portal level: 75 boundary + proven domain control -> high",
+            employer_portal_level(75, domain_verified=True) == "high")
 ok &= check("portal level: 40-74 -> medium",
             employer_portal_level(40) == "medium" and employer_portal_level(74) == "medium")
 ok &= check("portal level: 20-39 -> low",
@@ -230,7 +232,31 @@ ok &= check("portal level: dead DNS caps at low even with a bonus-inflated score
             employer_portal_level(40, None, {"dns": False}) == "low"
             and employer_portal_level(90, None, {"dns": False}) == "low")
 ok &= check("portal level: dns True doesn't cap",
-            employer_portal_level(90, None, {"dns": True}) == "high")
+            employer_portal_level(90, None, {"dns": True}, domain_verified=True) == "high")
+
+# The domain-control cap. 'high' renders a "Verified employer" badge, but the
+# score describes only the domain the claimant TYPED — a scammer can enter a
+# real company's domain and inherit its score. Proof of control is the only
+# thing that earns verification.
+ok &= check("portal level: unproven domain control can NEVER reach high",
+            employer_portal_level(90, None, {"dns": True}) == "medium"
+            and employer_portal_level(100) == "medium")
+ok &= check("portal level: domain-control cap defaults to safe (param omitted)",
+            employer_portal_level(90) == "medium")
+ok &= check("portal level: proven domain control does NOT rescue avoid/low",
+            employer_portal_level(10, domain_verified=True) == "avoid"
+            and employer_portal_level(30, domain_verified=True) == "low"
+            and employer_portal_level(90, ["asks for a fee"], domain_verified=True) == "avoid"
+            and employer_portal_level(90, None, {"dns": False}, domain_verified=True) == "low")
+# Regression for the reported hole, end to end through the real scorer.
+_imp = verify_employer("Paystack", "paystack.com", model=FakeModel("consistent"),
+                       dns_fn=lambda d: ["192.0.2.1"], mx_fn=lambda d: ["mx.paystack.com"],
+                       fetch_fn=lambda d: (200, "Paystack is a payments company. Contact hi@paystack.com"),
+                       cache={})
+ok &= check("impersonating a real company's domain scores well but is NOT verified",
+            _imp["score"] >= 75
+            and employer_portal_level(_imp["score"], (_imp.get("signals") or {}).get("red_flags"),
+                                      _imp.get("signals")) == "medium")
 
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

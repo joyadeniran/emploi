@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, Search, Menu, LogOut, ChevronDown, User, Loader2, Sparkles } from "lucide-react";
+import { Bell, Search, Menu, LogOut, ChevronDown, User, Loader2, Sparkles, Building2 } from "lucide-react";
 
 type MatchNotice = { id: number; title?: string; company_name?: string; fit_score?: number };
 
@@ -197,6 +197,13 @@ export function Topbar({
                 className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-semibold text-muted hover:bg-surface hover:text-ink"
               >
                 <User size={15} /> View profile
+              </a>
+              <a
+                href="/employer"
+                role="menuitem"
+                className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-semibold text-muted hover:bg-surface hover:text-ink"
+              >
+                <Building2 size={15} /> Employer portal
               </a>
               <form action={signOutAction}>
                 <button

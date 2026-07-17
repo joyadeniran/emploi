@@ -104,8 +104,11 @@ with tempfile.TemporaryDirectory() as d:
  check("invite-only candidate still gets a digest", r["sent"]==1)
  check("invite digest subject names the invite",
        any("interview invite" in s for s in subjects))
+ # 'high' is unreachable for a cold, unvouched employer now (domain control is
+ # unproven), so the honest digest line reads medium. The assertion is that the
+ # digest RENDERS the real trust level, not that it flatters the employer.
  check("invite digest line has company, role, Remote and trust level",
-       any("Acme Corp — Data Analyst (Remote) — trust high" in b for b in bodies))
+       any("Acme Corp — Data Analyst (Remote) — trust medium" in b for b in bodies))
  check("invite digest links /invites", any("app.emploihq.com/invites" in b for b in bodies))
  # Dedup: the same invite must not ride a second nightly digest.
  check("invite marked notified after the digest",

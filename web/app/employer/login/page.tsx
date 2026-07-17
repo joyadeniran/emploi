@@ -85,58 +85,18 @@ export default async function EmployerLoginPage() {
               </div>
             )}
 
-            {/* Divider */}
-            <div className="flex items-center gap-3">
-              <div className="h-px flex-1 bg-line" />
-              <span className="text-xs text-faint">or</span>
-              <div className="h-px flex-1 bg-line" />
-            </div>
-
-            {/* Email / password form (stub — backend wiring needed) */}
-            <form className="space-y-3">
-              <div>
-                <label
-                  htmlFor="employer-email"
-                  className="mb-1 block text-xs font-medium text-muted"
-                >
-                  Work email
-                </label>
-                <input
-                  id="employer-email"
-                  type="email"
-                  placeholder="you@company.com"
-                  className="w-full rounded-xl border border-line bg-card px-4 py-3 text-sm text-ink placeholder:text-faint focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="employer-password"
-                  className="mb-1 block text-xs font-medium text-muted"
-                >
-                  Password
-                </label>
-                <input
-                  id="employer-password"
-                  type="password"
-                  placeholder="••••••••"
-                  className="w-full rounded-xl border border-line bg-card px-4 py-3 text-sm text-ink placeholder:text-faint focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled
-                title="Email sign-in coming soon"
-                className="w-full rounded-full bg-gradient-to-r from-brand-violet to-brand-indigo px-6 py-3.5 text-sm font-bold text-white shadow-pop transition-transform hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0"
-              >
-                Sign in
-              </button>
-              <p className="text-center text-xs text-faint">
-                No account?{" "}
-                <span className="font-bold text-muted">
-                  Sign up with your work email
-                </span>
-              </p>
-            </form>
+            {/* No email/password form here. It was a stub: the button was
+                disabled and the "sign up" link was a <span>, so employers typed
+                real (often reused) passwords into a field that went nowhere.
+                Google is the product's auth method (see auth.ts) — work email
+                works through it via Google Workspace. Real credentials sign-in
+                needs a design pass (password storage, verification, reset,
+                login rate-limiting), not a form that lies. */}
+            <p className="text-center text-xs leading-relaxed text-faint">
+              Emploi uses Google to sign in — your work email works here if your
+              company uses Google Workspace. Signing in creates your employer
+              account.
+            </p>
           </div>
 
           {/* Cross-link to candidate login */}

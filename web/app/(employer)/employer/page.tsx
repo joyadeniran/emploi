@@ -68,6 +68,19 @@ export default async function EmployerDashboardPage() {
             <TrustBadge employer={employer} />
             {employer.company_domain ? <span>{employer.company_domain}</span> : null}
           </div>
+          {/* Without this, a legitimate employer sees a middling badge and no
+              reason for it. "Verified" now requires proof of domain control,
+              which nothing can grant yet — so say what's true and don't imply
+              they did something wrong. */}
+          {!employer.warm_intro_by && employer.trust_level !== "high" ? (
+            <p className="mt-2 max-w-md text-xs leading-relaxed text-muted">
+              We&apos;ve checked that{" "}
+              <span className="font-semibold">{employer.company_domain ?? "your domain"}</span>{" "}
+              looks legitimate. The <span className="font-semibold">Verified Employer</span> badge
+              additionally requires confirming you control that domain — we&apos;re rolling that out
+              shortly. Candidates can still see and accept your invites.
+            </p>
+          ) : null}
         </div>
         <Link
           href="/employer/roles/new"
