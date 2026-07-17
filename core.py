@@ -388,6 +388,15 @@ def parse_fit_score(text: str):
     return None
 
 
+# ONE definition of an evaluation header, used by BOTH split_application and
+# strip_evaluation. build_prompt asks for "## Fit Evaluation", but real output
+# also uses "## Fit Score" (see the canned fixture in test_e2e). If these two
+# functions disagree on what an evaluation looks like, the section they miss
+# leaks into an exported artifact — which is the whole thing we're preventing.
+_EVAL_HEADER = r"^\s{0,3}#{1,6}\s*\**\s*fit\s+(?:evaluation|score)\b"
+_EVAL_LINE_RE = re.compile(_EVAL_HEADER, re.IGNORECASE)
+_EVAL_BLOCK_RE = re.compile(_EVAL_HEADER, re.IGNORECASE | re.MULTILINE)
+
 # Section headers emitted by build_prompt. Matched loosely (any heading level,
 # optional bold/punctuation) because model output drifts; the parser must never
 # raise and must degrade to "everything is the cover letter" rather than lose
@@ -395,7 +404,7 @@ def parse_fit_score(text: str):
 _SECTION_PATTERNS = (
     ("cover_letter", re.compile(r"^\s{0,3}#{1,6}\s*\**\s*cover\s+letter\b", re.IGNORECASE)),
     ("cv_bullets", re.compile(r"^\s{0,3}#{1,6}\s*\**\s*cv\s+bullet", re.IGNORECASE)),
-    ("evaluation", re.compile(r"^\s{0,3}#{1,6}\s*\**\s*fit\s+evaluation\b", re.IGNORECASE)),
+    ("evaluation", _EVAL_LINE_RE),
 )
 
 
@@ -465,8 +474,11 @@ def parse_json_array(text: str) -> list:
 
 def strip_evaluation(text: str) -> str:
     """Remove the Fit Evaluation section from an application — downloads must
-    contain only sendable content; the evaluation is for on-screen reading."""
-    m = re.search(r"^\s*#{1,3}\s*Fit (Evaluation|Score)\b", text or "", re.MULTILINE)
+    contain only sendable content; the evaluation is for on-screen reading.
+
+    Shares _EVAL_HEADER with split_application so the two can never disagree
+    about what an evaluation header looks like."""
+    m = _EVAL_BLOCK_RE.search(text or "")
     return text[:m.start()].rstrip() if m else (text or "")
 
 

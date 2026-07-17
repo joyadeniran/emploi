@@ -604,5 +604,20 @@ ok &= check("split_application matches headers case/level-insensitively",
 ok &= check("split_application handles a missing section (empty, not error)",
             split_application("## Cover Letter\nHi.")["cv_bullets"] == "")
 
+# Regression: real output uses "## Fit Score" as well as "## Fit Evaluation".
+# Recognising only one variant let the other fall into cv_bullets — i.e. it got
+# EXPORTED into the CV. split_application and strip_evaluation must agree.
+canned_split = split_application(CANNED.format(score=88))
+ok &= check("split_application recognises the '## Fit Score' header variant",
+            "88/100" in canned_split["evaluation"])
+ok &= check("'## Fit Score' evaluation NEVER leaks into exportable sections",
+            "88/100" not in canned_split["cv_bullets"]
+            and "88/100" not in canned_split["cover_letter"]
+            and "Built a B2B BNPL platform" in canned_split["cv_bullets"])
+ok &= check("split_application and strip_evaluation agree on both header variants",
+            all("Fit Score:" not in strip_evaluation(t)
+                and "Fit Score:" not in split_application(t)["cv_bullets"]
+                for t in (CANNED.format(score=88), FULL_DRAFT)))
+
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

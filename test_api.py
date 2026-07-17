@@ -433,6 +433,30 @@ check("export rejects an oversized document -> 413",
                   json={"text": "x" * (m.MAX_EXPORT_BYTES + 1), "format": "pdf"}).status_code == 413)
 check("export requires auth",
       client.post("/applications/export", json={"text": "hi", "format": "pdf"}).status_code == 401)
+
+# The evaluation is the candidate's own gap analysis. Stripping it is enforced
+# SERVER-SIDE, not trusted to the caller — a client bug must not be able to put
+# it in a file the candidate sends to an employer.
+_BLOB = ("## Cover Letter\nDear TestCo, I ship payment rails.\n\n"
+         "## CV Bullet Points\n- Shipped X, cutting latency 40%\n\n"
+         "## Fit Evaluation\nBiggest gaps: no Kafka experience.\nFit Score: 88/100")
+r = client.post("/applications/export", headers=AUTH,
+                json={"text": _BLOB, "format": "pdf", "title": "Cover Letter"})
+_pdf_text = m.core.pdf_to_text(r.content)
+check("export strips the evaluation server-side even if a caller sends the whole blob",
+      r.status_code == 200 and "Fit Score" not in _pdf_text
+      and "Biggest gaps" not in _pdf_text)
+check("export keeps the sendable content when stripping the evaluation",
+      "Dear TestCo" in _pdf_text and "Shipped X" in _pdf_text)
+check("export strips the '## Fit Score' header variant too",
+      "60/100" not in m.core.pdf_to_text(
+          client.post("/applications/export", headers=AUTH,
+                      json={"text": "## Cover Letter\nHi.\n\n## Fit Score\nFit Score: 60/100",
+                            "format": "pdf"}).content))
+check("a body that is ONLY an evaluation exports nothing -> 422",
+      client.post("/applications/export", headers=AUTH,
+                  json={"text": "## Fit Evaluation\nFit Score: 88/100", "format": "pdf"}
+                  ).status_code == 422)
 # User text must never steer the Content-Disposition header.
 r = client.post("/applications/export", headers=AUTH,
                 json={"text": "hi", "format": "pdf", "title": '../../etc "evil"\n'})

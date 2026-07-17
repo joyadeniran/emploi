@@ -644,17 +644,25 @@ def export_application(body: ExportIn, user_id: str = Depends(rate_limit)):
     """Render generated text into a real .pdf / .docx the user can send.
 
     No model call and nothing persisted — pure rendering of text the caller
-    already holds. The fit evaluation must never be sent here (screen-only);
-    callers pass a single section from core.split_application.
+    already holds.
+
+    The fit evaluation is screen-only (it is the candidate's own gap analysis),
+    so it is stripped HERE rather than trusted to the caller: a comment saying
+    "don't send the evaluation" is not a guard. Any caller — web, a future
+    client, or a direct API user — gets an evaluation-free document.
     """
     fmt = (body.format or "").strip().lower()
     if fmt not in ("pdf", "docx"):
         raise HTTPException(status_code=422, detail="format must be 'pdf' or 'docx'")
-    text = (body.text or "").strip()
+    # Bound what we accept at all, before doing any work on it.
+    raw = body.text or ""
+    if len(raw.encode("utf-8")) > MAX_EXPORT_BYTES:
+        raise HTTPException(status_code=413, detail="document too large to export")
+    # Server-side backstop, applied before the emptiness check so a body that is
+    # ONLY an evaluation is rejected as "nothing to export" rather than shipped.
+    text = core.strip_evaluation(raw).strip()
     if not text:
         raise HTTPException(status_code=422, detail="nothing to export")
-    if len(text.encode("utf-8")) > MAX_EXPORT_BYTES:
-        raise HTTPException(status_code=413, detail="document too large to export")
 
     title = (body.title or "Application").strip()[:120] or "Application"
     try:
