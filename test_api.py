@@ -368,6 +368,85 @@ for _ in range(50):
 check("generation (async) provider failure surfaces as a job error, not a crash",
       poll.json().get("status") == "error" and "unavailable" in poll.json().get("error", ""))
 
+# ---------------- tailored CV generation ----------------
+# The artifact users actually send, distinct from the draft's "CV bullets".
+m.app.state.model_factory = lambda: None
+check("cv generation without key -> 503",
+      client.post("/applications/cv?background=false", headers=AUTH,
+                  json={"job": {"description": "Build products"}}).status_code == 503)
+
+_CV_MD = "# Ada Lovelace\n## Professional Summary\nBuilt payment rails.\n## Experience\n- Shipped X"
+m.app.state.model_factory = lambda: FakeModel(_CV_MD)
+r = client.post("/applications/cv?background=false", headers=AUTH,
+                json={"job": {"company_name": "TestCo", "description": "Build products"}})
+check("cv generation (sync) returns a complete CV",
+      r.status_code == 200 and "Professional Summary" in r.json()["generated"]["cv"])
+check("cv generation rejects a job without description",
+      client.post("/applications/cv", headers=AUTH,
+                  json={"job": {"company": "TestCo"}}).status_code == 422)
+check("cv generation requires Career Twin",
+      client.post("/applications/cv", headers={**AUTH, "X-User-Id": "no-twin"},
+                  json={"job": {"description": "Build products"}}).status_code == 409)
+
+r = client.post("/applications/cv", headers=AUTH,
+                json={"job": {"company_name": "TestCo", "description": "Build products"}})
+check("cv generation (async) submit returns 202 with a job_id",
+      r.status_code == 202 and r.json().get("job_id"))
+cv_job_id = r.json()["job_id"]
+for _ in range(50):
+    poll = client.get(f"/applications/generate/{cv_job_id}", headers=AUTH)
+    if poll.json().get("status") != "pending":
+        break
+    _time.sleep(0.05)
+check("cv job polls through the shared generation job endpoint",
+      poll.json().get("status") == "done" and "Professional Summary" in poll.json()["generated"]["cv"])
+check("cv job is per-user (404 for someone else)",
+      client.get(f"/applications/generate/{cv_job_id}",
+                 headers={**AUTH, "X-User-Id": "someone-else"}).status_code == 404)
+
+# ---------------- document export (pdf / docx) ----------------
+# Pure rendering: no model call, nothing persisted.
+r = client.post("/applications/export", headers=AUTH,
+                json={"text": "# Ada\n\nDear TestCo,\n\n- Shipped X", "format": "pdf",
+                      "title": "Cover Letter — TestCo"})
+check("export pdf returns a real PDF body",
+      r.status_code == 200 and r.content[:4] == b"%PDF"
+      and r.headers["content-type"] == "application/pdf")
+check("export pdf sets a safe attachment filename",
+      "attachment;" in r.headers["content-disposition"]
+      and "cover-letter-testco.pdf" in r.headers["content-disposition"])
+
+r = client.post("/applications/export", headers=AUTH,
+                json={"text": "# Ada\n\n- Shipped X", "format": "docx", "title": "CV — TestCo"})
+check("export docx returns a real DOCX body (zip magic)",
+      r.status_code == 200 and r.content[:2] == b"PK"
+      and "wordprocessingml" in r.headers["content-type"])
+
+check("export rejects an unknown format",
+      client.post("/applications/export", headers=AUTH,
+                  json={"text": "hi", "format": "exe"}).status_code == 422)
+check("export rejects empty text",
+      client.post("/applications/export", headers=AUTH,
+                  json={"text": "   ", "format": "pdf"}).status_code == 422)
+check("export rejects an oversized document -> 413",
+      client.post("/applications/export", headers=AUTH,
+                  json={"text": "x" * (m.MAX_EXPORT_BYTES + 1), "format": "pdf"}).status_code == 413)
+check("export requires auth",
+      client.post("/applications/export", json={"text": "hi", "format": "pdf"}).status_code == 401)
+# User text must never steer the Content-Disposition header.
+r = client.post("/applications/export", headers=AUTH,
+                json={"text": "hi", "format": "pdf", "title": '../../etc "evil"\n'})
+_cd = r.headers["content-disposition"]
+check("export slug strips path/quote/newline injection from the filename",
+      r.status_code == 200 and 'filename="etc-evil.pdf"' in _cd
+      and '"' not in _cd.split("filename=")[1][1:-1]
+      and "/" not in _cd and "\n" not in _cd)
+check("export slug falls back when a title has no usable characters",
+      'filename="emploi-application.pdf"' in
+      client.post("/applications/export", headers=AUTH,
+                  json={"text": "hi", "format": "pdf", "title": "///"}
+                  ).headers["content-disposition"])
+
 # ---------------- Career Twin chat ----------------
 m.app.state.model_factory = lambda: None
 r = client.post("/chat", headers=AUTH, json={"message": "hi"})
@@ -427,8 +506,10 @@ check("billing status defaults to free",
       client.get("/billing/status", headers=AUTH).json()["tier"] == "free")
 status = client.get("/billing/status", headers=AUTH).json()
 check("free tier limit is 10", status["limit"] == 10)
-check("used_this_month reflects the 2 successful generations above (sync + async)",
-      status["used_this_month"] == 2)
+# 2 application drafts + 2 tailored CVs. A CV is a model call and counts
+# against the same allowance; exports are pure rendering and never count.
+check("used_this_month counts drafts AND tailored CVs (2 + 2), not exports",
+      status["used_this_month"] == 4)
 
 check("checkout without PAYSTACK_SECRET_KEY -> 503",
       client.post("/billing/checkout", headers=AUTH, json={"tier": "pro"}).status_code == 503)

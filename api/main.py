@@ -78,6 +78,10 @@ RATE_LIMITS = {
     "/career-twin/upload": (5, 300),
     "/matches": (30, 60),
     "/applications/generate": (10, 3600),
+    "/applications/cv": (10, 3600),
+    # Export is pure rendering (no model call), but it is CPU work on
+    # user-supplied text — keep a ceiling on it anyway.
+    "/applications/export": (30, 3600),
     "/chat": (20, 60),
     "/chat/attach": (5, 300),
     # Employer Portal (Phase 2). Numeric path segments are normalized to
@@ -244,6 +248,18 @@ def rate_limit(request: Request, user_id: str = Depends(auth)) -> str:
 # career-twin blobs stay small enough for the JSON-in-SQLite design.
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 MAX_TWIN_BYTES = 64 * 1024
+# A cover letter or 2-page CV is a few KB; this is a generous ceiling that
+# still stops a direct caller handing the renderers an unbounded blob.
+MAX_EXPORT_BYTES = 256 * 1024
+
+_EXPORT_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _export_slug(title: str) -> str:
+    """Filename-safe slug. Never let user text steer the Content-Disposition
+    header (quotes, newlines, path separators)."""
+    slug = _EXPORT_SLUG_RE.sub("-", (title or "").lower()).strip("-")
+    return slug[:80] or "emploi-application"
 
 
 def run_extraction(fn, *args):
@@ -310,6 +326,23 @@ class MatchIn(BaseModel):
 class GenerateIn(BaseModel):
     job: dict
     include_review: bool = True
+
+
+class CvIn(BaseModel):
+    job: dict
+
+
+class ExportIn(BaseModel):
+    """Render already-generated text to a real document.
+
+    The text round-trips from the client because generations are not persisted
+    (v1, by design) — it is the user's own draft over an authenticated channel.
+    Callers must send ONLY exportable sections (cover letter / CV); the fit
+    evaluation is screen-only. See core.split_application.
+    """
+    text: str
+    format: str = "pdf"  # "pdf" | "docx"
+    title: str = "Application"
 
 
 class ChatIn(BaseModel):
@@ -547,6 +580,104 @@ def generate_application_endpoint(body: GenerateIn, response: Response,
     threading.Thread(target=task, name=f"generate-{job_id}", daemon=True).start()
     _prune_generation_jobs()
     return {"job_id": job_id, "status": "pending"}
+
+
+@app.post("/applications/cv", status_code=202)
+def generate_cv_endpoint(body: CvIn, response: Response, background: bool = True,
+                         user_id: str = Depends(rate_limit)):
+    """Generate a COMPLETE tailored CV (core.generate_cv + skills/cv_template).
+
+    This is the artifact users actually send — distinct from the cover-letter
+    draft's "CV Bullet Points", which are fragments. One model call. Counts
+    against the same monthly generation allowance; the UI must disclose that.
+    Async by default (same rationale as /applications/generate); poll
+    GET /applications/generate/{job_id}.
+    """
+    model = require_model()
+    conn = get_conn()
+    profile = db.load_career_twin(conn, user_id)
+    if not profile:
+        raise HTTPException(status_code=409,
+                            detail="complete Career Twin setup first")
+    job = body.job if isinstance(body.job, dict) else {}
+    job_text = str(job.get("description") or job.get("job_text") or "").strip()
+    if not job_text:
+        raise HTTPException(status_code=422, detail="job description is required")
+    company = str(job.get("company") or job.get("company_name") or "")
+
+    sub = db.get_subscription(conn, user_id)
+    limit = core.monthly_generation_limit(sub["tier"])
+    used = db.count_generations_this_month(conn, user_id)
+    if used >= limit:
+        raise HTTPException(
+            status_code=402,
+            detail=f"You've used all {limit} tailored drafts on the {sub['tier'].title()} "
+                   f"plan this month. Upgrade for more, or export the CV you already have.")
+
+    if not background:
+        response.status_code = 200
+        cv = run_extraction(core.generate_cv, model, profile, job_text, company)
+        db.log_generation(conn, user_id)
+        return {"generated": {"cv": cv, "company": company}}
+
+    job_id = uuid.uuid4().hex
+    _set_job(job_id, status="pending", user_id=user_id)
+
+    def task():
+        try:
+            cv = core.generate_cv(model, profile, job_text, company)
+            db.log_generation(get_conn(), user_id)
+            _set_job(job_id, status="done", result={"cv": cv, "company": company})
+        except Exception as exc:
+            log.exception("cv job %s failed", job_id)
+            _set_job(job_id, status="error",
+                     error="The AI service is temporarily unavailable — try again in a moment.",
+                     detail=str(exc)[:200])
+
+    threading.Thread(target=task, name=f"cv-{job_id}", daemon=True).start()
+    _prune_generation_jobs()
+    return {"job_id": job_id, "status": "pending"}
+
+
+@app.post("/applications/export")
+def export_application(body: ExportIn, user_id: str = Depends(rate_limit)):
+    """Render generated text into a real .pdf / .docx the user can send.
+
+    No model call and nothing persisted — pure rendering of text the caller
+    already holds. The fit evaluation must never be sent here (screen-only);
+    callers pass a single section from core.split_application.
+    """
+    fmt = (body.format or "").strip().lower()
+    if fmt not in ("pdf", "docx"):
+        raise HTTPException(status_code=422, detail="format must be 'pdf' or 'docx'")
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="nothing to export")
+    if len(text.encode("utf-8")) > MAX_EXPORT_BYTES:
+        raise HTTPException(status_code=413, detail="document too large to export")
+
+    title = (body.title or "Application").strip()[:120] or "Application"
+    try:
+        if fmt == "pdf":
+            payload = core.make_pdf(text)
+            media = "application/pdf"
+        else:
+            payload = core.make_docx(text, title=title)
+            media = ("application/vnd.openxmlformats-officedocument"
+                     ".wordprocessingml.document")
+    except Exception:
+        # Renderer choked on this text (fpdf2 is fussy about layout). Fail
+        # cleanly — the user still has the draft on screen to copy.
+        log.exception("export failed for user %s (%s)", user_id, fmt)
+        raise HTTPException(status_code=422,
+                            detail="We couldn't build that document. You can still copy the text.")
+
+    filename = f"{_export_slug(title)}.{fmt}"
+    return Response(
+        content=payload,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/applications/generate/{job_id}")

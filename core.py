@@ -388,6 +388,56 @@ def parse_fit_score(text: str):
     return None
 
 
+# Section headers emitted by build_prompt. Matched loosely (any heading level,
+# optional bold/punctuation) because model output drifts; the parser must never
+# raise and must degrade to "everything is the cover letter" rather than lose
+# the user's draft.
+_SECTION_PATTERNS = (
+    ("cover_letter", re.compile(r"^\s{0,3}#{1,6}\s*\**\s*cover\s+letter\b", re.IGNORECASE)),
+    ("cv_bullets", re.compile(r"^\s{0,3}#{1,6}\s*\**\s*cv\s+bullet", re.IGNORECASE)),
+    ("evaluation", re.compile(r"^\s{0,3}#{1,6}\s*\**\s*fit\s+evaluation\b", re.IGNORECASE)),
+)
+
+
+def split_application(text: str) -> dict:
+    """Split a generated application into its parts.
+
+    Returns {"cover_letter": str, "cv_bullets": str, "evaluation": str}.
+
+    This exists so the EVALUATION never lands in a file the candidate sends to
+    an employer — it contains their own gap analysis and "(stretch — verify)"
+    markers. Only cover_letter / cv_bullets are ever exported; evaluation is
+    screen-only.
+
+    Defensive by contract (same posture as the JSON parsers): unknown or
+    missing headers never raise. If no header is recognised at all, the whole
+    text becomes cover_letter so the draft is never silently dropped.
+    """
+    parts = {"cover_letter": "", "cv_bullets": "", "evaluation": ""}
+    current = None
+    buckets = {"cover_letter": [], "cv_bullets": [], "evaluation": []}
+    preamble = []
+
+    for line in (text or "").split("\n"):
+        matched = None
+        for key, pattern in _SECTION_PATTERNS:
+            if pattern.match(line):
+                matched = key
+                break
+        if matched:
+            current = matched
+            continue  # drop the header line itself; callers re-title
+        (buckets[current] if current else preamble).append(line)
+
+    for key in parts:
+        parts[key] = "\n".join(buckets[key]).strip()
+
+    # No recognised headers at all → never lose the draft.
+    if not any(parts.values()):
+        parts["cover_letter"] = (text or "").strip()
+    return parts
+
+
 def _extract_json(text: str, opener: str, closer: str):
     s = (text or "").strip()
     start = s.find(opener)

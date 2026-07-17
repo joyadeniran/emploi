@@ -124,6 +124,55 @@ export async function apiFetch<T>(
   return res.json() as Promise<T>;
 }
 
+/**
+ * Same auth/error posture as apiFetch, but hands back the raw Response so a
+ * caller can stream a binary body (document exports). apiFetch always parses
+ * JSON, which would corrupt a PDF/DOCX.
+ */
+export async function apiFetchRaw(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const session = await auth();
+  const userId =
+    (session?.user as { id?: string } | undefined)?.id ?? session?.user?.email;
+  if (!userId) {
+    const err = new Error("not authenticated") as Error & { status?: number };
+    err.status = 401;
+    throw err;
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": API_KEY,
+        "X-User-Id": userId,
+        ...init.headers,
+      },
+      cache: "no-store",
+      signal: init.signal ?? AbortSignal.timeout(30_000),
+    });
+  } catch {
+    throw new ApiUnavailableError(`Emploi API unreachable at ${API_URL}`);
+  }
+
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail ?? detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    const err = new Error(detail) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return res;
+}
+
 /** True when the API answers its health check (used for demo-data fallback). */
 export async function apiAvailable(): Promise<boolean> {
   try {
