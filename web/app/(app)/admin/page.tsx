@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
-import { ShieldAlert } from "lucide-react";
+import { BadgeCheck, Coins, ShieldAlert } from "lucide-react";
 import { isAdmin } from "@/lib/admin";
 import { ApiUnavailableError, apiFetch } from "@/lib/api";
 import { VouchButton } from "@/components/VouchButton";
+import { GrantCreditsButton } from "@/components/GrantCreditsButton";
 
 interface Metrics {
   career_twins: number; twins_opted_in: number; employers: number;
@@ -14,11 +15,20 @@ interface Metrics {
                   trust_score: number | null; trust_level: string | null }[];
 }
 
+interface EmployerRow {
+  id: number; company_name: string; company_domain: string | null;
+  trust_level: string | null; warm_intro_by: string | null; credit_balance: number;
+}
+
 export default async function AdminPage() {
   if (!(await isAdmin())) notFound();
   let metrics: Metrics;
+  let employers: EmployerRow[] = [];
   try {
-    metrics = await apiFetch<Metrics>("/admin/metrics");
+    [metrics, { employers }] = await Promise.all([
+      apiFetch<Metrics>("/admin/metrics"),
+      apiFetch<{ employers: EmployerRow[] }>("/admin/employers"),
+    ]);
   } catch (error) {
     if (error instanceof ApiUnavailableError)
       return <p className="text-sm text-muted">API offline — try again shortly.</p>;
@@ -78,6 +88,38 @@ export default async function AdminPage() {
                   </p>
                 </div>
                 <VouchButton employerId={alert.id} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
+        <h2 className="flex items-center gap-2 font-extrabold">
+          <Coins className="text-brand" size={18} /> Employers &amp; credits
+        </h2>
+        <p className="mt-1 text-xs text-muted">
+          Grant free unlock credits — comp a partner or fix a billing mishap.
+          Credits are not verification; they only affect how many candidates an
+          employer can unlock.
+        </p>
+        {employers.length === 0 ? (
+          <p className="mt-4 text-sm text-muted">No employers yet.</p>
+        ) : (
+          <ul className="mt-4 divide-y divide-line">
+            {employers.map((emp) => (
+              <li key={emp.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <div className="min-w-0">
+                  <p className="flex items-center gap-1.5 text-sm font-bold">
+                    {emp.company_name}
+                    {emp.warm_intro_by ? <BadgeCheck size={13} className="text-good" /> : null}
+                  </p>
+                  <p className="text-xs text-muted">
+                    {emp.company_domain ?? "no domain"} · trust {emp.trust_level ?? "—"} ·{" "}
+                    <span className="font-semibold text-ink">{emp.credit_balance} credit{emp.credit_balance === 1 ? "" : "s"}</span>
+                  </p>
+                </div>
+                <GrantCreditsButton employerId={emp.id} companyName={emp.company_name} balance={emp.credit_balance} />
               </li>
             ))}
           </ul>

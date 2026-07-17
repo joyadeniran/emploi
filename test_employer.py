@@ -509,6 +509,40 @@ check("vouch unknown employer -> 404",
       client.post("/admin/employers/99999/vouch", headers=ADMIN,
                   json={}).status_code == 404)
 
+# ---------------- admin: grant free credits ----------------
+_bal0 = _db.credit_balance(conn, emp_id)
+check("grant credits requires the admin key",
+      client.post(f"/admin/employers/{emp_id}/credits",
+                  json={"delta": 5}).status_code == 401)
+r = client.post(f"/admin/employers/{emp_id}/credits", headers=ADMIN,
+                json={"delta": 5, "reason": "partner_comp"})
+check("admin grant adds credits and returns the new balance",
+      r.status_code == 200 and r.json()["credit_balance"] == _bal0 + 5)
+check("granted credits are spendable (balance reflects the grant)",
+      _db.credit_balance(conn, emp_id) == _bal0 + 5)
+check("admin grant is recorded with an admin: reason prefix (audit)",
+      conn.execute("SELECT reason FROM employer_credit_ledger WHERE employer_id = ? "
+                   "ORDER BY id DESC LIMIT 1", (emp_id,)).fetchone()[0] == "admin:partner_comp")
+check("grant of zero is rejected",
+      client.post(f"/admin/employers/{emp_id}/credits", headers=ADMIN,
+                  json={"delta": 0}).status_code == 422)
+check("grant to unknown employer -> 404",
+      client.post("/admin/employers/99999/credits", headers=ADMIN,
+                  json={"delta": 5}).status_code == 404)
+check("clawback beyond balance is rejected (never goes negative)",
+      client.post(f"/admin/employers/{emp_id}/credits", headers=ADMIN,
+                  json={"delta": -9999}).status_code == 422)
+check("out-of-bounds grant is rejected by the model (|delta| <= 500)",
+      client.post(f"/admin/employers/{emp_id}/credits", headers=ADMIN,
+                  json={"delta": 100000}).status_code == 422)
+r = client.get("/admin/employers", headers=ADMIN)
+check("admin employer list includes the employer with its live balance",
+      r.status_code == 200
+      and any(e["id"] == emp_id and e["credit_balance"] == _bal0 + 5
+              for e in r.json()["employers"]))
+check("admin employer list requires the admin key",
+      client.get("/admin/employers").status_code == 401)
+
 r = client.get("/admin/metrics", headers=ADMIN)
 metrics = r.json()
 check("admin metrics returns the MVP dashboard rollup",

@@ -1703,6 +1703,13 @@ class VouchIn(BaseModel):
     vouched_by: str = Field(default="joy", max_length=100)
 
 
+class GrantCreditsIn(BaseModel):
+    # Positive = grant; negative = claw back an erroneous grant. Bounded so a
+    # fat-fingered admin can't mint a fortune. Zero is rejected as a no-op.
+    delta: int = Field(ge=-500, le=500)
+    reason: str = Field(default="admin_grant", min_length=1, max_length=100)
+
+
 @app.post("/admin/employers/{employer_id}/vouch")
 def admin_vouch_employer(employer_id: int, body: VouchIn = None,
                          _: None = Depends(admin_key_auth)):
@@ -1715,6 +1722,40 @@ def admin_vouch_employer(employer_id: int, body: VouchIn = None,
         raise HTTPException(status_code=404, detail="employer not found")
     db.log_event(conn, "EmployerVouched", {"employer_id": employer_id})
     return {"ok": True}
+
+
+@app.get("/admin/employers")
+def admin_list_employers(_: None = Depends(admin_key_auth)):
+    """Every employer with its live credit balance, for the admin dashboard's
+    credit-grant tool. No candidate PII."""
+    return {"employers": db.list_employers(get_conn())}
+
+
+@app.post("/admin/employers/{employer_id}/credits")
+def admin_grant_credits(employer_id: int, body: GrantCreditsIn,
+                        _: None = Depends(admin_key_auth)):
+    """Grant (or claw back) unlock credits for an employer — e.g. comping a
+    partner or fixing a billing mishap. Distinct from Paystack purchases:
+    admin grants carry no paystack_reference, so they never collide with the
+    webhook's replay-dedup. Trust gating is unaffected — credits don't verify."""
+    if body.delta == 0:
+        raise HTTPException(status_code=422, detail="delta must be non-zero")
+    conn = get_conn()
+    employer = db.get_employer(conn, employer_id)
+    if not employer:
+        raise HTTPException(status_code=404, detail="employer not found")
+    # A clawback must never drive the balance negative (that would let the next
+    # purchase silently backfill a debt the employer never incurred).
+    balance = db.credit_balance(conn, employer_id)
+    if balance + body.delta < 0:
+        raise HTTPException(status_code=422,
+                            detail=f"clawback exceeds balance ({balance} available)")
+    db.add_credits(conn, employer_id, body.delta, f"admin:{body.reason}")
+    new_balance = db.credit_balance(conn, employer_id)
+    db.log_event(conn, "AdminGrantedCredits",
+                 {"employer_id": employer_id, "delta": body.delta,
+                  "reason": body.reason, "new_balance": new_balance})
+    return {"ok": True, "credit_balance": new_balance}
 
 
 @app.get("/admin/metrics")

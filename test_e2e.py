@@ -618,6 +618,13 @@ ok &= check("split_application and strip_evaluation agree on both header variant
             all("Fit Score:" not in strip_evaluation(t)
                 and "Fit Score:" not in split_application(t)["cv_bullets"]
                 for t in (CANNED.format(score=88), FULL_DRAFT)))
+# Preamble before the first header must NOT be dropped — it belongs to the
+# cover letter (the exported artifact), never silently lost.
+_pre = split_application("Here is your tailored application:\n\n## Cover Letter\nDear team,\n\n## Fit Score\nFit Score: 70/100")
+ok &= check("split_application keeps preamble text (folds it into the cover letter)",
+            "Here is your tailored application:" in _pre["cover_letter"]
+            and "Dear team," in _pre["cover_letter"]
+            and "70/100" not in _pre["cover_letter"])
 
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)
