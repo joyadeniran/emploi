@@ -76,8 +76,14 @@ check("GET /employer without membership -> 404",
 r = client.post("/employer/onboarding", headers=HM,
                 json={"company_name": "Acme Corp", "company_domain": "acmecorp.com"})
 check("cold onboarding with healthy domain -> 201", r.status_code == 201)
-check("onboarding returns high trust for healthy verified domain",
-      r.json()["trust_level"] == "high" and r.json()["trust_score"] >= 75)
+# A healthy domain still SCORES well, but a cold signup has proven nothing
+# about its relationship to that domain, so it can never be "high" (which is
+# what renders a "Verified employer" badge to candidates). Capped at medium
+# until domain control is proven or an admin vouches.
+check("healthy domain still scores well on a cold signup",
+      r.json()["trust_score"] >= 75)
+check("cold onboarding is NEVER 'high' — domain control is unproven",
+      r.json()["trust_level"] == "medium")
 emp_id = r.json()["employer_id"]
 
 check("duplicate onboarding -> 409",

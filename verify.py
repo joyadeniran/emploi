@@ -270,17 +270,31 @@ def compute_trust(signals: dict):
     return score, level, evidence
 
 
-def employer_portal_level(score, red_flags=None, signals=None) -> str:
+def employer_portal_level(score, red_flags=None, signals=None,
+                          domain_verified=False) -> str:
     """Map a verify_employer result onto the Employer Portal's trust levels
     (spec §5.9 — distinct from the candidate-facing level strings above):
       avoid  — score < 20 OR any red flags (onboarding is BLOCKED)
       low    — score < 40 (allowed; warning badge shown to candidates)
       medium — 40–74
-      high   — ≥ 75
-    One portal-specific cap on top of the score mapping: a company domain
-    that does not resolve can never rate better than 'low' — at onboarding
-    there is no job text for red flags to fire on, and the domain-as-contact
-    corporate bonus would otherwise let a nonexistent domain reach 'medium'.
+      high   — >= 75 AND proven control of the company domain
+    Two portal-specific caps on top of the score mapping:
+
+    1. A company domain that does not resolve can never rate better than
+       'low' — at onboarding there is no job text for red flags to fire on,
+       and the domain-as-contact corporate bonus would otherwise let a
+       nonexistent domain reach 'medium'.
+
+    2. Without `domain_verified`, a signup can never reach 'high'. 'high'
+       is what renders a "Verified employer" badge to candidates, but the
+       score describes only the DOMAIN — which the claimant merely typed.
+       It is zero evidence they work there, so a scammer could type a real
+       company's domain, inherit its score, and wear its verified badge
+       (the exact scam this product exists to prevent). Proof of control is
+       the ONLY thing that earns 'high'. An admin vouch is the other
+       trusted path and is handled by callers via `warm_intro_by`, not here.
+       The default is False so any caller is safe by default.
+
     Computed in code from the deterministic score, never by an LLM."""
     if red_flags:
         return "avoid"
@@ -291,7 +305,7 @@ def employer_portal_level(score, red_flags=None, signals=None) -> str:
         return "low"
     if s < 75:
         return "medium"
-    return "high"
+    return "high" if domain_verified else "medium"
 
 
 def verify_employer(company: str, contact: str, job_text: str = "", role: str = "",

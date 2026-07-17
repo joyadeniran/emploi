@@ -114,8 +114,27 @@ check("invite shape: role preview (not full description)",
       and "description" not in inv["role"])
 check("invite shape: employer trust block with verified bool",
       inv["employer"]["company_name"] == "Acme Corp"
-      and inv["employer"]["verified"] is True
-      and inv["employer"]["trust_level"] == "high")
+      and inv["employer"]["verified"] is False
+      and inv["employer"]["trust_level"] == "medium")
+# Regression: a cold signup must NEVER present to a candidate as a verified
+# employer. The trust score describes only the domain the employer TYPED —
+# anyone can type a real company's domain. Claiming "Verified employer" off
+# that would turn our own badge into the lure for the scam we exist to stop.
+check("cold employer NEVER shows candidates a verified badge",
+      inv["employer"]["verified"] is False)
+
+# ...but the trusted path must still work: an admin vouch is real evidence, so
+# a vouched employer DOES present as verified. Capping cold signups must not
+# break the one route that legitimately earns the badge.
+_conn = m.get_conn()
+_emp_row = _conn.execute("SELECT id FROM employers WHERE company_name = 'Acme Corp'").fetchone()
+_db.update_employer(_conn, _emp_row["id"], warm_intro_by="joy@emploihq.com")
+_vouched = client.get("/invites", headers=CAND).json()["invites"][0]["employer"]
+check("an admin-vouched employer DOES show candidates the verified badge",
+      _vouched["verified"] is True)
+_db.update_employer(_conn, _emp_row["id"], warm_intro_by=None)
+check("removing the vouch removes the verified badge again",
+      client.get("/invites", headers=CAND).json()["invites"][0]["employer"]["verified"] is False)
 check("invite shape: note + expiry present",
       inv["invite_note"] == "Your SQL work stood out" and inv["expires_at"])
 check("invalid status filter -> 422",

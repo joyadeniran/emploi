@@ -528,5 +528,38 @@ ok &= check("clear_user drops employer_users membership",
 ok &= check("employers row survives for audit",
             get_employer(econn, emp2) is not None)
 
+# --- one-time trust_level backfill (pre-domain-verification rows) -----------
+# Cold signups could once reach 'high' from signals about a domain they merely
+# typed, which showed candidates a "Verified employer" badge. Stored rows must
+# be corrected on deploy: verify_employers skips fresh domains for 7 days, so
+# they would otherwise keep the false badge for a week.
+import db as _dbmod  # noqa: E402
+
+bconn = connect(":memory:")
+bconn.execute("INSERT INTO employers (company_name, company_domain, trust_score, trust_level) "
+              "VALUES ('Impostor', 'paystack.com', 90, 'high')")
+bconn.execute("INSERT INTO employers (company_name, company_domain, trust_score, trust_level, "
+              "warm_intro_by) VALUES ('Vouched', 'real.com', 90, 'high', 'joy@emploihq.com')")
+bconn.commit()
+_dbmod._migrate(bconn)
+_levels = {r["company_name"]: r["trust_level"]
+           for r in bconn.execute("SELECT company_name, trust_level FROM employers")}
+ok &= check("backfill downgrades a pre-verification 'high' cold employer",
+            _levels["Impostor"] == "medium")
+ok &= check("backfill never touches a vouched employer (a vouch is real evidence)",
+            _levels["Vouched"] == "high")
+
+# Self-disabling: once domain_verified lands, the backfill must never fire
+# again — otherwise it would re-downgrade a genuinely verified employer on
+# every connect().
+bconn.execute("ALTER TABLE employers ADD COLUMN domain_verified INTEGER NOT NULL DEFAULT 0")
+bconn.execute("UPDATE employers SET trust_level = 'high', domain_verified = 1 "
+              "WHERE company_name = 'Impostor'")
+bconn.commit()
+_dbmod._migrate(bconn)
+ok &= check("backfill self-disables once domain_verified exists (no landmine)",
+            bconn.execute("SELECT trust_level FROM employers WHERE company_name = 'Impostor'"
+                          ).fetchone()["trust_level"] == "high")
+
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

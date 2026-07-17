@@ -328,6 +328,28 @@ def _migrate(conn) -> None:
             conn.execute(statement)
         except sqlite3.OperationalError:
             pass
+
+    # One-time correction, not an ALTER. Before domain-control verification
+    # existed, a cold signup could reach trust_level 'high' purely from signals
+    # about a domain it merely TYPED — which rendered a "Verified employer"
+    # badge to candidates (see verify.employer_portal_level). Those rows are
+    # now unreachable but already stored, and workers/verify_employers skips
+    # domains whose trust record is fresh (max_age_days=7), so they would keep
+    # the false badge for up to a week. Downgrade them here instead.
+    #
+    # SELF-DISABLING: the moment the domain_verified column lands (the
+    # domain-verification spec), this becomes a no-op — so it can never
+    # re-downgrade an employer who has genuinely proven control. Vouched
+    # employers are untouched: an admin vouch is real evidence.
+    # Probe with a read first: connect() runs on every worker/API start and
+    # they share one SQLite file on the Render Disk, so the steady state must
+    # not take a write lock it doesn't need.
+    employer_cols = {row["name"] for row in conn.execute("PRAGMA table_info(employers)")}
+    if employer_cols and "domain_verified" not in employer_cols:
+        if conn.execute("SELECT 1 FROM employers WHERE trust_level = 'high' "
+                        "AND warm_intro_by IS NULL LIMIT 1").fetchone():
+            conn.execute("UPDATE employers SET trust_level = 'medium' "
+                         "WHERE trust_level = 'high' AND warm_intro_by IS NULL")
     conn.commit()
 
 
