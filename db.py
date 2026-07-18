@@ -287,6 +287,21 @@ CREATE TABLE IF NOT EXISTS candidate_unlocks (
 CREATE INDEX IF NOT EXISTS idx_unlocks_role ON candidate_unlocks(employer_role_id);
 CREATE INDEX IF NOT EXISTS idx_unlocks_candidate ON candidate_unlocks(candidate_user_id);
 
+-- Inbound applications: a candidate applied DIRECTLY via a public job link
+-- (app.emploihq.com/jobs/{id}), as opposed to the employer-curated shortlist.
+-- Because the candidate self-submitted, the employer may see their contact
+-- immediately — no unlock/credit needed (consent is the application itself).
+CREATE TABLE IF NOT EXISTS role_applications (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    employer_role_id    INTEGER NOT NULL REFERENCES employer_roles(id),
+    candidate_user_id   TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'applied',  -- 'applied' | 'reviewed' | 'rejected'
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(employer_role_id, candidate_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_role_apps_role ON role_applications(employer_role_id);
+CREATE INDEX IF NOT EXISTS idx_role_apps_candidate ON role_applications(candidate_user_id);
+
 -- Structured audit / analytics events (stdout now; queried later).
 CREATE TABLE IF NOT EXISTS events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -984,6 +999,58 @@ def list_roles(conn, employer_id: int, status: Optional[str] = None) -> list:
     return [dict(r) for r in rows]
 
 
+def get_public_role(conn, role_id: int) -> Optional[dict]:
+    """A role for the PUBLIC job page (app.emploihq.com/jobs/{id}). Joins the
+    employer's company + trust so the page can show provenance, but only for
+    OPEN roles — a closed/hired role is no longer accepting applications.
+    Returns None (→ 404) otherwise. Public-safe columns ONLY: never the
+    shortlist, candidate data, or the employer's internal counters."""
+    row = conn.execute(
+        "SELECT r.id, r.title, r.description, r.location, r.is_remote, "
+        "       r.salary_text, r.status, r.created_at, "
+        "       e.company_name, e.company_domain, e.trust_level, e.warm_intro_by "
+        "FROM employer_roles r JOIN employers e ON e.id = r.employer_id "
+        "WHERE r.id = ? AND r.status = 'open'", (role_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def create_role_application(conn, role_id: int, candidate_user_id: str) -> str:
+    """A candidate applies to a role via its public link. Idempotent — a second
+    apply is a no-op, never an error. Returns 'ok' | 'exists' | 'closed'."""
+    role = conn.execute(
+        "SELECT status FROM employer_roles WHERE id = ?", (role_id,)).fetchone()
+    if not role or role["status"] != "open":
+        return "closed"
+    existing = conn.execute(
+        "SELECT 1 FROM role_applications WHERE employer_role_id = ? "
+        "AND candidate_user_id = ?", (role_id, candidate_user_id)).fetchone()
+    if existing:
+        return "exists"
+    conn.execute(
+        "INSERT INTO role_applications (employer_role_id, candidate_user_id) "
+        "VALUES (?, ?)", (role_id, candidate_user_id))
+    conn.commit()
+    return "ok"
+
+
+def has_applied(conn, role_id: int, candidate_user_id: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM role_applications WHERE employer_role_id = ? "
+        "AND candidate_user_id = ?", (role_id, candidate_user_id)).fetchone() is not None
+
+
+def list_role_applicants(conn, role_id: int) -> list:
+    """Inbound applicants for a role, newest first. Each carries the candidate's
+    user_id + email/name (from users) so the API can build the contact view via
+    core.format_employer_contact_view — contact is consented (they applied)."""
+    rows = conn.execute(
+        "SELECT a.candidate_user_id, a.status, a.created_at, "
+        "       u.email, u.name "
+        "FROM role_applications a LEFT JOIN users u ON u.id = a.candidate_user_id "
+        "WHERE a.employer_role_id = ? ORDER BY a.id DESC", (role_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
 def update_role(conn, role_id: int, **fields) -> None:
     allowed = {"title", "description", "location", "is_remote", "salary_text"}
     fields = {k: v for k, v in fields.items() if k in allowed}
@@ -1343,14 +1410,22 @@ def log_event(conn, event_type: str, payload: dict,
 # Job source registry — job_sources table
 # ---------------------------------------------------------------------------
 
-def seed_job_sources(conn, sources_path: str) -> int:
-    """Seed the job_sources table from a JSON file if the table is empty.
+def seed_job_sources(conn, sources_path: str, sync: bool = False) -> int:
+    """Seed the job_sources table from a JSON file.
 
-    Returns the number of rows inserted (0 if already seeded or file missing).
-    The DB is the source of truth after first seed — the file is not re-read.
+    Default (sync=False): seed only if the table is empty — the DB is the
+    source of truth after first seed.
+
+    sync=True: re-read the file and INSERT OR IGNORE every row even when the
+    table is already populated. This ADDS new (ats, token) sources from the
+    file without disturbing existing rows — an admin's manual toggles and any
+    API-added sources are preserved (INSERT OR IGNORE never overwrites). This
+    is how new file-declared sources reach an already-seeded prod DB.
+
+    Returns the number of rows inserted (0 if nothing new / file missing).
     """
     existing = conn.execute("SELECT COUNT(*) AS n FROM job_sources").fetchone()["n"]
-    if existing > 0:
+    if existing > 0 and not sync:
         return 0
     try:
         data = json.loads(open(sources_path).read())
@@ -1366,7 +1441,7 @@ def seed_job_sources(conn, sources_path: str) -> int:
             if not isinstance(entry, dict) or not entry.get("token"):
                 continue
             try:
-                conn.execute(
+                cur = conn.execute(
                     "INSERT OR IGNORE INTO job_sources "
                     "(company, ats, token, priority, category, region, active) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -1377,7 +1452,10 @@ def seed_job_sources(conn, sources_path: str) -> int:
                      category,
                      entry.get("region", "global"),
                      1 if entry.get("active", True) else 0))
-                inserted += 1
+                # rowcount is 1 only when a row was actually inserted; an
+                # IGNOREd (already-present) row is 0. So the return value is a
+                # true count of NEW sources, which sync mode relies on.
+                inserted += max(cur.rowcount, 0)
             except Exception:
                 pass
     conn.commit()

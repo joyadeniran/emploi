@@ -240,6 +240,59 @@ check("another employer's role -> 404 (ownership enforced)",
 check("role endpoints require an employer account",
       client.get(f"/employer/roles/{free_role_id}", headers=HM_BAD).status_code == 404)
 
+# ---------------- public job page + apply funnel ----------------
+CANDP = {"X-API-Key": "test-key", "X-User-Id": "cand-pub"}
+# Public view: no auth header at all.
+r = client.get(f"/public/roles/{free_role_id}")
+check("public role page is viewable with NO auth",
+      r.status_code == 200 and r.json()["role"]["id"] == free_role_id
+      and r.json()["role"]["company_name"] == "Acme Corp")
+check("public role exposes only safe fields (no invites/shortlist/employer internals)",
+      set(r.json()["role"].keys()) ==
+      {"id", "title", "description", "location", "is_remote", "salary_text",
+       "company_name", "created_at", "trust"})
+check("public role trust is honest ('Company checked', not 'Verified employer')",
+      r.json()["role"]["trust"]["verified"] is False
+      and r.json()["role"]["trust"]["label"] == "Company checked")
+check("unknown public role -> 404",
+      client.get("/public/roles/999999").status_code == 404)
+
+# Apply is auth-gated (the Google sign-in funnel).
+check("applying without auth -> 401",
+      client.post(f"/public/roles/{free_role_id}/apply").status_code == 401)
+r = client.post(f"/public/roles/{free_role_id}/apply", headers=CANDP)
+check("candidate applies to a public role -> 201",
+      r.status_code == 201 and r.json()["already_applied"] is False)
+r = client.post(f"/public/roles/{free_role_id}/apply", headers=CANDP)
+check("re-applying is idempotent (already_applied=true, still 201)",
+      r.status_code == 201 and r.json()["already_applied"] is True)
+check("only one application row exists for that candidate+role",
+      _db.has_applied(conn, free_role_id, "cand-pub")
+      and len(_db.list_role_applicants(conn, free_role_id)) == 1)
+
+# Employer sees inbound applicants with contact (consented — they applied).
+r = client.get(f"/employer/roles/{free_role_id}/applicants", headers=HM)
+check("employer sees inbound applicants with contact",
+      r.status_code == 200 and r.json()["count"] == 1
+      and r.json()["applicants"][0]["candidate_user_id"] == "cand-pub"
+      and "email" in r.json()["applicants"][0]["contact"])
+check("applicants list enforces role ownership",
+      client.get(f"/employer/roles/{free_role_id}/applicants", headers=HM2).status_code == 404)
+
+# A closed role stops accepting and 404s publicly (throwaway role so the
+# shared free/paid roles stay open for later tests).
+_emp1 = _db.get_employer_for_user(conn, "hm-1")
+_tmp = _db.create_role(conn, _emp1["id"], "hm-1",
+                       {"title": "Temp Role", "description": "temp", "is_remote": False})
+check("public view of an open role works before close",
+      client.get(f"/public/roles/{_tmp['id']}").status_code == 200)
+_db.close_role(conn, _tmp["id"], "filled")
+check("public view of a closed role -> 404",
+      client.get(f"/public/roles/{_tmp['id']}").status_code == 404)
+check("applying to a closed role -> 409",
+      client.post(f"/public/roles/{_tmp['id']}/apply",
+                  headers={"X-API-Key": "test-key", "X-User-Id": "cand-2"}).status_code == 409)
+
 # PATCH: description change invalidates cached shortlist
 _db.replace_shortlist(conn, free_role_id, [
     {"candidate_user_id": "cand-x", "fit_score": 50, "reason": "seed"}])

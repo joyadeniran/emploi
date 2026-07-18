@@ -262,6 +262,23 @@ with tempfile.TemporaryDirectory() as tmpdir:
     ok &= check("seed is a no-op when table already populated",
                 len(db.list_job_sources(conn)) == source_count)
 
+    # sync=True adds NEW file sources to an already-seeded DB without touching
+    # existing rows (this is how repo-declared sources reach a live prod DB).
+    _admin = db.get_job_source(conn, db.list_job_sources(conn)[0]["id"])
+    db.set_job_source_active(conn, _admin["id"], False)  # simulate a manual toggle
+    extra = json.loads(open(sources_path).read())
+    extra["extra_category"] = [
+        {"company": "NewCo", "ats": "greenhouse", "token": "newco-sync", "active": True}]
+    sync_path = os.path.join(tmpdir, "sources_sync.json")
+    open(sync_path, "w").write(json.dumps(extra))
+    added = db.seed_job_sources(conn, sync_path, sync=True)
+    ok &= check("sync=True inserts only the new source", added == 1
+                and any(s["token"] == "newco-sync" for s in db.list_job_sources(conn)))
+    ok &= check("sync=True preserves an existing row's manual toggle (INSERT OR IGNORE)",
+                db.get_job_source(conn, _admin["id"])["active"] == 0)
+    ok &= check("sync=True is idempotent (re-running adds nothing)",
+                db.seed_job_sources(conn, sync_path, sync=True) == 0)
+
 # ---- dry-run: reads JSON, prints, no DB writes -----------------------------
 
 with tempfile.TemporaryDirectory() as tmpdir:
