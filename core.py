@@ -425,7 +425,6 @@ def split_application(text: str) -> dict:
     parts = {"cover_letter": "", "cv_bullets": "", "evaluation": ""}
     current = None
     buckets = {"cover_letter": [], "cv_bullets": [], "evaluation": []}
-    preamble = []
 
     for line in (text or "").split("\n"):
         matched = None
@@ -436,14 +435,12 @@ def split_application(text: str) -> dict:
         if matched:
             current = matched
             continue  # drop the header line itself; callers re-title
-        (buckets[current] if current else preamble).append(line)
+        # Anything before the first header (a preamble, or a whole
+        # headerless draft) belongs to the cover letter — never dropped.
+        buckets[current or "cover_letter"].append(line)
 
     for key in parts:
         parts[key] = "\n".join(buckets[key]).strip()
-
-    # No recognised headers at all → never lose the draft.
-    if not any(parts.values()):
-        parts["cover_letter"] = (text or "").strip()
     return parts
 
 

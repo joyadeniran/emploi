@@ -15,3 +15,6 @@ business/
 .claude/*
 !.claude/skills/
 index-screenshot.png
+
+# FUSE filesystem orphans (appear on some mounted/synced dirs)
+.fuse_hidden*

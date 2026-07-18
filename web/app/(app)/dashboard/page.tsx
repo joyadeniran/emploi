@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { ArrowRight, CheckCircle2, Circle, Info, ShieldCheck, Sparkles } from "lucide-react";
 import { auth } from "@/auth";
 import { applications as demoApplications, firstName, greeting, matches as demoMatches, statusMeta, type ApplicationStatus } from "@/lib/data";
-import { apiFetch, DEMO_MODE, toMatchCard, type ApiMatch } from "@/lib/api";
+import { ApiUnavailableError, apiFetch, DEMO_MODE, toMatchCard, type ApiMatch } from "@/lib/api";
 import { FitRing, ProgressRing } from "@/components/ProgressRing";
 import { CareerTwinBot } from "@/components/CareerTwinBot";
 import { RecruiterVisibilityBanner } from "@/components/RecruiterVisibilityBanner";
@@ -51,9 +51,15 @@ export default async function DashboardPage() {
       const twinResult = await apiFetch<{ career_twin: Twin }>("/career-twin");
       twin = twinResult.career_twin ?? {};
       needsOnboarding = !twin.onboarding_complete;
-    } catch {
-      // Backend unreachable OR errored on the twin fetch: fall back to the
-      // sample dashboard rather than nuking the session into onboarding.
+    } catch (caught) {
+      // Fall back to the sample dashboard rather than nuking the session into
+      // onboarding (the "recreate my twin each login" bug). But an outage
+      // (expected, transient) and a real error (500/401 — misconfig, a bug)
+      // must not look identical: log the unexpected one so it's diagnosable
+      // instead of silently masquerading as working demo data.
+      if (!(caught instanceof ApiUnavailableError)) {
+        console.error("dashboard: unexpected error loading Career Twin", caught);
+      }
       cards = demoMatches;
       sampleData = true;
       unavailable = true;

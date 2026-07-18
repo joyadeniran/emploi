@@ -866,6 +866,19 @@ def get_employer_for_user(conn, user_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def list_employers(conn, limit: int = 200) -> list:
+    """All employers with their live credit balance, newest first. Admin-only
+    view (the /admin dashboard). Balance is summed from the ledger so it can
+    never drift from the source of truth."""
+    rows = conn.execute(
+        "SELECT e.id, e.company_name, e.company_domain, e.trust_level, "
+        "e.warm_intro_by, "
+        "COALESCE((SELECT SUM(delta) FROM employer_credit_ledger l "
+        "          WHERE l.employer_id = e.id), 0) AS credit_balance "
+        "FROM employers e ORDER BY e.id DESC LIMIT ?", (limit,))
+    return [dict(r) for r in rows]
+
+
 def update_employer(conn, employer_id: int, **fields) -> None:
     """Update employer identity/trust fields. Unknown keys dropped."""
     allowed = {"company_name", "company_domain", "trust_score", "trust_level",

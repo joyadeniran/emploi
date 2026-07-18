@@ -16,21 +16,25 @@ export type DraftSections = {
   evaluation: string;
 };
 
+// Must stay in lockstep with core._EVAL_HEADER / _SECTION_PATTERNS. The
+// evaluation header has TWO spellings in real model output — "Fit Evaluation"
+// AND "Fit Score" — and missing one routes the evaluation into the CV bullets
+// (mislabels the gap analysis and empties the "for your eyes only" panel).
 const SECTION_RES: [keyof DraftSections, RegExp][] = [
   ["coverLetter", /^\s{0,3}#{1,6}\s*\**\s*cover\s+letter\b/i],
   ["cvBullets", /^\s{0,3}#{1,6}\s*\**\s*cv\s+bullet/i],
-  ["evaluation", /^\s{0,3}#{1,6}\s*\**\s*fit\s+evaluation\b/i],
+  ["evaluation", /^\s{0,3}#{1,6}\s*\**\s*fit\s+(?:evaluation|score)\b/i],
 ];
 
 /**
  * Mirrors core.split_application. Defensive: unknown headers never throw, and
- * text with no recognised header at all becomes the cover letter rather than
- * being dropped.
+ * any text before the first recognised header (a preamble, or a whole
+ * headerless draft) becomes the cover letter rather than being dropped.
  */
 export function splitDraft(text: string): DraftSections {
   const buckets: DraftSections = { coverLetter: "", cvBullets: "", evaluation: "" };
   const lines: Record<keyof DraftSections, string[]> = { coverLetter: [], cvBullets: [], evaluation: [] };
-  let current: keyof DraftSections | null = null;
+  let current: keyof DraftSections = "coverLetter";
 
   for (const line of (text ?? "").split("\n")) {
     const hit = SECTION_RES.find(([, re]) => re.test(line));
@@ -38,13 +42,10 @@ export function splitDraft(text: string): DraftSections {
       current = hit[0];
       continue; // drop the header line itself
     }
-    if (current) lines[current].push(line);
+    lines[current].push(line);
   }
   for (const key of Object.keys(lines) as (keyof DraftSections)[]) {
     buckets[key] = lines[key].join("\n").trim();
-  }
-  if (!buckets.coverLetter && !buckets.cvBullets && !buckets.evaluation) {
-    buckets.coverLetter = (text ?? "").trim();
   }
   return buckets;
 }
