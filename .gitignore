@@ -18,3 +18,10 @@ index-screenshot.png
 
 # FUSE filesystem orphans (appear on some mounted/synced dirs)
 .fuse_hidden*
+
+# Local brand/design exports & working drafts — kept on disk, not in the repo
+*.psd
+/Emploi Logo Unveil.mp4
+/emploi final.png
+/emploi icon copy.jpg
+/updated-emploi-skill.md
