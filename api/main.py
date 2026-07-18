@@ -1270,10 +1270,25 @@ def create_role_endpoint(body: RoleCreateIn, user_id: str = Depends(rate_limit))
         elif extracted:
             fields = extracted
             extracted_from = "url"
-        elif not body.jd_text:
-            raise HTTPException(status_code=422,
-                                detail="we couldn't extract that URL — paste the "
-                                       "JD text directly")
+        else:
+            # Not one of the 5 ATS APIs — try the generic career-page connector:
+            # fetch the page HTML, reduce to text, let Gemini extract the role.
+            # This is what makes "paste any job URL" work (careers pages, niche
+            # boards, Greenhouse embeds), not just the ATS JSON hosts.
+            page_text = core.fetch_url_text(body.url)
+            if page_text:
+                model = require_model()
+                generic = run_extraction(core.extract_single_job, model, page_text)
+                if generic and (generic.get("title") or "").strip():
+                    fields = generic
+                    fields["source_url"] = body.url
+                    fields["source_ats"] = "web"
+                    extracted_from = "url_generic"
+            if fields is None and not body.jd_text:
+                raise HTTPException(status_code=422,
+                                    detail="we couldn't read that page — it may need a "
+                                           "login or use heavy scripting. Paste the JD "
+                                           "text directly and we'll take it from there.")
     if fields is None:
         if not (body.jd_text or "").strip():
             raise HTTPException(status_code=422,

@@ -644,5 +644,92 @@ ok &= check("url-extract empty/garbage input -> None",
             and extract_job_from_url("not a url at all !!!",
                                      fetch_fn=fake_single_fetch) is None)
 
+# --- Generic career-page connector (core.fetch_url_text) --------------------
+# The paste-URL fix: any non-ATS job URL (careers page, niche board, embed)
+# gets fetched as HTML, reduced to text, then handed to Gemini. An unknown
+# host is no longer a dead end.
+from core import fetch_url_text
+
+_JD_HTML = ("<html><head><title>Careers</title><style>.a{color:red}</style>"
+            "<script>track()</script></head><body><h1>Solar Installer</h1>"
+            "<div>" + ("We install rooftop solar across Lagos and need a hands-on "
+            "installer with 2+ years experience. Remote coordination, field work. " * 6)
+            + "</div><p>Apply &amp; grow with us.</p></body></html>")
+
+txt = fetch_url_text("https://www.greenjobs.co.uk/job/12345/solar-installer",
+                     fetch_fn=lambda u: _JD_HTML)
+ok &= check("generic connector reads a normal careers/board page into text",
+            bool(txt) and "Solar Installer" in txt and "rooftop solar" in txt)
+ok &= check("generic connector strips script/style/tags and unescapes entities",
+            "track()" not in txt and ".a{" not in txt and "<" not in txt
+            and "Apply & grow" in txt)
+ok &= check("generic connector rejects a JS-shell / too-short page (-> None)",
+            fetch_url_text("https://acme.com/x", fetch_fn=lambda u: "<body>Loading…</body>") is None)
+
+# SSRF: user-supplied URLs are fetched server-side, so private/internal targets
+# MUST be refused even if a fetcher is injected (defense in depth, no DNS).
+for _bad in ("http://localhost/x", "http://127.0.0.1:8000/", "http://169.254.169.254/latest/meta-data",
+             "http://10.0.0.5/x", "http://192.168.0.1/x", "http://[::1]/x", "http://0.0.0.0/",
+             "file:///etc/passwd", "ftp://host/x"):
+    ok &= check(f"generic connector refuses SSRF target {_bad}",
+                fetch_url_text(_bad, fetch_fn=lambda u: "x" * 500) is None)
+
+# --- Aggregator sources: Jooble + Adzuna (env-keyed) ------------------------
+import workers.ingest_jobs as _ijmod
+
+# Env-gated: no key -> clean no-op (an unconfigured deploy stays quiet).
+os.environ.pop("JOOBLE_API_KEY", None)
+os.environ.pop("ADZUNA_APP_ID", None)
+os.environ.pop("ADZUNA_APP_KEY", None)
+ok &= check("jooble no-ops without JOOBLE_API_KEY",
+            _ijmod._ingest_jooble({"token": "developer"}, None, True) == (0, 0))
+ok &= check("adzuna no-ops without ADZUNA keys",
+            _ijmod._ingest_adzuna({"token": "gb:nurse"}, None, True) == (0, 0))
+
+# Jooble: token "location:keywords", POST seam, HTML-stripped snippet.
+os.environ["JOOBLE_API_KEY"] = "test-key"
+_seen = {}
+_ijmod._post_json = lambda url, payload: (_seen.update(url=url, payload=payload) or
+    {"jobs": [{"id": 1, "title": "Solar Engineer", "company": "GreenCo",
+               "location": "Lagos", "snippet": "<b>Install</b> rooftop solar &amp; batteries",
+               "salary": "N500k", "link": "https://j/1"},
+              {"title": "", "snippet": "no title -> skipped"}]})
+f, w = _ijmod._ingest_jooble({"token": "Lagos:solar engineer"}, None, dry_run=True)
+ok &= check("jooble parses 'location:keywords' into the POST body",
+            _seen["payload"] == {"keywords": "solar engineer", "location": "Lagos"}
+            and _seen["url"].endswith("/test-key"))
+ok &= check("jooble normalizes + strips HTML and skips a titleless row",
+            f == 2 and w == 1)
+_jn = _ijmod.normalize_jooble_job({"title": "Dev", "company": "Acme", "location": "Remote",
+                                   "snippet": "Build &amp; ship", "link": "u", "salary": "  "})
+ok &= check("jooble normalizer: entities unescaped, remote detected, blank salary -> None",
+            _jn["description"] == "Build & ship" and _jn["is_remote"] is True
+            and _jn["salary_text"] is None and _jn["apply_url"] == "u")
+
+# Adzuna: token "country:keywords", GET seam, salary range formatting.
+os.environ["ADZUNA_APP_ID"] = "id"
+os.environ["ADZUNA_APP_KEY"] = "key"
+_aurl = {}
+_ijmod._fetch = lambda url: (_aurl.update(u=url) or
+    {"results": [{"id": "9", "title": "Nurse", "company": {"display_name": "HealthCo"},
+                  "location": {"display_name": "Cape Town"}, "description": "Patient care",
+                  "salary_min": 300000, "salary_max": 400000,
+                  "redirect_url": "https://a/9", "category": {"label": "Healthcare"}}]})
+f, w = _ijmod._ingest_adzuna({"token": "za:nurse"}, None, dry_run=True)
+ok &= check("adzuna builds a country-scoped GET query",
+            "/jobs/za/search/1" in _aurl["u"] and "what=nurse" in _aurl["u"]
+            and "app_id=id" in _aurl["u"])
+ok &= check("adzuna normalizes one result", f == 1 and w == 1)
+_an = _ijmod.normalize_adzuna_job({"title": "Nurse", "company": {"display_name": "HealthCo"},
+                                   "location": {"display_name": "Remote"},
+                                   "description": "Care", "salary_min": 300000,
+                                   "salary_max": 400000, "redirect_url": "https://a/9"})
+ok &= check("adzuna normalizer: salary range formatted, remote detected",
+            _an["salary_text"] == "300,000–400,000" and _an["is_remote"] is True
+            and _an["company_name"] == "HealthCo")
+os.environ.pop("JOOBLE_API_KEY", None)
+os.environ.pop("ADZUNA_APP_ID", None)
+os.environ.pop("ADZUNA_APP_KEY", None)
+
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

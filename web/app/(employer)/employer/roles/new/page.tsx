@@ -48,8 +48,8 @@ export default function NewRolePage() {
       <header>
         <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">Post a role</h1>
         <p className="mt-1 text-sm text-muted">
-          Paste a job URL from Greenhouse, Lever, Ashby, Workable, or
-          SmartRecruiters — or paste the job description text. Emploi extracts
+          Paste a link to the job — a careers page, a job board, or an ATS
+          like Greenhouse or Lever — or paste the description text. Emploi reads
           the role and curates your shortlist from opted-in Career Twins.
         </p>
       </header>

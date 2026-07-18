@@ -146,6 +146,13 @@ import workers.ingest_jobs as _ij
 _orig_fetch = _ij._fetch
 _ij._fetch = lambda url: (GH_SINGLE if "greenhouse" in url else None)
 
+# Stub the generic career-page connector so the endpoint never touches the
+# network. `_GENERIC_PAGE_TEXT` controls what a non-ATS URL "reads" as:
+# None = unreadable (JS shell / bot wall), a string = extractable JD text.
+_orig_url_text = m.core.fetch_url_text
+_GENERIC_PAGE_TEXT = {"v": None}
+m.core.fetch_url_text = lambda url: _GENERIC_PAGE_TEXT["v"]
+
 r = client.post("/employer/roles", headers=HM,
                 json={"url": "https://boards.greenhouse.io/testco/jobs/4000"})
 check("role from supported ATS URL -> 201, extracted_from url",
@@ -164,7 +171,7 @@ check("LinkedIn URL without jd_text -> 422 with guidance",
 
 r = client.post("/employer/roles", headers=HM,
                 json={"url": "https://careers.unknown-host.com/x"})
-check("unknown host without jd_text -> 422", r.status_code == 422)
+check("unreadable non-ATS URL (JS shell) without jd_text -> 422", r.status_code == 422)
 
 check("no url and no jd_text -> 422",
       client.post("/employer/roles", headers=HM, json={}).status_code == 422)
@@ -200,6 +207,21 @@ r = client.post("/employer/roles", headers=HM2,
 check("failed URL extraction falls back to jd_text",
       r.status_code == 201 and r.json()["extracted_from"] == "text")
 emp2_role_id = r.json()["role_id"]
+
+# Generic career-page connector: a non-ATS URL (careers page / niche board /
+# embed) that DOES read as text is extracted via Gemini — the paste-URL fix.
+_GENERIC_PAGE_TEXT["v"] = ("Solar Installer wanted at GreenCo. Install rooftop "
+                           "solar across Lagos. Remote coordination, field work.")
+m.app.state.model_factory = lambda: FakeModel(
+    '[{"company": "GreenCo", "title": "Solar Installer", '
+    '"description": "Install rooftop solar across Lagos. Field work.", "contact": ""}]')
+r = client.post("/employer/roles", headers=HM2,
+                json={"url": "https://www.greenjobs.co.uk/job/123/solar-installer"})
+check("non-ATS job URL is extracted via the generic connector (extracted_from url_generic)",
+      r.status_code == 201 and r.json()["extracted_from"] == "url_generic"
+      and r.json()["title"] == "Solar Installer")
+_GENERIC_PAGE_TEXT["v"] = None
+m.core.fetch_url_text = _orig_url_text
 _ij._fetch = _orig_fetch
 
 # ---------------- roles: listing, detail, ownership ----------------

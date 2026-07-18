@@ -1,5 +1,5 @@
 {
-  "_doc": "Curated job source list. This file seeds the `job_sources` DB table on first run. After seeding, the DB is the source of truth \u2014 edits here only take effect on the next seed run (or via the admin API). ats: greenhouse | lever | ashby | workable | smartrecruiters | workday | career_page. priority: 10=hourly, 7=every 3h, 5=twice daily, 1=daily. active=false means skip without deleting. Workable/SmartRecruiters entries below are seeded active=false \u2014 spot-check the public URL (apply.workable.com/{token}/ or jobs.smartrecruiters.com/{token}) before enabling. A failing source is graceful (0 jobs, no crash) but wastes a request; verify first. Entries below marked active=false with the note `dead_2026-07-15` are ones the spot-check confirmed returned 0 jobs against their ATS endpoint \u2014 the token is wrong, the company migrated ATS, or the company no longer publishes a public feed. Re-enable via `PATCH /admin/job-sources/{id}/toggle` after finding the correct token.",
+  "_doc": "Curated job source list. This file seeds the `job_sources` DB table on first run. After seeding, the DB is the source of truth — edits here only take effect on the next seed run (or via the admin API). ats: greenhouse | lever | ashby | workable | smartrecruiters | workday | career_page. priority: 10=hourly, 7=every 3h, 5=twice daily, 1=daily. active=false means skip without deleting. Workable/SmartRecruiters entries below are seeded active=false — spot-check the public URL (apply.workable.com/{token}/ or jobs.smartrecruiters.com/{token}) before enabling. A failing source is graceful (0 jobs, no crash) but wastes a request; verify first. Entries below marked active=false with the note `dead_2026-07-15` are ones the spot-check confirmed returned 0 jobs against their ATS endpoint — the token is wrong, the company migrated ATS, or the company no longer publishes a public feed. Re-enable via `PATCH /admin/job-sources/{id}/toggle` after finding the correct token. | aggregators (jooble/adzuna) are env-keyed: set JOOBLE_API_KEY or ADZUNA_APP_ID+ADZUNA_APP_KEY, tune the token queries (jooble token=location:keywords, adzuna token=country:keywords), then flip active:true via PATCH /admin/job-sources/{id}/toggle — no redeploy.",
   "african_tech": [
     {
       "company": "Andela",
@@ -1193,5 +1193,43 @@
       "active": false
     }
   ],
-  "_last_verified": "2026-07-15 (workers/spot_check_sources.py against live ATS endpoints)"
+  "_last_verified": "2026-07-15 (workers/spot_check_sources.py against live ATS endpoints)",
+  "aggregators": [
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:remote developer",
+      "priority": 6,
+      "region": "africa",
+      "active": false,
+      "note": "needs JOOBLE_API_KEY; token is location:keywords"
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Kenya:customer support",
+      "priority": 5,
+      "region": "africa",
+      "active": false,
+      "note": "needs JOOBLE_API_KEY"
+    },
+    {
+      "company": "",
+      "ats": "adzuna",
+      "token": "za:software engineer",
+      "priority": 6,
+      "region": "africa",
+      "active": false,
+      "note": "needs ADZUNA_APP_ID/ADZUNA_APP_KEY; token is country:keywords"
+    },
+    {
+      "company": "",
+      "ats": "adzuna",
+      "token": "gb:remote data analyst",
+      "priority": 5,
+      "region": "global",
+      "active": false,
+      "note": "needs ADZUNA_APP_ID/ADZUNA_APP_KEY"
+    }
+  ]
 }
