@@ -618,6 +618,19 @@ check("admin employer list includes the employer with its live balance",
 check("admin employer list requires the admin key",
       client.get("/admin/employers").status_code == 401)
 
+# ---------------- admin: owner-only user list (email/PII) ----------------
+_db.upsert_user(conn, "hm-1", "hm@acme.com", "Acme HM")
+_db.save_career_twin(conn, "twin-done", {"name": "Ada", "onboarding_complete": True})
+_db.upsert_user(conn, "twin-done", "ada@x.com", "Ada")
+r = client.get("/admin/users", headers=ADMIN)
+check("admin user list requires the admin key",
+      client.get("/admin/users").status_code == 401)
+check("admin user list returns accounts with email + twin status",
+      r.status_code == 200
+      and any(u["email"] == "ada@x.com" and u["twin_complete"] is True
+              for u in r.json()["users"])
+      and any(u["email"] == "hm@acme.com" for u in r.json()["users"]))
+
 r = client.get("/admin/metrics", headers=ADMIN)
 metrics = r.json()
 check("admin metrics returns the MVP dashboard rollup",

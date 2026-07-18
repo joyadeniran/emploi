@@ -436,6 +436,25 @@ def get_user(conn, user_id: str) -> Optional[dict]:
     return out
 
 
+def list_users(conn, limit: int = 500) -> list:
+    """All signed-in accounts, newest first, with whether they've activated a
+    Career Twin. Owner-only (contains PII) — the admin surface elsewhere stays
+    counts-only; this is the deliberate exception, gated by the admin key."""
+    rows = conn.execute(
+        "SELECT u.id, u.email, u.name, u.created_at, u.last_seen_at, "
+        "  CASE WHEN ct.user_id IS NULL THEN 0 ELSE 1 END AS has_twin, "
+        "  COALESCE(json_extract(ct.data, '$.onboarding_complete'), 0) AS twin_complete "
+        "FROM users u LEFT JOIN career_twins ct ON ct.user_id = u.id "
+        "ORDER BY u.created_at DESC LIMIT ?", (limit,))
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["has_twin"] = bool(d["has_twin"])
+        d["twin_complete"] = bool(d["twin_complete"])
+        out.append(d)
+    return out
+
+
 def set_notifications_enabled(conn, user_id: str, enabled: bool) -> bool:
     """Flip the user's email-digest opt-in. Returns True on success, False
     if the user row doesn't exist (caller should upsert_user first, which
