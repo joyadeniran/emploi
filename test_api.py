@@ -851,6 +851,35 @@ r = client.patch("/user/notifications", headers=AUTH, json={"enabled": True})
 check("users row wiped by DELETE /user (clear_user covers users)",
       r.status_code == 409)
 
+# ---------------- internal scheduler timing (_worker_due) ----------------
+from datetime import datetime as _dt
+
+# hourly: due at boot (last None) and once an hour has elapsed; not before.
+check("scheduler hourly: due when never run", m._worker_due(("hourly",), _dt(2026, 7, 18, 14, 0), None))
+check("scheduler hourly: not due 30min after last run",
+      not m._worker_due(("hourly",), _dt(2026, 7, 18, 14, 30), _dt(2026, 7, 18, 14, 0)))
+check("scheduler hourly: due 60min after last run",
+      m._worker_due(("hourly",), _dt(2026, 7, 18, 15, 0), _dt(2026, 7, 18, 14, 0)))
+
+# daily at 02:00 UTC.
+check("scheduler daily: NOT due before target time (no retro-fire)",
+      not m._worker_due(("daily", 2, 0), _dt(2026, 7, 18, 1, 30), None))
+check("scheduler daily: due after target when not yet run today",
+      m._worker_due(("daily", 2, 0), _dt(2026, 7, 18, 2, 0), _dt(2026, 7, 17, 2, 0)))
+check("scheduler daily: NOT due again once it ran today",
+      not m._worker_due(("daily", 2, 0), _dt(2026, 7, 18, 14, 0), _dt(2026, 7, 18, 2, 0)))
+check("scheduler daily: seeded last_run=now on a mid-day deploy does NOT fire today",
+      not m._worker_due(("daily", 2, 0), _dt(2026, 7, 18, 14, 0), _dt(2026, 7, 18, 14, 0)))
+check("scheduler daily: fires next day at target after a mid-day-deploy seed",
+      m._worker_due(("daily", 2, 0), _dt(2026, 7, 19, 2, 0), _dt(2026, 7, 18, 14, 0)))
+
+# It is opt-in: importing the module (as this test does) must NOT have started
+# a scheduler thread, since INTERNAL_SCHEDULER is unset here.
+check("scheduler is OFF unless INTERNAL_SCHEDULER=true (no thread on import)",
+      m._scheduler_started is False
+      and not any(t.name == "internal-scheduler" for t in __import__("threading").enumerate()))
+check("scheduler mirrors the 7 render.yaml cron jobs", len(m._scheduler_jobs()) == 7)
+
 print()
 if FAILURES:
     print(f"{len(FAILURES)} FAILURE(S)")
