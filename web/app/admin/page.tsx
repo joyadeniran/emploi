@@ -1,9 +1,10 @@
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { BadgeCheck, Coins, ShieldAlert, Users } from "lucide-react";
-import { isAdmin } from "@/lib/admin";
-import { ApiUnavailableError, apiFetch } from "@/lib/api";
+import { getAdminEmail } from "@/lib/admin";
+import { ApiUnavailableError, publicApiFetch } from "@/lib/api";
 import { VouchButton } from "@/components/VouchButton";
 import { GrantCreditsButton } from "@/components/GrantCreditsButton";
+import { AdminSignOut } from "@/components/AdminSignOut";
 
 interface Metrics {
   career_twins: number; twins_opted_in: number; employers: number;
@@ -26,15 +27,16 @@ interface UserRow {
 }
 
 export default async function AdminPage() {
-  if (!(await isAdmin())) notFound();
+  const adminEmail = await getAdminEmail();
+  if (!adminEmail) redirect("/admin/login");
   let metrics: Metrics;
   let employers: EmployerRow[] = [];
   let users: UserRow[] = [];
   try {
     [metrics, { employers }, { users }] = await Promise.all([
-      apiFetch<Metrics>("/admin/metrics"),
-      apiFetch<{ employers: EmployerRow[] }>("/admin/employers"),
-      apiFetch<{ users: UserRow[] }>("/admin/users"),
+      publicApiFetch<Metrics>("/admin/metrics"),
+      publicApiFetch<{ employers: EmployerRow[] }>("/admin/employers"),
+      publicApiFetch<{ users: UserRow[] }>("/admin/users"),
     ]);
   } catch (error) {
     if (error instanceof ApiUnavailableError)
@@ -59,11 +61,17 @@ export default async function AdminPage() {
   ];
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      <header>
-        <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">Admin</h1>
-        <p className="mt-1 text-sm text-muted">Live platform rollup. Counts only — no candidate PII.</p>
+    <div className="min-h-dvh bg-surface">
+      <header className="border-b border-line bg-card">
+        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
+          <div>
+            <h1 className="text-xl font-extrabold tracking-tight">Emploi Admin</h1>
+            <p className="text-xs text-muted">{adminEmail}</p>
+          </div>
+          <AdminSignOut />
+        </div>
       </header>
+      <div className="mx-auto max-w-5xl space-y-6 px-4 py-8">
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {tiles.map(([label, value]) => (
@@ -178,6 +186,7 @@ export default async function AdminPage() {
           </ul>
         )}
       </section>
+      </div>
     </div>
   );
 }
