@@ -851,6 +851,25 @@ r = client.patch("/user/notifications", headers=AUTH, json={"enabled": True})
 check("users row wiped by DELETE /user (clear_user covers users)",
       r.status_code == 409)
 
+# ---------------- admin job-sources are key-only (admin_key_auth) ----------
+# The admin control panel calls these with the shared key and NO X-User-Id
+# (admins have no NextAuth session), so they must not require a user id.
+ADMIN_KEY = {"X-API-Key": "test-key"}
+check("GET /admin/job-sources works with key only (no X-User-Id)",
+      client.get("/admin/job-sources", headers=ADMIN_KEY).status_code == 200)
+check("GET /admin/job-sources rejects a wrong key",
+      client.get("/admin/job-sources", headers={"X-API-Key": "nope"}).status_code == 401)
+r = client.post("/admin/job-sources", headers=ADMIN_KEY,
+                json={"company": "", "ats": "jooble", "token": "Lagos:designer", "priority": 5, "active": True})
+check("POST /admin/job-sources adds a source with key only",
+      r.status_code == 201 and r.json().get("id"))
+_sid = r.json()["id"]
+check("PATCH /admin/job-sources/{id}/toggle works with key only",
+      client.patch(f"/admin/job-sources/{_sid}/toggle?active=false",
+                   headers=ADMIN_KEY).status_code == 200)
+check("POST /admin/job-sources/seed?sync=true works with key only",
+      client.post("/admin/job-sources/seed?sync=true", headers=ADMIN_KEY).status_code == 200)
+
 # ---------------- internal scheduler timing (_worker_due) ----------------
 from datetime import datetime as _dt
 

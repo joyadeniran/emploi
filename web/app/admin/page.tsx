@@ -1,10 +1,18 @@
 import { redirect } from "next/navigation";
-import { BadgeCheck, Coins, ShieldAlert, Users } from "lucide-react";
+import { Activity, BadgeCheck, Coins, Database, ShieldAlert, Users } from "lucide-react";
 import { getAdminEmail } from "@/lib/admin";
 import { ApiUnavailableError, publicApiFetch } from "@/lib/api";
 import { VouchButton } from "@/components/VouchButton";
 import { GrantCreditsButton } from "@/components/GrantCreditsButton";
 import { AdminSignOut } from "@/components/AdminSignOut";
+import { WorkerControls } from "@/components/admin/WorkerControls";
+import { JobSourcesManager } from "@/components/admin/JobSourcesManager";
+import { DiagnosticsPanel, type Diagnostics } from "@/components/admin/DiagnosticsPanel";
+
+interface Source {
+  id: number; company: string; ats: string; token: string;
+  priority: number; active: number | boolean; region: string | null; category: string | null;
+}
 
 interface Metrics {
   career_twins: number; twins_opted_in: number; employers: number;
@@ -32,15 +40,22 @@ export default async function AdminPage() {
   let metrics: Metrics;
   let employers: EmployerRow[] = [];
   let users: UserRow[] = [];
+  let diag: Diagnostics | null = null;
+  let sources: Source[] = [];
   try {
-    [metrics, { employers }, { users }] = await Promise.all([
+    // Secondary panels (diagnostics, sources) degrade to empty rather than
+    // taking down the whole dashboard if one endpoint hiccups.
+    const [m, e, u, d, s] = await Promise.all([
       publicApiFetch<Metrics>("/admin/metrics"),
       publicApiFetch<{ employers: EmployerRow[] }>("/admin/employers"),
       publicApiFetch<{ users: UserRow[] }>("/admin/users"),
+      publicApiFetch<Diagnostics>("/admin/diagnostics").catch(() => null),
+      publicApiFetch<{ sources: Source[] }>("/admin/job-sources").catch(() => ({ sources: [] })),
     ]);
+    metrics = m; employers = e.employers; users = u.users; diag = d; sources = s.sources;
   } catch (error) {
     if (error instanceof ApiUnavailableError)
-      return <p className="text-sm text-muted">API offline — try again shortly.</p>;
+      return <p className="mx-auto max-w-5xl px-4 py-8 text-sm text-muted">API offline — try again shortly.</p>;
     throw error;
   }
 
@@ -71,15 +86,45 @@ export default async function AdminPage() {
           <AdminSignOut />
         </div>
       </header>
-      <div className="mx-auto max-w-5xl space-y-6 px-4 py-8">
+      <div className="mx-auto max-w-5xl space-y-8 px-4 py-8">
 
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      {/* System health + worker controls — the operational control panel. */}
+      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
+        <h2 className="flex items-center gap-2 font-extrabold">
+          <Activity className="text-brand" size={18} /> System health
+        </h2>
+        {diag ? (
+          <div className="mt-4"><DiagnosticsPanel diag={diag} /></div>
+        ) : (
+          <p className="mt-3 text-sm text-muted">Diagnostics unavailable right now.</p>
+        )}
+        <h3 className="mt-6 text-sm font-bold text-muted">Workers — last run &amp; manual trigger</h3>
+        <div className="mt-2">
+          <WorkerControls lastRuns={diag?.last_worker_runs ?? {}} />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-faint">Platform metrics</h2>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {tiles.map(([label, value]) => (
           <div key={label} className="rounded-2xl border border-line bg-card p-4 shadow-card">
             <p className="text-2xl font-extrabold">{value}</p>
             <p className="mt-0.5 text-xs font-semibold text-muted">{label}</p>
           </div>
         ))}
+      </div>
+      </section>
+
+      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
+        <h2 className="flex items-center gap-2 font-extrabold">
+          <Database className="text-brand" size={18} /> Job sources
+        </h2>
+        <p className="mt-1 text-xs text-muted">
+          Enable/disable sources, add new queries, or sync repo-declared sources. Aggregator
+          sources need their API keys set on the API service to actually fetch.
+        </p>
+        <div className="mt-4"><JobSourcesManager sources={sources} /></div>
       </section>
 
       <section className="rounded-2xl border border-line bg-card p-6 shadow-card">

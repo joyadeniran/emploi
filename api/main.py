@@ -1999,7 +1999,7 @@ class JobSourceIn(BaseModel):
 @app.get("/admin/job-sources")
 def admin_list_sources(active_only: bool = False,
                        ats: Optional[str] = None,
-                       user_id: str = Depends(auth)):
+                       _: None = Depends(admin_key_auth)):
     """List all job source records."""
     conn = get_conn()
     db.seed_job_sources(conn, SOURCES_PATH)
@@ -2007,7 +2007,7 @@ def admin_list_sources(active_only: bool = False,
 
 
 @app.post("/admin/job-sources", status_code=201)
-def admin_add_source(body: JobSourceIn, user_id: str = Depends(auth)):
+def admin_add_source(body: JobSourceIn, _: None = Depends(admin_key_auth)):
     """Add or update a job source (upsert on ats+token)."""
     conn = get_conn()
     source_id = db.upsert_job_source(
@@ -2018,7 +2018,7 @@ def admin_add_source(body: JobSourceIn, user_id: str = Depends(auth)):
 
 @app.patch("/admin/job-sources/{source_id}")
 def admin_patch_source(source_id: int, body: JobSourceIn,
-                       user_id: str = Depends(auth)):
+                       _: None = Depends(admin_key_auth)):
     """Update a job source by id."""
     conn = get_conn()
     if not db.get_job_source(conn, source_id):
@@ -2030,7 +2030,7 @@ def admin_patch_source(source_id: int, body: JobSourceIn,
 
 @app.patch("/admin/job-sources/{source_id}/toggle")
 def admin_toggle_source(source_id: int, active: bool,
-                        user_id: str = Depends(auth)):
+                        _: None = Depends(admin_key_auth)):
     """Enable or disable a job source."""
     if not db.set_job_source_active(get_conn(), source_id, active):
         raise HTTPException(status_code=404, detail="source not found")
@@ -2038,7 +2038,7 @@ def admin_toggle_source(source_id: int, active: bool,
 
 
 @app.post("/admin/job-sources/seed")
-def admin_seed_sources(sync: bool = False, user_id: str = Depends(auth)):
+def admin_seed_sources(sync: bool = False, _: None = Depends(admin_key_auth)):
     """Seed job_sources from data/job_sources.json.
 
     `?sync=true` adds any new file-declared sources to an already-seeded DB
