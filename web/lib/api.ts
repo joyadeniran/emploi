@@ -125,6 +125,34 @@ export async function apiFetch<T>(
 }
 
 /**
+ * Fetch a PUBLIC API endpoint — no session required. For the public job pages
+ * (/public/roles/{id}), which anyone on the internet can view. Sends the shared
+ * secret (server-side only) but never asserts a user. Throws with a `.status`
+ * so a caller can distinguish 404 from a soft error.
+ */
+export async function publicApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      ...init,
+      headers: { "Content-Type": "application/json", "X-API-Key": API_KEY, ...init.headers },
+      cache: "no-store",
+      signal: init.signal ?? AbortSignal.timeout(10_000),
+    });
+  } catch {
+    throw new ApiUnavailableError(`Emploi API unreachable at ${API_URL}`);
+  }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail ?? detail; } catch { /* non-JSON */ }
+    const err = new Error(detail) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return res.json() as Promise<T>;
+}
+
+/**
  * Same auth/error posture as apiFetch, but hands back the raw Response so a
  * caller can stream a binary body (document exports). apiFetch always parses
  * JSON, which would corrupt a PDF/DOCX.

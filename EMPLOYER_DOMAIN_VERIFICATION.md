@@ -1,7 +1,31 @@
 # Spec — Employer domain-control verification
 
-Status: **proposed, not built.** Written 2026-07-17 after the stopgap shipped.
-Owner decision needed on §6 before implementation starts.
+Status: **direction set by Joy 2026-07-18 — build deferred.**
+
+## 0. Decision (2026-07-18) — supersedes the domain-CONTROL framing below
+
+Joy's call, and it's the right one for MVP:
+- **Don't gate posting.** We want as many people as possible to post — individuals
+  and agencies posting *on behalf of* companies are welcome. Domain-*control*
+  (prove you own the domain) would lock those legitimate posters out, so it is
+  **not** the MVP model.
+- **Verify the two cheap, real things we already check for candidate-side jobs:**
+  does the domain resolve, and is this a plausibly-real company (`verify.verify_employer`).
+  That vetting still helps even though we didn't source the job.
+- **Be honest in the label.** A cold poster shows "Company checked", not "Verified
+  employer" (which would imply we confirmed they ARE the employer). Already
+  reflected in `_public_trust` on the public job page and the stopgap cap.
+- **Email-domain verification is the LATER upgrade**, not now: posting for Paystack
+  from an `@paystack.com` address earns a stronger badge. Optional, never required.
+- **CAC lookup dropped** — no reliable path, and the lightweight check is enough.
+
+So the sections below (domain-control flow, CAC, hard gates) are **archived context**,
+not the plan. The live plan is: keep the existing lightweight verification, label it
+honestly, and add optional email-domain verification when we choose to.
+
+---
+
+_Archived — original proposal (domain-control), superseded by §0:_
 
 ## 1. Why
 

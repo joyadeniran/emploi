@@ -1,5 +1,5 @@
 {
-  "_doc": "Curated job source list. This file seeds the `job_sources` DB table on first run. After seeding, the DB is the source of truth — edits here only take effect on the next seed run (or via the admin API). ats: greenhouse | lever | ashby | workable | smartrecruiters | workday | career_page. priority: 10=hourly, 7=every 3h, 5=twice daily, 1=daily. active=false means skip without deleting. Workable/SmartRecruiters entries below are seeded active=false — spot-check the public URL (apply.workable.com/{token}/ or jobs.smartrecruiters.com/{token}) before enabling. A failing source is graceful (0 jobs, no crash) but wastes a request; verify first. Entries below marked active=false with the note `dead_2026-07-15` are ones the spot-check confirmed returned 0 jobs against their ATS endpoint — the token is wrong, the company migrated ATS, or the company no longer publishes a public feed. Re-enable via `PATCH /admin/job-sources/{id}/toggle` after finding the correct token. | aggregators (jooble/adzuna) are env-keyed: set JOOBLE_API_KEY or ADZUNA_APP_ID+ADZUNA_APP_KEY, tune the token queries (jooble token=location:keywords, adzuna token=country:keywords), then flip active:true via PATCH /admin/job-sources/{id}/toggle — no redeploy.",
+  "_doc": "Curated job source list. This file seeds the `job_sources` DB table on first run. After seeding, the DB is the source of truth — edits here only take effect on the next seed run (or via the admin API). ats: greenhouse | lever | ashby | workable | smartrecruiters | workday | career_page. priority: 10=hourly, 7=every 3h, 5=twice daily, 1=daily. active=false means skip without deleting. Workable/SmartRecruiters entries below are seeded active=false — spot-check the public URL (apply.workable.com/{token}/ or jobs.smartrecruiters.com/{token}) before enabling. A failing source is graceful (0 jobs, no crash) but wastes a request; verify first. Entries below marked active=false with the note `dead_2026-07-15` are ones the spot-check confirmed returned 0 jobs against their ATS endpoint — the token is wrong, the company migrated ATS, or the company no longer publishes a public feed. Re-enable via `PATCH /admin/job-sources/{id}/toggle` after finding the correct token. | aggregators (jooble/adzuna) are env-keyed (JOOBLE_API_KEY / ADZUNA_APP_ID+ADZUNA_APP_KEY). jooble token=location:keywords (free-text location, Nigeria supported); adzuna token=country:keywords (adzuna 2-letter code — NO nigeria; use za/gb/us). New file sources reach an already-seeded prod DB via POST /admin/job-sources/seed?sync=true, then run ingest.",
   "african_tech": [
     {
       "company": "Andela",
@@ -1198,38 +1198,137 @@
     {
       "company": "",
       "ats": "jooble",
-      "token": "Nigeria:remote developer",
-      "priority": 6,
+      "token": "Nigeria:software developer",
+      "priority": 5,
+      "category": "Technology",
       "region": "africa",
-      "active": false,
-      "note": "needs JOOBLE_API_KEY; token is location:keywords"
+      "active": true
     },
     {
       "company": "",
       "ats": "jooble",
-      "token": "Kenya:customer support",
+      "token": "Nigeria:product manager",
       "priority": 5,
+      "category": "Technology",
       "region": "africa",
-      "active": false,
-      "note": "needs JOOBLE_API_KEY"
+      "active": true
     },
     {
       "company": "",
-      "ats": "adzuna",
-      "token": "za:software engineer",
-      "priority": 6,
+      "ats": "jooble",
+      "token": "Nigeria:data analyst",
+      "priority": 5,
+      "category": "Technology",
       "region": "africa",
-      "active": false,
-      "note": "needs ADZUNA_APP_ID/ADZUNA_APP_KEY; token is country:keywords"
+      "active": true
     },
     {
       "company": "",
-      "ats": "adzuna",
-      "token": "gb:remote data analyst",
+      "ats": "jooble",
+      "token": "Nigeria:customer support",
       "priority": 5,
-      "region": "global",
-      "active": false,
-      "note": "needs ADZUNA_APP_ID/ADZUNA_APP_KEY"
+      "category": "Support",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:sales",
+      "priority": 5,
+      "category": "Sales",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:accountant",
+      "priority": 5,
+      "category": "Finance",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:banking",
+      "priority": 5,
+      "category": "Finance",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:marketing",
+      "priority": 5,
+      "category": "Marketing",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:operations",
+      "priority": 5,
+      "category": "Operations",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:graphic designer",
+      "priority": 5,
+      "category": "Design",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:human resources",
+      "priority": 5,
+      "category": "People",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:civil engineer",
+      "priority": 5,
+      "category": "Engineering",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:nurse",
+      "priority": 5,
+      "category": "Healthcare",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:supply chain",
+      "priority": 5,
+      "category": "Logistics",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:administrative assistant",
+      "priority": 5,
+      "category": "Admin",
+      "region": "africa",
+      "active": true
     }
   ]
 }

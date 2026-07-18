@@ -1364,6 +1364,77 @@ def get_role_endpoint(role_id: int, user_id: str = Depends(auth)):
         "invites": invites}
 
 
+# ---------------------------------------------------------------------------
+# Public job pages — UNAUTHENTICATED. A role's public link
+# (app.emploihq.com/jobs/{id}) is shareable anywhere (LinkedIn, WhatsApp); the
+# page is a customer-acquisition surface. Viewing needs no account; APPLYING
+# requires Google sign-in (the funnel). Public-safe fields ONLY — never the
+# shortlist, applicant list, or employer internals.
+# ---------------------------------------------------------------------------
+
+def _public_trust(role: dict) -> dict:
+    """Candidate-facing provenance for a public role. Honest about what we
+    checked (the company domain / legitimacy) — never claims we confirmed the
+    poster IS the employer. `verified` stays reserved for a vouch/high signal."""
+    verified = bool(role.get("warm_intro_by")) or role.get("trust_level") == "high"
+    level = role.get("trust_level") or "unverified"
+    if verified:
+        label = "Verified employer"
+    elif level in ("medium", "low"):
+        label = "Company checked"
+    else:
+        label = "Unverified — never pay a fee to apply"
+    return {"verified": verified, "trust_level": level, "label": label}
+
+
+@app.get("/public/roles/{role_id}")
+def public_role_endpoint(role_id: int):
+    conn = get_conn()
+    role = db.get_public_role(conn, role_id)
+    if not role:
+        raise HTTPException(status_code=404, detail="job not found or no longer open")
+    return {"role": {
+        "id": role["id"], "title": role["title"], "description": role["description"],
+        "location": role["location"], "is_remote": bool(role["is_remote"]),
+        "salary_text": role["salary_text"], "company_name": role["company_name"],
+        "created_at": role["created_at"], "trust": _public_trust(role)}}
+
+
+@app.post("/public/roles/{role_id}/apply", status_code=201)
+def public_apply_endpoint(role_id: int, user_id: str = Depends(auth)):
+    """Apply to a public role. Auth-gated: this is the Google sign-in funnel.
+    Idempotent — re-applying is a no-op, never an error."""
+    conn = get_conn()
+    result = db.create_role_application(conn, role_id, user_id)
+    if result == "closed":
+        raise HTTPException(status_code=409, detail="this job is no longer accepting applications")
+    if result == "ok":
+        db.log_event(conn, "PublicRoleApplied", {"role_id": role_id}, user_id=user_id)
+    return {"ok": True, "status": "applied", "already_applied": result == "exists"}
+
+
+@app.get("/employer/roles/{role_id}/applicants")
+def role_applicants_endpoint(role_id: int, user_id: str = Depends(auth)):
+    """Inbound applicants who applied via the role's public link. Their contact
+    is shown immediately — they self-submitted, so it's consented (no unlock
+    needed, unlike the curated shortlist)."""
+    employer = require_employer(user_id)
+    require_owned_role(role_id, employer)
+    conn = get_conn()
+    out = []
+    for a in db.list_role_applicants(conn, role_id):
+        twin = db.load_career_twin(conn, a["candidate_user_id"]) or {}
+        contact = core.format_employer_contact_view(twin)
+        # The application always carries a reachable email/name from the Google
+        # account, even if the applicant hasn't built a full Career Twin yet.
+        contact["email"] = contact.get("email") or a.get("email") or ""
+        contact["name"] = contact.get("name") or a.get("name") or ""
+        out.append({"candidate_user_id": a["candidate_user_id"],
+                    "status": a["status"], "applied_at": a["created_at"],
+                    "contact": contact})
+    return {"applicants": out, "count": len(out)}
+
+
 @app.patch("/employer/roles/{role_id}")
 def patch_role_endpoint(role_id: int, body: RolePatchIn, user_id: str = Depends(auth)):
     employer = require_employer(user_id)
@@ -1958,10 +2029,15 @@ def admin_toggle_source(source_id: int, active: bool,
 
 
 @app.post("/admin/job-sources/seed")
-def admin_seed_sources(user_id: str = Depends(auth)):
-    """Seed job_sources table from data/job_sources.json if empty."""
+def admin_seed_sources(sync: bool = False, user_id: str = Depends(auth)):
+    """Seed job_sources from data/job_sources.json.
+
+    `?sync=true` adds any new file-declared sources to an already-seeded DB
+    (INSERT OR IGNORE — existing rows, including manual toggles, untouched).
+    This is how new sources committed to the repo reach prod without a DB reset.
+    """
     conn = get_conn()
-    inserted = db.seed_job_sources(conn, SOURCES_PATH)
+    inserted = db.seed_job_sources(conn, SOURCES_PATH, sync=sync)
     total = conn.execute("SELECT COUNT(*) AS n FROM job_sources").fetchone()["n"]
     return {"inserted": inserted, "total": total}
 
