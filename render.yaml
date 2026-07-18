@@ -14,6 +14,14 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false          # optional AI fallback provider; unset = Gemini only
+      - key: JOOBLE_API_KEY
+        sync: false          # optional aggregator source; unset = jooble sources no-op
+      - key: ADZUNA_APP_ID
+        sync: false          # optional aggregator source (needs ADZUNA_APP_KEY too)
+      - key: ADZUNA_APP_KEY
+        sync: false
+      - key: ADZUNA_COUNTRY
+        value: gb            # default country when an adzuna token omits "country:"
       - key: EMPLOI_DB_PATH
         value: /var/data/emploi.sqlite3
       - key: BREVO_API_KEY

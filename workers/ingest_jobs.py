@@ -48,6 +48,12 @@ LEVER_BASE = "https://api.lever.co/v0/postings/{slug}?mode=json"
 ASHBY_BASE = "https://api.ashbyhq.com/posting-public/apiPostings/{token}"
 WORKABLE_BASE = "https://apply.workable.com/api/v3/accounts/{subdomain}/jobs?limit=100"
 SMARTRECRUITERS_BASE = "https://api.smartrecruiters.com/v1/companies/{identifier}/postings?limit=100"
+# Aggregators (keyed, env-gated). Unlike the per-company ATS boards, these are
+# a single API queried by keywords/location — one source row = one saved query.
+JOOBLE_BASE = "https://jooble.org/api/{apikey}"
+ADZUNA_BASE = ("https://api.adzuna.com/v1/api/jobs/{country}/search/1"
+               "?app_id={app_id}&app_key={app_key}&results_per_page=50"
+               "&content-type=application/json&what={what}")
 MANUAL_JOBS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "data", "manual_jobs")
@@ -71,6 +77,23 @@ def _fetch(url: str) -> Optional[Union[dict, list]]:
             return json.loads(r.read().decode())
     except Exception as exc:
         log.warning("fetch failed %s — %s", url, exc)
+        return None
+
+
+def _post_json(url: str, payload: dict):
+    """POST JSON, return parsed JSON or None. Separate seam from _fetch (GET)
+    for the Jooble aggregator; tests patch this directly, same pattern as
+    _fetch. Kept tiny and stdlib-only."""
+    try:
+        body = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            url, data=body, method="POST",
+            headers={"Content-Type": "application/json",
+                     "User-Agent": "Emploi-job-sourcer/1.0 (hello@emploihq.com)"})
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
+            return json.loads(r.read().decode())
+    except Exception as exc:
+        log.warning("post failed %s — %s", url, exc)
         return None
 
 
@@ -281,6 +304,51 @@ def normalize_smartrecruiters_posting(posting: dict, company_name: str) -> dict:
         "apply_url": apply_url,
         "category": dept,
         "company_domain": _derive_company_domain(company_name),
+    }
+
+
+def normalize_jooble_job(job: dict) -> dict:
+    """Jooble aggregator result. Company/domain come from the posting itself
+    (it's cross-company), so company can be blank — downstream tolerates it."""
+    company = str(job.get("company") or "").strip()
+    location = str(job.get("location") or "")
+    description = _strip_html(str(job.get("snippet") or ""))
+    return {
+        "title": str(job.get("title") or ""),
+        "company_name": company,
+        "description": description,
+        "location": location,
+        "is_remote": _is_remote(location) or _is_remote(description)
+                     or _is_remote(str(job.get("title") or "")),
+        "salary_text": (str(job.get("salary")).strip() or None) if job.get("salary") else None,
+        "apply_url": str(job.get("link") or ""),
+        "category": str(job.get("type") or ""),
+        # Aggregator rows have no reliable employer domain — leave it unset so
+        # verify_employers doesn't probe a guess derived from a noisy name.
+        "company_domain": _derive_company_domain(company) if company else None,
+    }
+
+
+def normalize_adzuna_job(job: dict) -> dict:
+    company = str((job.get("company") or {}).get("display_name") or "").strip()
+    location = str((job.get("location") or {}).get("display_name") or "")
+    description = _strip_html(str(job.get("description") or ""))
+    smin, smax = job.get("salary_min"), job.get("salary_max")
+    salary = None
+    if smin or smax:
+        salary = (f"{int(smin):,}–{int(smax):,}" if smin and smax
+                  else f"{int(smin or smax):,}")
+    return {
+        "title": str(job.get("title") or ""),
+        "company_name": company,
+        "description": description,
+        "location": location,
+        "is_remote": _is_remote(location) or _is_remote(description)
+                     or _is_remote(str(job.get("title") or "")),
+        "salary_text": salary,
+        "apply_url": str(job.get("redirect_url") or ""),
+        "category": str((job.get("category") or {}).get("label") or ""),
+        "company_domain": _derive_company_domain(company) if company else None,
     }
 
 
@@ -522,12 +590,86 @@ def _ingest_manual(source: dict, conn, dry_run: bool):
     return len(payload), written
 
 
+def _ingest_jooble(source: dict, conn, dry_run: bool):
+    """Jooble aggregator. One source row = one saved query (source['token'],
+    optionally 'cc:query' where cc is the location). Env-gated on JOOBLE_API_KEY;
+    without the key the source no-ops so an unconfigured deploy stays quiet."""
+    api_key = os.getenv("JOOBLE_API_KEY", "").strip()
+    if not api_key:
+        log.info("jooble skipped — JOOBLE_API_KEY unset")
+        return 0, 0
+    token = str(source["token"])
+    location, _, keywords = token.partition(":") if ":" in token else ("", "", token)
+    payload = {"keywords": keywords.strip() or token}
+    if location.strip():
+        payload["location"] = location.strip()
+    data = _post_json(JOOBLE_BASE.format(apikey=api_key), payload)
+    jobs = data.get("jobs") if isinstance(data, dict) else None
+    if not isinstance(jobs, list):
+        return 0, 0
+    written = 0
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        job_id = str(job.get("id") or _stable_id("jooble", str(job.get("link", "")),
+                                                 job.get("title", "")))
+        fields = normalize_jooble_job(job)
+        if not (fields.get("title") or "").strip():
+            continue
+        source_key = f"jooble/{token}"
+        if dry_run:
+            print(f"  [dry-run] {source_key} job {job_id}: {fields['title']}")
+        else:
+            db.upsert_job(conn, source_key, job_id, fields)
+        written += 1
+    return len(jobs), written
+
+
+def _ingest_adzuna(source: dict, conn, dry_run: bool):
+    """Adzuna aggregator. source['token'] = 'country:keywords' (e.g.
+    'za:solar engineer'); country defaults to ADZUNA_COUNTRY or 'gb'. Env-gated
+    on ADZUNA_APP_ID + ADZUNA_APP_KEY."""
+    from urllib.parse import quote
+    app_id = os.getenv("ADZUNA_APP_ID", "").strip()
+    app_key = os.getenv("ADZUNA_APP_KEY", "").strip()
+    if not (app_id and app_key):
+        log.info("adzuna skipped — ADZUNA_APP_ID/ADZUNA_APP_KEY unset")
+        return 0, 0
+    token = str(source["token"])
+    country, _, keywords = token.partition(":") if ":" in token else ("", "", token)
+    country = (country.strip() or os.getenv("ADZUNA_COUNTRY", "gb")).lower()
+    url = ADZUNA_BASE.format(country=country, app_id=app_id, app_key=app_key,
+                             what=quote(keywords.strip() or token))
+    data = _fetch(url)
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list):
+        return 0, 0
+    written = 0
+    for job in results:
+        if not isinstance(job, dict):
+            continue
+        job_id = str(job.get("id") or _stable_id("adzuna", str(job.get("redirect_url", "")),
+                                                 job.get("title", "")))
+        fields = normalize_adzuna_job(job)
+        if not (fields.get("title") or "").strip():
+            continue
+        source_key = f"adzuna/{token}"
+        if dry_run:
+            print(f"  [dry-run] {source_key} job {job_id}: {fields['title']}")
+        else:
+            db.upsert_job(conn, source_key, job_id, fields)
+        written += 1
+    return len(results), written
+
+
 _ATS_HANDLERS = {
     "greenhouse": _ingest_greenhouse,
     "lever": _ingest_lever,
     "ashby": _ingest_ashby,
     "workable": _ingest_workable,
     "smartrecruiters": _ingest_smartrecruiters,
+    "jooble": _ingest_jooble,
+    "adzuna": _ingest_adzuna,
     "manual": _ingest_manual,
 }
 

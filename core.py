@@ -887,6 +887,116 @@ def extract_job_from_url(url: str, fetch_fn=None):
     return None
 
 
+# --- Generic career-page connector -----------------------------------------
+# When a pasted URL is not one of the 5 ATS JSON APIs (a company careers page,
+# a niche board like greenjobs.co.uk, a Greenhouse *embed*, etc.) we fetch the
+# HTML, reduce it to readable text, and let Gemini extract the role. This is
+# what makes "paste any job URL" actually work instead of only 5 hosts.
+
+_HTML_TEXT_MAX = 20000   # plenty for one JD; keeps the Gemini prompt bounded
+_HTML_TEXT_MIN = 200     # below this it's almost always a JS-only shell / block
+
+
+def _html_to_text(html: str) -> str:
+    """Reduce an HTML page to readable text. Drops script/style/comments,
+    keeps rough line structure, unescapes entities, collapses whitespace."""
+    import html as _htmlmod
+    s = html or ""
+    s = re.sub(r"(?is)<(script|style|noscript|template|svg)[^>]*>.*?</\1>", " ", s)
+    s = re.sub(r"(?is)<!--.*?-->", " ", s)
+    # Preserve block boundaries so the JD doesn't collapse into one line.
+    s = re.sub(r"(?i)<(br|/p|/div|/li|/h[1-6]|/tr)\s*/?>", "\n", s)
+    s = re.sub(r"<[^>]+>", " ", s)
+    s = _htmlmod.unescape(s)
+    s = re.sub(r"[ \t\r\f\v]+", " ", s)
+    s = re.sub(r"\n[ \t]*\n\s*", "\n\n", s)
+    return s.strip()[:_HTML_TEXT_MAX]
+
+
+def _url_host_scheme_ok(url: str):
+    """(scheme, host) if the URL is a plausibly-public http(s) URL, else None.
+    Rejects non-http(s), loopback literals, and any IP-literal host in a
+    private/loopback/link-local/reserved range (SSRF) — all cheap, no DNS, so
+    the guard holds even when a caller injects its own fetcher."""
+    import ipaddress
+    from urllib.parse import urlparse
+    try:
+        p = urlparse(url if "://" in (url or "") else f"https://{url or ''}")
+    except Exception:
+        return None
+    if p.scheme not in ("http", "https"):
+        return None
+    host = (p.hostname or "").lower()
+    if not host or host == "localhost" or host.endswith(".localhost"):
+        return None
+    # If the host is an IP literal, block private/internal ranges outright
+    # (169.254.169.254 metadata, 127.0.0.1, 10.x, etc.). Hostnames that
+    # *resolve* to private IPs are caught at fetch time in _default_html_fetch.
+    try:
+        addr = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        addr = None
+    if addr is not None and (addr.is_private or addr.is_loopback or addr.is_link_local
+                             or addr.is_reserved or addr.is_multicast or addr.is_unspecified):
+        return None
+    return p.scheme, host
+
+
+def _default_html_fetch(url: str):
+    """Network fetcher with SSRF protection: resolve the host and refuse any
+    private/loopback/link-local/reserved address (cloud metadata, internal
+    services). Only used when no fetch_fn is injected — tests never hit this."""
+    import ipaddress
+    import socket
+    import urllib.request
+    ok = _url_host_scheme_ok(url)
+    if not ok:
+        return None
+    _, host = ok
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return None
+    for info in infos:
+        ip = info[4][0]
+        try:
+            addr = ipaddress.ip_address(ip.split("%")[0])
+        except ValueError:
+            return None
+        if (addr.is_private or addr.is_loopback or addr.is_link_local
+                or addr.is_reserved or addr.is_multicast or addr.is_unspecified):
+            return None
+    try:
+        req = urllib.request.Request(
+            url if "://" in url else f"https://{url}",
+            headers={"User-Agent": "Emploi-job-sourcer/1.0 (hello@emploihq.com)",
+                     "Accept": "text/html,application/xhtml+xml"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            ctype = (r.headers.get("Content-Type") or "").lower()
+            if "html" not in ctype and "text" not in ctype and ctype:
+                return None
+            raw = r.read(2_000_000)  # 2 MB cap
+        return raw.decode("utf-8", "replace")
+    except Exception:
+        return None
+
+
+def fetch_url_text(url: str, fetch_fn=None):
+    """Fetch a web page and return its readable text, or None.
+
+    `fetch_fn(url) -> html_str | None` is injectable for offline tests; the
+    default fetcher enforces http(s)-only + SSRF protection. Returns None for
+    an unsafe URL, a fetch failure, or a page too short to be a real JD (a
+    JS-rendered shell or a bot wall)."""
+    if _url_host_scheme_ok(url) is None:
+        return None
+    html = (fetch_fn or _default_html_fetch)(url)
+    if not html:
+        return None
+    text = _html_to_text(html)
+    return text if len(text) >= _HTML_TEXT_MIN else None
+
+
 def extract_single_job(model, text: str):
     """Gemini-backed extraction of ONE job from pasted JD text. Wraps the
     extract_jobs primitive; defensive parsing throughout — returns None for
