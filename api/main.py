@@ -24,6 +24,7 @@ import threading
 import uuid
 from collections import defaultdict
 from time import time
+from datetime import datetime
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File, Request, Response
@@ -2081,6 +2082,90 @@ def _run_in_background(label: str, fn, *args, **kwargs):
     threading.Thread(target=target, name=f"worker-{label}", daemon=True).start()
 
 
+# ---------------------------------------------------------------------------
+# Internal scheduler (opt-in via INTERNAL_SCHEDULER=true). The workers already
+# run in-process here; this schedules them in-process too, so the pipeline
+# can't silently stall when an EXTERNAL Render cron can't authenticate (the
+# `sync:false` per-service key is easy to leave stale — which is exactly how
+# matching/notify/backup went dark for days). One always-on single-instance
+# service (emploi-api, starter plan) makes this safe. If the external crons are
+# ALSO enabled, double-runs are harmless: ingest upserts, match/notify/unlocks
+# dedup, backup overwrites — so you can leave the crons or delete them.
+# ---------------------------------------------------------------------------
+
+def _worker_due(cadence, now: datetime, last_run) -> bool:
+    """Pure decision: is a worker due? `cadence` is ("hourly",) or
+    ("daily", HH, MM) in UTC. `now`/`last_run` are naive-UTC datetimes;
+    `last_run` is None if it hasn't run in this process yet. Kept pure so the
+    timing logic is unit-tested without threads or a real clock."""
+    kind = cadence[0]
+    if kind == "hourly":
+        return last_run is None or (now - last_run).total_seconds() >= 3600
+    if kind == "daily":
+        _, hh, mm = cadence
+        target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if now < target:
+            return False
+        # Past today's target → due unless we already ran at/after it today.
+        return last_run is None or last_run < target
+    return False
+
+
+def _scheduler_jobs():
+    """(name, cadence, runner) in dependency order — mirrors render.yaml's
+    cron cadence so behaviour is identical whether scheduling is internal or
+    external."""
+    return [
+        ("ingest-hourly", ("hourly",),      lambda: ingest_worker.run(DB_PATH, min_priority=8)),
+        ("ingest-daily",  ("daily", 1, 0),  lambda: ingest_worker.run(DB_PATH, min_priority=1)),
+        ("verify",        ("daily", 1, 30), lambda: verify_worker.run(DB_PATH)),
+        ("match",         ("daily", 2, 0),  lambda: match_worker.run(DB_PATH)),
+        ("expire",        ("daily", 2, 15), lambda: expire_invites_worker.run(DB_PATH)),
+        ("notify",        ("daily", 2, 30), lambda: notify_worker.run(DB_PATH, send_fn=notify_worker._get_send_fn())),
+        ("backup",        ("daily", 3, 0),  lambda: backup_worker.run(DB_PATH)),
+    ]
+
+
+_scheduler_started = False
+
+
+def _start_internal_scheduler() -> bool:
+    """Start the scheduler thread if INTERNAL_SCHEDULER=true. Returns whether it
+    started (False when disabled or already running). Idempotent."""
+    global _scheduler_started
+    if os.getenv("INTERNAL_SCHEDULER", "").strip().lower() != "true":
+        return False
+    if _scheduler_started:
+        return False
+    _scheduler_started = True
+
+    jobs = _scheduler_jobs()
+    # Seed last-run so hourly work runs shortly after boot, but a mid-day deploy
+    # does NOT retro-fire the daily workers (match/notify/backup) — they wait
+    # for their next UTC window.
+    now = datetime.utcnow()
+    last = {name: (None if cadence[0] == "hourly" else now) for name, cadence, _ in jobs}
+    stop = threading.Event()
+
+    def loop():
+        while not stop.wait(60):
+            n = datetime.utcnow()
+            for name, cadence, runner in jobs:
+                if not _worker_due(cadence, n, last[name]):
+                    continue
+                log.info("scheduler: running %s", name)
+                try:
+                    runner()
+                except Exception:
+                    log.exception("scheduler: %s failed", name)
+                # Record even on failure — retry next window, don't hot-loop.
+                last[name] = datetime.utcnow()
+
+    threading.Thread(target=loop, name="internal-scheduler", daemon=True).start()
+    log.info("internal scheduler started (%d jobs)", len(jobs))
+    return True
+
+
 @app.post("/admin/run/ingest", status_code=200)
 def admin_run_ingest(response: Response, min_priority: int = 1,
                      background: bool = True,
@@ -2280,3 +2365,7 @@ def admin_diagnostics(_: None = Depends(admin_key_auth)):
         "last_worker_runs": last_runs,
         "counts": counts,
     }
+
+
+# Opt-in; a no-op unless INTERNAL_SCHEDULER=true (so tests/dev never spawn it).
+_start_internal_scheduler()

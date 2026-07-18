@@ -24,6 +24,10 @@ services:
         value: gb            # default country when an adzuna token omits "country:"
       - key: EMPLOI_DB_PATH
         value: /var/data/emploi.sqlite3
+      - key: INTERNAL_SCHEDULER
+        value: "true"          # run workers in-process on this always-on
+                               # service — no dependency on external cron auth.
+                               # With this on you can delete the cron services.
       - key: BREVO_API_KEY
         sync: false
       - key: BREVO_SENDER_EMAIL
