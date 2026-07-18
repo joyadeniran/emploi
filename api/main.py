@@ -1810,6 +1810,14 @@ def admin_vouch_employer(employer_id: int, body: VouchIn = None,
     return {"ok": True}
 
 
+@app.get("/admin/users")
+def admin_list_users(_: None = Depends(admin_key_auth)):
+    """Owner-only list of signed-in accounts WITH email (PII). Deliberate
+    exception to the counts-only admin posture — for the owner's own outreach.
+    Gated by the admin key; the web /admin page gates it again by ADMIN_EMAILS."""
+    return {"users": db.list_users(get_conn())}
+
+
 @app.get("/admin/employers")
 def admin_list_employers(_: None = Depends(admin_key_auth)):
     """Every employer with its live credit balance, for the admin dashboard's
