@@ -1526,6 +1526,30 @@ def set_job_source_active(conn, source_id: int, active: bool) -> bool:
     return cur.rowcount > 0
 
 
+def update_job_source(conn, source_id: int, company: str, ats: str, token: str,
+                      priority: int = 5, category: Optional[str] = None,
+                      region: Optional[str] = None, active: bool = True) -> bool:
+    """Update exactly one source. The source id remains stable for admin links.
+
+    ``ats`` + ``token`` is unique, so a conflicting edit raises sqlite's normal
+    integrity error for the API layer to return as a clean validation response.
+    """
+    cur = conn.execute(
+        "UPDATE job_sources SET company=?, ats=?, token=?, priority=?, "
+        "category=?, region=?, active=?, updated_at=datetime('now') WHERE id=?",
+        (company, ats, token, priority, category, region, 1 if active else 0,
+         source_id))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def delete_job_source(conn, source_id: int) -> bool:
+    """Remove a manually managed source. Returns False when it no longer exists."""
+    cur = conn.execute("DELETE FROM job_sources WHERE id=?", (source_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def get_job_source(conn, source_id: int) -> Optional[dict]:
     row = conn.execute("SELECT * FROM job_sources WHERE id=?",
                        (source_id,)).fetchone()

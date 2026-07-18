@@ -378,6 +378,17 @@ All 5 suites green (`test_e2e`, `test_verify`, `test_db`, `test_api`, `test_inge
 ### Fixed
 - fpdf2 multi-line rendering bug (cursor position after `multi_cell`).
 
+### Added — OpenAI Build Week submission README (2026-07-18)
+- Replaced the legacy Streamlit-only README with a judge-ready guide covering Emploi's problem, architecture, local setup, sample data, test commands, live deployment surfaces, safety posture, and a factual account of how GPT-5.6 through Codex accelerated the project. It also records the required Devpost `/feedback` Session ID handoff without exposing a secret.
+
+### Changed — Hostinger landing pages aligned with the live product (2026-07-18)
+- Updated all three static upload files in `landing/`: production canonicals and social metadata are now explicit; the landing page reflects live Free / Pro / Max plans (₦0 / ₦3,500 / ₦7,500) instead of saying billing is still rolling out; illustrative job cards use the honest “company checked” label; and absolute verification claims now describe risk signals rather than guarantees.
+- The privacy policy now accurately explains opt-in recruiter visibility (structured profile only, raw CV and chat history excluded); both legal pages have refreshed dates. Landing tests cover the new canonicals, pricing tiers, and truthful mockup language.
+
+### Changed — admin dashboard shell and complete source CRUD (2026-07-18)
+- **Admin dashboard now uses a standard responsive admin shell.** Desktop navigation stays pinned in a dedicated sidebar, while mobile gets a compact header and slide-out menu. The sidebar jumps directly to overview, operations, job sources, trust alerts, users, and employers; the main area has a clear platform-overview header.
+- **Job sources now have complete CRUD.** Admins can create sources with company, ATS, token, priority, category, region, and active state; edit an existing source in place; enable/disable it; and delete it after confirmation. The API now exposes authenticated `PATCH` and `DELETE /admin/job-sources/{id}` operations, and the database updates the exact selected row rather than accidentally upserting a different source. Added API regression coverage for update and deletion.
+
 ## [0.1.0] — 2026-07-04 — Initial release
 - Named **Emploi** (checked: no existing AI job tool with the name; note: collides with generic French usage).
 - Streamlit app: profile form, CSV/Excel job-list import, Gemini-tailored cover letter + CV bullets + fit score, application tracker with CSV export.

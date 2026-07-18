@@ -8,6 +8,7 @@ import { AdminSignOut } from "@/components/AdminSignOut";
 import { WorkerControls } from "@/components/admin/WorkerControls";
 import { JobSourcesManager } from "@/components/admin/JobSourcesManager";
 import { DiagnosticsPanel, type Diagnostics } from "@/components/admin/DiagnosticsPanel";
+import { AdminSidebar } from "@/components/admin/AdminSidebar";
 
 interface Source {
   id: number; company: string; ats: string; token: string;
@@ -76,20 +77,17 @@ export default async function AdminPage() {
   ];
 
   return (
-    <div className="min-h-dvh bg-surface">
-      <header className="border-b border-line bg-card">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
-          <div>
-            <h1 className="text-xl font-extrabold tracking-tight">Emploi Admin</h1>
-            <p className="text-xs text-muted">{adminEmail}</p>
-          </div>
-          <AdminSignOut />
-        </div>
-      </header>
-      <div className="mx-auto max-w-5xl space-y-8 px-4 py-8">
+    <div className="min-h-dvh bg-surface lg:flex">
+      <AdminSidebar email={adminEmail} />
+      <main className="min-w-0 flex-1">
+      <div className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-6 lg:px-10 lg:py-10">
+      <div className="hidden items-start justify-between lg:flex">
+        <div><p className="text-sm font-bold text-brand">Administration</p><h1 className="mt-1 text-3xl font-extrabold tracking-tight">Platform overview</h1><p className="mt-2 text-sm text-muted">Monitor operations, manage sources, and keep the marketplace healthy.</p></div>
+        <AdminSignOut />
+      </div>
 
       {/* System health + worker controls — the operational control panel. */}
-      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
+      <section id="operations" className="scroll-mt-6 rounded-2xl border border-line bg-card p-6 shadow-card">
         <h2 className="flex items-center gap-2 font-extrabold">
           <Activity className="text-brand" size={18} /> System health
         </h2>
@@ -104,7 +102,7 @@ export default async function AdminPage() {
         </div>
       </section>
 
-      <section>
+      <section id="overview" className="scroll-mt-6">
         <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-faint">Platform metrics</h2>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {tiles.map(([label, value]) => (
@@ -116,7 +114,7 @@ export default async function AdminPage() {
       </div>
       </section>
 
-      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
+      <section id="sources" className="scroll-mt-6 rounded-2xl border border-line bg-card p-6 shadow-card">
         <h2 className="flex items-center gap-2 font-extrabold">
           <Database className="text-brand" size={18} /> Job sources
         </h2>
@@ -127,7 +125,7 @@ export default async function AdminPage() {
         <div className="mt-4"><JobSourcesManager sources={sources} /></div>
       </section>
 
-      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
+      <section id="trust" className="scroll-mt-6 rounded-2xl border border-line bg-card p-6 shadow-card">
         <h2 className="flex items-center gap-2 font-extrabold">
           <ShieldAlert className="text-warn" size={18} /> Trust alerts
         </h2>
@@ -154,7 +152,7 @@ export default async function AdminPage() {
         )}
       </section>
 
-      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
+      <section id="users" className="scroll-mt-6 rounded-2xl border border-line bg-card p-6 shadow-card">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-2 font-extrabold">
             <Users className="text-brand" size={18} /> Users
@@ -200,7 +198,7 @@ export default async function AdminPage() {
         )}
       </section>
 
-      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
+      <section id="employers" className="scroll-mt-6 rounded-2xl border border-line bg-card p-6 shadow-card">
         <h2 className="flex items-center gap-2 font-extrabold">
           <Coins className="text-brand" size={18} /> Employers &amp; credits
         </h2>
@@ -232,6 +230,7 @@ export default async function AdminPage() {
         )}
       </section>
       </div>
+      </main>
     </div>
   );
 }
