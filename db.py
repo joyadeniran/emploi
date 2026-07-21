@@ -371,9 +371,14 @@ def _migrate(conn) -> None:
 def connect(path: str, check_same_thread: bool = True) -> sqlite3.Connection:
     """Open (or create) the database and ensure the schema exists.
 
-    Pass check_same_thread=False when the connection is shared across threads
-    (Streamlit runs session code in worker threads and a cached connection
-    crosses them; sqlite serializes writes internally).
+    Pass check_same_thread=False when the connection is opened on one thread
+    and used on another (the API's thread-local pool sets this; see
+    api.main.get_conn). Note this does NOT make it safe to use one connection
+    from several threads at once — SQLite's multi-thread build (the common
+    macOS/Linux default, sqlite3.threadsafety == 1) segfaults on that. Give
+    each thread its own connection. Separate connections to the same file DB
+    share state and coordinate via the busy timeout below; that is the intended
+    multi-writer pattern (API threads + workers).
     """
     # Workers and the API share the Render Disk. Wait briefly for the other
     # writer instead of turning ordinary SQLite serialization into a 500.

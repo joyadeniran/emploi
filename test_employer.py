@@ -9,12 +9,20 @@ Billing model under test (locked with Joy 2026-07-16): role #1 free
 (accept-gated contact, 10-invite cap); roles 2+ unlock-gated (1 credit =
 ₦1,000, packs of min 5, unlock reveals contact immediately).
 """
+import atexit
 import os
+import shutil
 import sys
+import tempfile
 import time as _time
 
 os.environ["EMPLOI_API_KEY"] = "test-key"
-os.environ["EMPLOI_DB_PATH"] = ":memory:"
+# Temp FILE, not ":memory:": the API opens one connection per thread and the
+# TestClient serves requests across threadpool threads; a per-connection
+# ":memory:" DB would not be shared between them. See test_api.py for detail.
+_TEST_DB_DIR = tempfile.mkdtemp(prefix="emploi-employer-test-")
+os.environ["EMPLOI_DB_PATH"] = os.path.join(_TEST_DB_DIR, "employer_test.sqlite3")
+atexit.register(shutil.rmtree, _TEST_DB_DIR, ignore_errors=True)
 os.environ.pop("GEMINI_API_KEY", None)
 os.environ.pop("GROQ_API_KEY", None)
 
