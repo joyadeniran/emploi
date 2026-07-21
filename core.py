@@ -90,11 +90,16 @@ def _profile_block(profile: dict) -> str:
         goals = profile.get("career_goals", "")
     if isinstance(goals, list):
         goals = ", ".join(str(g) for g in goals)
+    exp_years = profile.get("experience_years", "")
+    exp_detail = _entries_or_text(profile.get("experience"), profile.get("bio"))
+    exp_line = f"{exp_years} — {exp_detail}" if exp_years and exp_detail else (exp_years or exp_detail)
+    email = profile.get("email", "")
     lines = [
         f"- Name: {profile.get('name', '')}",
+        f"- Email: {email}" if email else "- Email: (not provided — do NOT invent one)",
         f"- Title: {profile.get('title') or profile.get('headline') or profile.get('current_role', '')}",
         f"- Location: {profile.get('location', '')}",
-        f"- Experience: {_entries_or_text(profile.get('experience'), profile.get('bio'))}",
+        f"- Experience: {exp_line}",
         f"- Skills: {skills}",
         f"- Education: {_entries_or_text(profile.get('education'))}",
         f"- Goals: {goals}",
@@ -145,7 +150,7 @@ Rules:
 - Return ONLY the final improved version, no meta-commentary.
 
 **Candidate Profile (ground truth — nothing beyond this may be claimed):**
-{profile}
+{_profile_block(profile)}
 
 **Job Description:**
 {job_text}
@@ -225,7 +230,7 @@ using this rubric (fit_score = the weighted average it defines):
 {load_skill('evaluation')}
 
 Candidate profile:
-{profile}
+{_profile_block(profile)}
 {_preferences_block(profile)}
 Jobs:
 {listing}
@@ -303,8 +308,8 @@ def build_chat_prompt(profile: dict, question: str, history: str = "") -> str:
 
 {load_skill('emploi_context')}
 
-Candidate profile (fields: {", ".join(PROFILE_KEYS)}):
-{profile}
+Candidate profile (ground truth — never claim facts beyond it):
+{_profile_block(profile)}
 
 Recent conversation:
 {history or "(start of conversation)"}
@@ -316,8 +321,8 @@ Respond with ONLY a JSON object:
 {{"reply": "your concise, practical answer",
   "profile_updates": {{}}}}
 
-Rules for profile_updates:
-- If their message states or implies new profile information (career goals, target title, location/remote preference, new skills), put it in profile_updates using the field names above. Example: they say "I want senior marketing roles" -> {{"goals": "Senior marketing roles..."}}.
+Rules for profile_updates (allowed keys: {", ".join(PROFILE_KEYS)}):
+- If their message states or implies new profile information (career goals, target title, location/remote preference, new skills), put it in profile_updates using the allowed keys. Example: they say "I want senior marketing roles" -> {{"goals": "Senior marketing roles..."}}.
 - Merge with what's already there; don't erase existing detail.
 - If nothing should change, leave profile_updates empty.
 - Never invent facts they didn't state."""

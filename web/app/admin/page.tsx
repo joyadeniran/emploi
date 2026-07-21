@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
-import { Activity, BadgeCheck, Coins, Database, ShieldAlert, Users } from "lucide-react";
+import { Activity, Coins, Database, ShieldAlert, Users } from "lucide-react";
 import { getAdminEmail } from "@/lib/admin";
 import { ApiUnavailableError, publicApiFetch } from "@/lib/api";
 import { VouchButton } from "@/components/VouchButton";
-import { GrantCreditsButton } from "@/components/GrantCreditsButton";
+import { AdminUsersTable, AdminEmployersList } from "@/components/admin/SearchableLists";
 import { AdminSignOut } from "@/components/AdminSignOut";
 import { WorkerControls } from "@/components/admin/WorkerControls";
 import { JobSourcesManager } from "@/components/admin/JobSourcesManager";
@@ -160,42 +160,7 @@ export default async function AdminPage() {
           </h2>
           <p className="text-xs text-muted">Signed-in accounts. Contains email — owner-only.</p>
         </div>
-        {users.length === 0 ? (
-          <p className="mt-4 text-sm text-muted">No users yet.</p>
-        ) : (
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[520px] text-sm">
-              <thead>
-                <tr className="border-b border-line text-left text-xs font-bold uppercase text-faint">
-                  <th className="py-2 pr-3">Name</th>
-                  <th className="py-2 pr-3">Email</th>
-                  <th className="py-2 pr-3">Career Twin</th>
-                  <th className="py-2">Joined</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((u) => (
-                  <tr key={u.id} className="border-b border-line last:border-0">
-                    <td className="py-2 pr-3 font-semibold">{u.name || "—"}</td>
-                    <td className="py-2 pr-3">
-                      <a href={`mailto:${u.email}`} className="font-semibold text-brand hover:underline">{u.email}</a>
-                    </td>
-                    <td className="py-2 pr-3">
-                      {u.twin_complete ? (
-                        <span className="rounded-full bg-good-soft px-2 py-0.5 text-[11px] font-bold text-good">Active</span>
-                      ) : u.has_twin ? (
-                        <span className="rounded-full bg-amber-soft px-2 py-0.5 text-[11px] font-bold text-amber">Started</span>
-                      ) : (
-                        <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-bold text-muted">None</span>
-                      )}
-                    </td>
-                    <td className="py-2 text-muted">{u.created_at.slice(0, 10)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <AdminUsersTable users={users} />
       </section>
 
       <section id="employers" className="scroll-mt-6 rounded-2xl border border-line bg-card p-6 shadow-card">
@@ -207,27 +172,7 @@ export default async function AdminPage() {
           Credits are not verification; they only affect how many candidates an
           employer can unlock.
         </p>
-        {employers.length === 0 ? (
-          <p className="mt-4 text-sm text-muted">No employers yet.</p>
-        ) : (
-          <ul className="mt-4 divide-y divide-line">
-            {employers.map((emp) => (
-              <li key={emp.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                <div className="min-w-0">
-                  <p className="flex items-center gap-1.5 text-sm font-bold">
-                    {emp.company_name}
-                    {emp.warm_intro_by ? <BadgeCheck size={13} className="text-good" /> : null}
-                  </p>
-                  <p className="text-xs text-muted">
-                    {emp.company_domain ?? "no domain"} · trust {emp.trust_level ?? "—"} ·{" "}
-                    <span className="font-semibold text-ink">{emp.credit_balance} credit{emp.credit_balance === 1 ? "" : "s"}</span>
-                  </p>
-                </div>
-                <GrantCreditsButton employerId={emp.id} companyName={emp.company_name} balance={emp.credit_balance} />
-              </li>
-            ))}
-          </ul>
-        )}
+        <AdminEmployersList employers={employers} />
       </section>
       </div>
       </main>

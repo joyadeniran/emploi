@@ -92,14 +92,27 @@ export function RoleWorkbench({
   async function refresh() {
     setRefining(true);
     setError(null);
+    const before = JSON.stringify(shortlist?.map((c) => c.candidate_id) ?? []);
     await fetch(`/api/employer/roles/${roleId}/shortlist/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refinement_note: note.trim() || undefined }),
     });
     setNote("");
-    // Regeneration runs in the background — poll briefly.
-    setTimeout(async () => { await load(); setRefining(false); }, 4000);
+    // Regeneration runs in the background and routinely takes >10s (it's a
+    // model call) — poll until the shortlist actually changes, capped at ~30s.
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      try {
+        const res = await fetch(`/api/employer/roles/${roleId}/shortlist`);
+        if (res.ok) {
+          const next = (await res.json()).shortlist as ShortlistRow[];
+          setShortlist(next);
+          if (JSON.stringify(next.map((c) => c.candidate_id)) !== before) break;
+        }
+      } catch { /* transient — keep polling */ }
+    }
+    setRefining(false);
   }
 
   async function hire(inviteId: number) {
