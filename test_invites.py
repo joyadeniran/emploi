@@ -5,11 +5,19 @@ contact-unlock timing, recruiter-visibility opt-in, and NDPA erasure of
 candidate-side rows. All offline: in-memory DB, patched trust probes,
 fake models. check() style like every other suite.
 """
+import atexit
 import os
+import shutil
 import sys
+import tempfile
 
 os.environ["EMPLOI_API_KEY"] = "test-key"
-os.environ["EMPLOI_DB_PATH"] = ":memory:"
+# Temp FILE, not ":memory:": the API opens one connection per thread and the
+# TestClient serves requests across threadpool threads; a per-connection
+# ":memory:" DB would not be shared between them. See test_api.py for detail.
+_TEST_DB_DIR = tempfile.mkdtemp(prefix="emploi-invites-test-")
+os.environ["EMPLOI_DB_PATH"] = os.path.join(_TEST_DB_DIR, "invites_test.sqlite3")
+atexit.register(shutil.rmtree, _TEST_DB_DIR, ignore_errors=True)
 os.environ.pop("GEMINI_API_KEY", None)
 os.environ.pop("GROQ_API_KEY", None)
 

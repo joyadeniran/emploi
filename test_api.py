@@ -4,11 +4,21 @@ No network, no API key, no Gemini: DNS/MX/site probes are patched at the
 module seam (api.main.dns_fn etc.), the model factory is swapped for a fake,
 and the database is in-memory. Same check() style as the other suites.
 """
+import atexit
 import os
+import shutil
 import sys
+import tempfile
 
 os.environ["EMPLOI_API_KEY"] = "test-key"
-os.environ["EMPLOI_DB_PATH"] = ":memory:"
+# A real temp FILE, not ":memory:". The API opens one connection per thread
+# (api.main.get_conn) and FastAPI's TestClient serves requests across several
+# threadpool threads; a bare ":memory:" DB is private to each connection, so a
+# write on one request's thread would be invisible to the next. A file is the
+# production configuration (Render disk) and the connections share it correctly.
+_TEST_DB_DIR = tempfile.mkdtemp(prefix="emploi-api-test-")
+os.environ["EMPLOI_DB_PATH"] = os.path.join(_TEST_DB_DIR, "api_test.sqlite3")
+atexit.register(shutil.rmtree, _TEST_DB_DIR, ignore_errors=True)
 os.environ.pop("GEMINI_API_KEY", None)
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -898,6 +908,81 @@ check("scheduler is OFF unless INTERNAL_SCHEDULER=true (no thread on import)",
       m._scheduler_started is False
       and not any(t.name == "internal-scheduler" for t in __import__("threading").enumerate()))
 check("scheduler mirrors the 7 render.yaml cron jobs", len(m._scheduler_jobs()) == 7)
+
+# ---------------- get_conn: per-thread connections (segfault regression) ----
+# The /admin dashboard fires 5 requests in parallel; FastAPI serves sync
+# endpoints (and our generate/cv background jobs) on a threadpool. get_conn()
+# used to hand every thread ONE shared sqlite3.Connection — undefined behavior
+# under SQLite's multi-thread build (sqlite3.threadsafety == 1) that reliably
+# SIGSEGV'd the process. Each thread must now get its own connection.
+import threading as _threading
+
+# (a) Invariant: get_conn hands each thread its OWN connection, reused within
+# that thread. Released together via a barrier to mimic the /admin fan-out —
+# under the old shared-connection code this concurrency segfaulted the process.
+_conn_ids: dict = {}
+_barrier = _threading.Barrier(6)
+
+
+def _probe():
+    _barrier.wait()
+    _conn_ids[_threading.get_ident()] = (id(m.get_conn()), id(m.get_conn()))
+
+
+_probes = [_threading.Thread(target=_probe) for _ in range(6)]
+for _t in _probes: _t.start()
+for _t in _probes: _t.join()
+
+check("get_conn returns the SAME connection within a thread",
+      len(_conn_ids) == 6 and all(a == b for a, b in _conn_ids.values()))
+check("get_conn returns a DISTINCT connection per thread (no cross-thread sharing)",
+      len({a for a, _ in _conn_ids.values()}) == 6)
+
+# (b) Production config: separate thread-local connections to the same FILE DB
+# must see each other's committed writes (this is why the fix is safe in prod,
+# where EMPLOI_DB_PATH is a Render-disk file, not ":memory:"). Two connections
+# opened on two threads; the second sees the first's row.
+import tempfile as _tempfile
+
+_fdb = os.path.join(tempfile_dir := _tempfile.mkdtemp(), "conc.sqlite3")
+_writer = _db.connect(_fdb, check_same_thread=False)
+_writer.execute("INSERT INTO applications (user_id, company, role, status) "
+                "VALUES ('filevis', 'Co', 'Role', 'seed')")
+_writer.commit()
+_seen = []
+
+
+def _reader():
+    c = _db.connect(_fdb, check_same_thread=False)
+    _seen.append(c.execute("SELECT COUNT(*) FROM applications "
+                           "WHERE user_id = 'filevis'").fetchone()[0])
+    c.close()
+
+
+_rt = _threading.Thread(target=_reader)
+_rt.start(); _rt.join()
+_writer.close()
+check("thread-local connections to one file DB share committed state (prod config)",
+      _seen == [1])
+
+# (c) Startup guard: a bare ":memory:" DB gives each thread a private store
+# (silent data loss under the threadpool), so importing the API with it must
+# fail loudly — verified in a subprocess so the import runs fresh.
+import subprocess as _sp
+
+_repo = os.path.dirname(os.path.abspath(__file__))
+_mem_env = {**os.environ, "EMPLOI_DB_PATH": ":memory:"}
+_mem_env.pop("EMPLOI_ALLOW_MEMORY_DB", None)
+_refused = _sp.run([sys.executable, "-c", "import api.main"],
+                   env=_mem_env, cwd=_repo, capture_output=True, text=True)
+check("API refuses to boot with EMPLOI_DB_PATH=:memory:",
+      _refused.returncode != 0 and ":memory:" in _refused.stderr)
+
+_allowed = _sp.run([sys.executable, "-c", "import api.main"],
+                   env={**_mem_env, "EMPLOI_ALLOW_MEMORY_DB": "1"},
+                   cwd=_repo, capture_output=True, text=True)
+check("EMPLOI_ALLOW_MEMORY_DB=1 is the documented escape hatch for :memory:",
+      _allowed.returncode == 0)
 
 print()
 if FAILURES:

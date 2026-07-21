@@ -49,6 +49,24 @@ logging.basicConfig(level=logging.INFO)
 API_KEY = os.getenv("EMPLOI_API_KEY", "")
 DB_PATH = os.getenv("EMPLOI_DB_PATH", "emploi.sqlite3")
 
+# Refuse to boot against a bare in-memory database. get_conn() opens one SQLite
+# connection PER THREAD (a single connection shared across FastAPI's threadpool
+# segfaults under SQLite's multi-thread build), and a ":memory:" database is
+# private to each connection — so every thread would get its own empty DB and
+# writes made on one request's thread would silently vanish on the next. That is
+# invisible data loss, not a crash, so we fail loudly at startup instead. Tests
+# use a temp FILE DB (the real deploy config; see test_api.py). The escape hatch
+# exists only for a deliberate single-threaded local experiment that accepts the
+# caveat above.
+if DB_PATH == ":memory:" and \
+        os.getenv("EMPLOI_ALLOW_MEMORY_DB", "").lower() not in ("1", "true", "yes"):
+    raise RuntimeError(
+        "EMPLOI_DB_PATH=':memory:' is unsafe here: the API opens one SQLite "
+        "connection per thread and an in-memory database is private to each "
+        "connection, so writes are lost across threads. Point EMPLOI_DB_PATH at "
+        "a file path (this is the production configuration). Set "
+        "EMPLOI_ALLOW_MEMORY_DB=1 only for a deliberate single-threaded run.")
+
 # Billing — Paystack. Plan codes are created once in the Paystack dashboard
 # (Products > Plans) and referenced by code, never by amount; TIER_PRICES_NGN
 # in core.py is display-only. Unset PAYSTACK_SECRET_KEY = billing endpoints
@@ -98,11 +116,37 @@ RATE_LIMITS = {
 _NUMERIC_SEGMENT_RE = re.compile(r"/\d+")
 
 
+# A single sqlite3.Connection must never be used by two threads at once: under
+# SQLite's multi-thread build (the macOS/Linux default, sqlite3.threadsafety ==
+# 1) that is undefined behavior and segfaults the process. FastAPI dispatches
+# sync endpoints — and our generate/cv background jobs — onto a threadpool, so a
+# process-wide shared connection reliably crashed under the /admin dashboard's
+# 5 parallel requests (SIGSEGV, exit 139). Give each thread its own connection.
+# This matches the existing multi-writer design: workers already open their own
+# connections and db.connect sets timeout=30 for cross-connection lock waits.
+_conns = threading.local()
+
+
 def get_conn():
-    """One connection per process; sqlite serializes writes internally."""
-    if not hasattr(get_conn, "_conn"):
-        get_conn._conn = db.connect(DB_PATH, check_same_thread=False)
-    return get_conn._conn
+    """The calling thread's own sqlite3.Connection (opened once, then reused).
+
+    Never share the returned connection across threads — see the module note
+    above. Endpoints and background jobs call this from whatever thread they run
+    on and get a connection private to that thread. In production DB_PATH is a
+    file on the Render disk, so every thread's connection sees the same data and
+    coordinates through SQLite's file locking + db.connect's timeout=30.
+
+    Dev/test note: with EMPLOI_DB_PATH=":memory:" each thread gets its OWN
+    private in-memory database (a bare ":memory:" store is per-connection). That
+    is fine for the API's usage — a request and its work run on one thread, and
+    the only cross-thread DB write in memory mode is a background job's
+    log_generation, whose loss is a test-only artifact — but do not rely on
+    cross-thread visibility under ":memory:".
+    """
+    conn = getattr(_conns, "conn", None)
+    if conn is None:
+        conn = _conns.conn = db.connect(DB_PATH, check_same_thread=False)
+    return conn
 
 
 GENERATE_CALL_TIMEOUT_S = 25  # per-provider-call bound; see FallbackModel/GroqModel
