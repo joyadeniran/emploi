@@ -1,13 +1,14 @@
 import { redirect } from "next/navigation";
-import { Activity, BadgeCheck, Coins, Database, ShieldAlert, Users } from "lucide-react";
+import { Activity, Coins, Database, ShieldAlert, Users } from "lucide-react";
 import { getAdminEmail } from "@/lib/admin";
 import { ApiUnavailableError, publicApiFetch } from "@/lib/api";
 import { VouchButton } from "@/components/VouchButton";
-import { GrantCreditsButton } from "@/components/GrantCreditsButton";
+import { AdminUsersTable, AdminEmployersList } from "@/components/admin/SearchableLists";
 import { AdminSignOut } from "@/components/AdminSignOut";
 import { WorkerControls } from "@/components/admin/WorkerControls";
 import { JobSourcesManager } from "@/components/admin/JobSourcesManager";
 import { DiagnosticsPanel, type Diagnostics } from "@/components/admin/DiagnosticsPanel";
+import { AdminSidebar } from "@/components/admin/AdminSidebar";
 
 interface Source {
   id: number; company: string; ats: string; token: string;
@@ -76,20 +77,17 @@ export default async function AdminPage() {
   ];
 
   return (
-    <div className="min-h-dvh bg-surface">
-      <header className="border-b border-line bg-card">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
-          <div>
-            <h1 className="text-xl font-extrabold tracking-tight">Emploi Admin</h1>
-            <p className="text-xs text-muted">{adminEmail}</p>
-          </div>
-          <AdminSignOut />
-        </div>
-      </header>
-      <div className="mx-auto max-w-5xl space-y-8 px-4 py-8">
+    <div className="min-h-dvh bg-surface lg:flex">
+      <AdminSidebar email={adminEmail} />
+      <main className="min-w-0 flex-1">
+      <div className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-6 lg:px-10 lg:py-10">
+      <div className="hidden items-start justify-between lg:flex">
+        <div><p className="text-sm font-bold text-brand">Administration</p><h1 className="mt-1 text-3xl font-extrabold tracking-tight">Platform overview</h1><p className="mt-2 text-sm text-muted">Monitor operations, manage sources, and keep the marketplace healthy.</p></div>
+        <AdminSignOut />
+      </div>
 
       {/* System health + worker controls — the operational control panel. */}
-      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
+      <section id="operations" className="scroll-mt-6 rounded-2xl border border-line bg-card p-6 shadow-card">
         <h2 className="flex items-center gap-2 font-extrabold">
           <Activity className="text-brand" size={18} /> System health
         </h2>
@@ -104,7 +102,7 @@ export default async function AdminPage() {
         </div>
       </section>
 
-      <section>
+      <section id="overview" className="scroll-mt-6">
         <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-faint">Platform metrics</h2>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {tiles.map(([label, value]) => (
@@ -116,7 +114,7 @@ export default async function AdminPage() {
       </div>
       </section>
 
-      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
+      <section id="sources" className="scroll-mt-6 rounded-2xl border border-line bg-card p-6 shadow-card">
         <h2 className="flex items-center gap-2 font-extrabold">
           <Database className="text-brand" size={18} /> Job sources
         </h2>
@@ -127,7 +125,7 @@ export default async function AdminPage() {
         <div className="mt-4"><JobSourcesManager sources={sources} /></div>
       </section>
 
-      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
+      <section id="trust" className="scroll-mt-6 rounded-2xl border border-line bg-card p-6 shadow-card">
         <h2 className="flex items-center gap-2 font-extrabold">
           <ShieldAlert className="text-warn" size={18} /> Trust alerts
         </h2>
@@ -154,7 +152,7 @@ export default async function AdminPage() {
         )}
       </section>
 
-      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
+      <section id="users" className="scroll-mt-6 rounded-2xl border border-line bg-card p-6 shadow-card">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-2 font-extrabold">
             <Users className="text-brand" size={18} /> Users
@@ -162,45 +160,10 @@ export default async function AdminPage() {
           </h2>
           <p className="text-xs text-muted">Signed-in accounts. Contains email — owner-only.</p>
         </div>
-        {users.length === 0 ? (
-          <p className="mt-4 text-sm text-muted">No users yet.</p>
-        ) : (
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[520px] text-sm">
-              <thead>
-                <tr className="border-b border-line text-left text-xs font-bold uppercase text-faint">
-                  <th className="py-2 pr-3">Name</th>
-                  <th className="py-2 pr-3">Email</th>
-                  <th className="py-2 pr-3">Career Twin</th>
-                  <th className="py-2">Joined</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((u) => (
-                  <tr key={u.id} className="border-b border-line last:border-0">
-                    <td className="py-2 pr-3 font-semibold">{u.name || "—"}</td>
-                    <td className="py-2 pr-3">
-                      <a href={`mailto:${u.email}`} className="font-semibold text-brand hover:underline">{u.email}</a>
-                    </td>
-                    <td className="py-2 pr-3">
-                      {u.twin_complete ? (
-                        <span className="rounded-full bg-good-soft px-2 py-0.5 text-[11px] font-bold text-good">Active</span>
-                      ) : u.has_twin ? (
-                        <span className="rounded-full bg-amber-soft px-2 py-0.5 text-[11px] font-bold text-amber">Started</span>
-                      ) : (
-                        <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-bold text-muted">None</span>
-                      )}
-                    </td>
-                    <td className="py-2 text-muted">{u.created_at.slice(0, 10)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <AdminUsersTable users={users} />
       </section>
 
-      <section className="rounded-2xl border border-line bg-card p-6 shadow-card">
+      <section id="employers" className="scroll-mt-6 rounded-2xl border border-line bg-card p-6 shadow-card">
         <h2 className="flex items-center gap-2 font-extrabold">
           <Coins className="text-brand" size={18} /> Employers &amp; credits
         </h2>
@@ -209,29 +172,10 @@ export default async function AdminPage() {
           Credits are not verification; they only affect how many candidates an
           employer can unlock.
         </p>
-        {employers.length === 0 ? (
-          <p className="mt-4 text-sm text-muted">No employers yet.</p>
-        ) : (
-          <ul className="mt-4 divide-y divide-line">
-            {employers.map((emp) => (
-              <li key={emp.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                <div className="min-w-0">
-                  <p className="flex items-center gap-1.5 text-sm font-bold">
-                    {emp.company_name}
-                    {emp.warm_intro_by ? <BadgeCheck size={13} className="text-good" /> : null}
-                  </p>
-                  <p className="text-xs text-muted">
-                    {emp.company_domain ?? "no domain"} · trust {emp.trust_level ?? "—"} ·{" "}
-                    <span className="font-semibold text-ink">{emp.credit_balance} credit{emp.credit_balance === 1 ? "" : "s"}</span>
-                  </p>
-                </div>
-                <GrantCreditsButton employerId={emp.id} companyName={emp.company_name} balance={emp.credit_balance} />
-              </li>
-            ))}
-          </ul>
-        )}
+        <AdminEmployersList employers={employers} />
       </section>
       </div>
+      </main>
     </div>
   );
 }

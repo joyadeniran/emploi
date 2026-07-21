@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { ArrowUpRight, Check, Copy, Eye, FileDown, FileText, Loader2, X } from "lucide-react";
 import type { JobMatch } from "@/lib/data";
 import {
@@ -18,11 +19,22 @@ function progressLabel(elapsedSeconds: number): string {
   return "Still working — a reviewed draft can take a little while…";
 }
 
-/**
- * One downloadable artifact. Only ever rendered for the cover letter and the
- * tailored CV — never the fit evaluation, which contains the candidate's own
- * gap analysis and must not end up in a file they send to an employer.
- */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function copy() {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <button onClick={copy} className="inline-flex items-center gap-1 text-xs font-bold text-brand hover:text-brand-vivid">
+      {copied ? <><Check size={13} /> Copied</> : <><Copy size={13} /> Copy</>}
+    </button>
+  );
+}
+
 function Artifact({
   title,
   text,
@@ -48,18 +60,13 @@ function Artifact({
   }
 
   return (
-    <section className="rounded-2xl border border-line bg-card p-4">
+    <section className="rounded-2xl border border-line bg-card p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="flex items-center gap-2 text-sm font-extrabold">
           <FileText size={15} className="text-brand" /> {title}
         </h3>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigator.clipboard.writeText(text)}
-            className="inline-flex items-center gap-1 text-xs font-bold text-brand"
-          >
-            <Copy size={13} /> Copy
-          </button>
+        <div className="flex items-center gap-2">
+          <CopyButton text={text} />
           <button
             onClick={() => download("pdf")}
             disabled={busy !== null}
@@ -76,11 +83,75 @@ function Artifact({
           </button>
         </div>
       </div>
-      <pre className="mt-3 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-xl bg-surface p-3 text-xs leading-relaxed text-ink">
+      <pre className="mt-3 max-h-72 overflow-y-auto whitespace-pre-wrap rounded-xl bg-surface p-4 text-xs leading-relaxed text-ink">
         {text}
       </pre>
       {error ? <p role="alert" className="mt-2 text-xs font-semibold text-warn">{error}</p> : null}
     </section>
+  );
+}
+
+function parseMarkdownTable(md: string): { headers: string[]; rows: string[][] } | null {
+  const lines = md.trim().split("\n");
+  if (lines.length < 3) return null;
+  const parse = (line: string) =>
+    line.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  const headers = parse(lines[0]);
+  if (!lines[1].match(/^[\s|:-]+$/)) return null;
+  const rows = lines.slice(2).filter((l) => l.includes("|")).map(parse);
+  if (rows.length === 0) return null;
+  return { headers, rows };
+}
+
+function RenderedEvaluation({ text }: { text: string }) {
+  const blocks = text.split(/\n\n+/);
+  return (
+    <div className="mt-3 space-y-3">
+      {blocks.map((block, i) => {
+        const table = parseMarkdownTable(block);
+        if (table) {
+          return (
+            <div key={i} className="overflow-x-auto rounded-xl bg-card">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-line">
+                    {table.headers.map((h, j) => (
+                      <th key={j} className="px-3 py-2 text-left font-bold text-ink">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {table.rows.map((row, ri) => (
+                    <tr key={ri} className="border-b border-line/50 last:border-0">
+                      {row.map((cell, ci) => (
+                        <td key={ci} className="px-3 py-2 text-muted">{cell}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+        const trimmed = block.trim();
+        if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+          const items = trimmed.split(/\n/).filter((l) => l.match(/^[\s]*[-*]\s/));
+          return (
+            <ul key={i} className="list-inside list-disc space-y-1 text-xs leading-relaxed text-muted">
+              {items.map((item, j) => (
+                <li key={j}>{item.replace(/^[\s]*[-*]\s/, "")}</li>
+              ))}
+            </ul>
+          );
+        }
+        if (trimmed.startsWith("**") || trimmed.startsWith("Fit Score")) {
+          return <p key={i} className="text-xs font-bold text-ink">{trimmed.replace(/\*\*/g, "")}</p>;
+        }
+        return (
+          <p key={i} className="text-xs leading-relaxed text-muted">{trimmed}</p>
+        );
+      })}
+    </div>
   );
 }
 
@@ -92,7 +163,17 @@ export function ApplyButton({ match }: { match: JobMatch }) {
   const [cvState, setCvState] = useState<"idle" | "busy" | "error">("idle");
   const [cvError, setCvError] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [trackError, setTrackError] = useState("");
   const [progress, setProgress] = useState("");
+  // Portal target is only available client-side; the mounting gate keeps SSR
+  // and the first client render identical (no hydration mismatch).
+  const mounted = useSyncExternalStore(() => () => {}, () => true, () => false);
+
+  useEffect(() => {
+    if (open) document.body.style.overflow = "hidden";
+    else document.body.style.overflow = "";
+    return () => { document.body.style.overflow = ""; };
+  }, [open]);
 
   const sections = useMemo(
     () => (generated ? splitDraft(generated.result) : null),
@@ -124,7 +205,11 @@ export function ApplyButton({ match }: { match: JobMatch }) {
   }
 
   async function buildCv() {
-    if (!match.description) return;
+    if (!match.description) {
+      setCvError("This job has no description to write from — track it directly below.");
+      setCvState("error");
+      return;
+    }
     setCvError("");
     setCvState("busy");
     try {
@@ -136,98 +221,136 @@ export function ApplyButton({ match }: { match: JobMatch }) {
       setCv(result.cv);
       setCvState("idle");
     } catch (e) {
-      setCvError(e instanceof GenerationError ? e.message : "Couldn't build your CV — try again in a moment.");
+      setCvError(e instanceof GenerationError ? e.message : "Couldn’t build your CV — try again in a moment.");
       setCvState("error");
     }
   }
 
   async function trackAndApply() {
+    setTrackError("");
     setState("tracking");
     try {
-      const response = await fetch("/api/applications", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company: match.company, role: match.title, status: "applied", extra: { fit_score: generated?.fit_score ?? match.fit, source: generated ? "generated-match" : "direct-apply", job_id: match.jobId, apply_url: match.applyUrl } }) });
+      const response = await fetch("/api/applications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company: match.company,
+          role: match.title,
+          status: "applied",
+          extra: {
+            fit_score: generated?.fit_score ?? match.fit,
+            source: generated ? "generated-match" : "direct-apply",
+            job_id: match.jobId,
+            apply_url: match.applyUrl,
+          },
+        }),
+      });
       if (!response.ok) throw new Error();
-      if (match.applyUrl) { try { const url = new URL(match.applyUrl); if (url.protocol === "https:" || url.protocol === "http:") window.open(url.toString(), "_blank", "noopener,noreferrer"); } catch {} }
-      setOpen(false); setState("idle"); setGenerated(null); setCv(""); setCvState("idle");
+      if (match.applyUrl) {
+        try {
+          const url = new URL(match.applyUrl);
+          if (url.protocol === "https:" || url.protocol === "http:")
+            window.open(url.toString(), "_blank", "noopener,noreferrer");
+        } catch {}
+      }
+      setOpen(false);
+      setState("idle");
+      setGenerated(null);
+      setCv("");
+      setCvState("idle");
     } catch {
-      setErrorMsg("We couldn't save this application. Please try again.");
-      setState("error");
+      setTrackError("We couldn’t save this application. Please try again.");
+      setState("idle");
     }
+  }
+
+  function close() {
+    setOpen(false);
   }
 
   return (
     <>
       <button
-        onClick={() => { setOpen(true); setState("idle"); setErrorMsg(""); }}
-        className="rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-white"
+        onClick={() => { setOpen(true); setState("idle"); setErrorMsg(""); setTrackError(""); setCvError(""); if (cvState === "error") setCvState("idle"); }}
+        className="rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-transform hover:-translate-y-0.5 hover:shadow-pop"
       >
         Apply
       </button>
 
-      {open ? (
-        <div role="dialog" aria-modal="true" aria-label={`Apply to ${match.title}`}
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-ink/40 p-4">
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-card p-6 shadow-card">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-extrabold">Apply to this role</h2>
-                <p className="mt-1 text-sm text-muted">{match.title} at {match.company}</p>
+      {open && mounted ? createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Apply to ${match.title}`}
+          className="fixed inset-0 z-[60] flex justify-end"
+        >
+          {/* backdrop */}
+          <div className="absolute inset-0 bg-ink/60 backdrop-blur-sm" onClick={close} onPointerDown={(e) => e.stopPropagation()} />
+
+          {/* drawer */}
+          <div className="relative flex h-full w-full max-w-xl flex-col bg-card shadow-2xl sm:max-w-2xl">
+            {/* sticky header */}
+            <div className="flex items-center justify-between border-b border-line px-5 py-4 sm:px-6">
+              <div className="min-w-0">
+                <h2 className="truncate text-lg font-extrabold">{match.title}</h2>
+                <p className="truncate text-sm text-muted">{match.company}</p>
               </div>
-              <button onClick={() => setOpen(false)} aria-label="Close" className="rounded-lg p-2"><X size={18} /></button>
+              <button onClick={close} aria-label="Close" className="ml-4 shrink-0 rounded-lg p-2 text-muted hover:bg-surface hover:text-ink">
+                <X size={20} />
+              </button>
             </div>
 
-            {!generated ? (
-              <div className="mt-5">
-                {state === "busy" ? (
-                  <div className="flex items-center gap-3 rounded-xl bg-surface px-4 py-3">
-                    <Loader2 size={16} className="shrink-0 animate-spin text-brand" />
-                    <p className="text-sm font-semibold text-ink">{progress}</p>
+            {/* scrollable body — two independent artifacts, costs on the buttons */}
+            <div className="flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+              <div className="space-y-5">
+                {/* fit score badge (appears once the cover letter draft exists) */}
+                {generated && generated.fit_score !== null ? (
+                  <div className="inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-sm font-bold">
+                    <span className={generated.fit_score >= 85 ? "text-good" : generated.fit_score >= 60 ? "text-amber" : "text-warn"}>
+                      {generated.fit_score}/100
+                    </span>
+                    <span className="text-muted">fit score</span>
                   </div>
-                ) : (
-                  <>
-                    <p className="text-sm text-muted">
-                      Want a cover letter grounded only in your Career Twin? That uses <strong>3 AI calls</strong> with
-                      review enabled (2 without), and you can download it as PDF or Word. Or skip the draft and apply
-                      directly — we&apos;ll still track it.
-                    </p>
-                    <div className="mt-5 flex flex-wrap items-center gap-3">
-                      <button onClick={generate} disabled={state === "tracking"}
-                        className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60">
-                        Generate application
-                      </button>
-                      <button onClick={trackAndApply} disabled={state === "tracking"}
-                        className="inline-flex items-center gap-2 rounded-xl border border-line px-4 py-2.5 text-sm font-bold text-brand hover:bg-brand-soft disabled:opacity-60">
-                        {state === "tracking" ? <Loader2 size={15} className="animate-spin" /> : <ArrowUpRight size={15} />}
-                        Skip draft — track &amp; apply
-                      </button>
-                    </div>
-                  </>
-                )}
-                {state === "error" ? <p role="alert" className="mt-3 text-sm font-semibold text-warn">{errorMsg}</p> : null}
-              </div>
-            ) : (
-              <div className="mt-5 space-y-4">
-                <p className="text-sm font-bold">
-                  Fit score: {generated.fit_score ?? "Not available"}{generated.fit_score !== null ? "/100" : ""}
-                </p>
-
-                {sections?.coverLetter ? (
-                  <Artifact title="Cover letter" text={sections.coverLetter} filename={`Cover Letter — ${base}`} />
                 ) : null}
 
-                {/* A complete CV is a separate model call, so it's opt-in and the
-                    cost is stated up front (the draft's bullets are fragments). */}
+                {/* cover letter + fit check */}
+                {sections?.coverLetter ? (
+                  <Artifact title="Cover letter" text={sections.coverLetter} filename={`Cover Letter — ${base}`} />
+                ) : (
+                  <section className="rounded-2xl border border-dashed border-line p-4 sm:p-5">
+                    <h3 className="text-sm font-extrabold">Cover letter + fit check</h3>
+                    <p className="mt-1.5 text-xs leading-relaxed text-muted">
+                      A cover letter grounded only in your Career Twin, reviewed for tone and honesty, plus a
+                      private fit evaluation. Downloadable as PDF or Word.
+                    </p>
+                    {state === "busy" ? (
+                      <div className="mt-3 flex items-center gap-3 rounded-xl bg-surface px-4 py-3">
+                        <Loader2 size={16} className="shrink-0 animate-spin text-brand" />
+                        <p className="text-sm font-semibold text-ink">{progress}</p>
+                      </div>
+                    ) : (
+                      <button onClick={generate} disabled={state === "tracking"}
+                        className="mt-3 inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white shadow-sm disabled:opacity-60">
+                        <FileText size={15} /> Generate — uses 3 AI calls
+                      </button>
+                    )}
+                    {state === "error" ? <p role="alert" className="mt-2 text-xs font-semibold text-warn">{errorMsg}</p> : null}
+                  </section>
+                )}
+
+                {/* tailored CV — independent of the cover letter */}
                 {cv ? (
                   <Artifact title="Tailored CV" text={cv} filename={`CV — ${base}`} />
                 ) : (
-                  <section className="rounded-2xl border border-dashed border-line bg-card p-4">
+                  <section className="rounded-2xl border border-dashed border-line p-4 sm:p-5">
                     <h3 className="text-sm font-extrabold">Tailored CV</h3>
-                    <p className="mt-1 text-xs leading-relaxed text-muted">
-                      Build a complete, ready-to-send CV rewritten for this role from your Career Twin — downloadable as
-                      PDF or Word. Uses <strong>1 more AI call</strong> and counts toward your monthly drafts.
+                    <p className="mt-1.5 text-xs leading-relaxed text-muted">
+                      A complete, ready-to-send CV rewritten for this role from your Career Twin — downloadable as
+                      PDF or Word. Only facts from your profile, never invented details.
                     </p>
                     {sections?.cvBullets ? (
                       <details className="mt-3">
-                        <summary className="cursor-pointer text-xs font-bold text-brand">
+                        <summary className="cursor-pointer text-xs font-bold text-brand hover:text-brand-vivid">
                           Preview the tailored bullets from your draft
                         </summary>
                         <pre className="mt-2 whitespace-pre-wrap rounded-xl bg-surface p-3 text-xs leading-relaxed text-ink">
@@ -236,44 +359,52 @@ export function ApplyButton({ match }: { match: JobMatch }) {
                       </details>
                     ) : null}
                     <button onClick={buildCv} disabled={cvState === "busy"}
-                      className="mt-3 inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60">
+                      className="mt-3 inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white shadow-sm disabled:opacity-60">
                       {cvState === "busy" ? <Loader2 size={15} className="animate-spin" /> : <FileText size={15} />}
-                      {cvState === "busy" ? "Building your CV…" : "Build my tailored CV"}
+                      {cvState === "busy" ? "Building your CV…" : "Build CV — uses 1 AI call"}
                     </button>
                     {cvState === "error" ? <p role="alert" className="mt-2 text-xs font-semibold text-warn">{cvError}</p> : null}
                   </section>
                 )}
 
-                {/* Screen-only, deliberately NOT downloadable: this is the
-                    candidate's own gap analysis, not something to send anyone. */}
+                {/* fit evaluation — screen-only, never downloadable */}
                 {sections?.evaluation ? (
-                  <section className="rounded-2xl border border-line bg-surface/60 p-4">
-                    <h3 className="flex items-center gap-2 text-sm font-extrabold">
-                      <Eye size={15} className="text-muted" /> Fit evaluation
+                  <section className="rounded-2xl border border-line bg-surface/60 p-4 sm:p-5">
+                    <div className="flex items-center gap-2">
+                      <Eye size={15} className="shrink-0 text-muted" />
+                      <h3 className="text-sm font-extrabold">Fit evaluation</h3>
                       <span className="rounded-full bg-card px-2 py-0.5 text-[10px] font-bold uppercase text-muted">
                         For your eyes only
                       </span>
-                    </h3>
-                    <p className="mt-1 text-xs text-muted">
+                    </div>
+                    <p className="mt-1.5 text-xs text-muted">
                       Your honest gaps and where the draft stretched. Never sent to the employer — it isn&apos;t included
                       in any download.
                     </p>
-                    <pre className="mt-3 max-h-52 overflow-y-auto whitespace-pre-wrap rounded-xl bg-card p-3 text-xs leading-relaxed text-ink">
-                      {sections.evaluation}
-                    </pre>
+                    <RenderedEvaluation text={sections.evaluation} />
                   </section>
                 ) : null}
-
-                <button onClick={trackAndApply} disabled={state === "tracking"}
-                  className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white">
-                  {state === "tracking" ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-                  Track application and open employer site
-                </button>
-                {state === "error" ? <p role="alert" className="mt-3 text-sm font-semibold text-warn">{errorMsg}</p> : null}
               </div>
-            )}
+            </div>
+
+            {/* sticky footer — the zero-cost path is ALWAYS available */}
+            <div className="border-t border-line px-5 py-4 sm:px-6">
+              <button onClick={trackAndApply} disabled={state === "tracking"}
+                className={`flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold shadow-sm disabled:opacity-60 ${
+                  generated || cv
+                    ? "bg-brand text-white"
+                    : "border border-line text-brand hover:bg-brand-soft"
+                }`}>
+                {state === "tracking" ? <Loader2 size={15} className="animate-spin" /> : generated || cv ? <Check size={15} /> : <ArrowUpRight size={15} />}
+                Track application &amp; open employer site — no AI calls
+              </button>
+              {trackError ? (
+                <p role="alert" className="mt-2 text-center text-xs font-semibold text-warn">{trackError}</p>
+              ) : null}
+            </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </>
   );

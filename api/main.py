@@ -18,6 +18,7 @@ import json
 import os
 import re
 import secrets
+import sqlite3
 import sys
 import logging
 import threading
@@ -2023,8 +2024,13 @@ def admin_patch_source(source_id: int, body: JobSourceIn,
     conn = get_conn()
     if not db.get_job_source(conn, source_id):
         raise HTTPException(status_code=404, detail="source not found")
-    db.upsert_job_source(conn, body.company, body.ats, body.token,
-                         body.priority, body.category, body.region, body.active)
+    try:
+        db.update_job_source(conn, source_id, body.company, body.ats, body.token,
+                             body.priority, body.category, body.region, body.active)
+    except sqlite3.IntegrityError as exc:
+        # An ATS/token pair identifies a source; don't let a collision turn
+        # into a raw 500 for the admin UI.
+        raise HTTPException(status_code=422, detail="ATS and token already exist") from exc
     return {"ok": True}
 
 
@@ -2035,6 +2041,13 @@ def admin_toggle_source(source_id: int, active: bool,
     if not db.set_job_source_active(get_conn(), source_id, active):
         raise HTTPException(status_code=404, detail="source not found")
     return {"ok": True, "active": active}
+
+
+@app.delete("/admin/job-sources/{source_id}", status_code=204)
+def admin_delete_source(source_id: int, _: None = Depends(admin_key_auth)):
+    """Delete a job source from the live registry."""
+    if not db.delete_job_source(get_conn(), source_id):
+        raise HTTPException(status_code=404, detail="source not found")
 
 
 @app.post("/admin/job-sources/seed")

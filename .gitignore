@@ -14,6 +14,8 @@ web/design-sync-stubs/globals.ds.css
 business/
 .claude/*
 !.claude/skills/
+# Local dev-server launch config for the web app (preview tooling, not product)
+web/.claude/
 index-screenshot.png
 
 # FUSE filesystem orphans (appear on some mounted/synced dirs)

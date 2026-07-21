@@ -867,6 +867,17 @@ _sid = r.json()["id"]
 check("PATCH /admin/job-sources/{id}/toggle works with key only",
       client.patch(f"/admin/job-sources/{_sid}/toggle?active=false",
                    headers=ADMIN_KEY).status_code == 200)
+_edited = client.patch(f"/admin/job-sources/{_sid}", headers=ADMIN_KEY,
+                       json={"company": "Design jobs", "ats": "jooble",
+                             "token": "Lagos:product-designer", "priority": 8,
+                             "category": "design", "region": "Nigeria", "active": True})
+check("PATCH /admin/job-sources/{id} updates that source in place",
+      _edited.status_code == 200 and any(
+          s["id"] == _sid and s["company"] == "Design jobs" and s["priority"] == 8
+          for s in client.get("/admin/job-sources", headers=ADMIN_KEY).json()["sources"]))
+check("DELETE /admin/job-sources/{id} removes a source with key only",
+      client.delete(f"/admin/job-sources/{_sid}", headers=ADMIN_KEY).status_code == 204 and not any(
+          s["id"] == _sid for s in client.get("/admin/job-sources", headers=ADMIN_KEY).json()["sources"]))
 check("POST /admin/job-sources/seed?sync=true works with key only",
       client.post("/admin/job-sources/seed?sync=true", headers=ADMIN_KEY).status_code == 200)
 
