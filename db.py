@@ -377,13 +377,25 @@ def connect(path: str, check_same_thread: bool = True) -> sqlite3.Connection:
     from several threads at once — SQLite's multi-thread build (the common
     macOS/Linux default, sqlite3.threadsafety == 1) segfaults on that. Give
     each thread its own connection. Separate connections to the same file DB
-    share state and coordinate via the busy timeout below; that is the intended
-    multi-writer pattern (API threads + workers).
+    share state and coordinate via WAL + the busy timeout below; that is the
+    intended multi-writer pattern (API threads + workers).
     """
     # Workers and the API share the Render Disk. Wait briefly for the other
     # writer instead of turning ordinary SQLite serialization into a 500.
     conn = sqlite3.connect(path, check_same_thread=check_same_thread, timeout=30)
     conn.row_factory = sqlite3.Row
+    if path != ":memory:":
+        # WAL: the API opens one connection per thread and the workers open
+        # their own, so concurrent readers + a writer on the shared file are the
+        # norm. In the default rollback-journal mode they block each other and,
+        # worse, a read->write lock upgrade returns "database is locked"
+        # *immediately* — the busy timeout can't rescue it (observed on CI once
+        # the API tests moved to a file DB). WAL lets readers and the writer run
+        # concurrently; writers still serialize but now wait out the busy
+        # timeout instead of failing. journal_mode persists in the file header,
+        # so this is idempotent. Not supported for ":memory:" (silently a no-op
+        # there), so it's skipped to keep the intent explicit.
+        conn.execute("PRAGMA journal_mode=WAL")
     # migrate legacy `profiles` table before schema creation so the
     # CREATE TABLE IF NOT EXISTS career_twins becomes a no-op after the rename
     try:
