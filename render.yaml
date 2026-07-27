@@ -26,8 +26,9 @@ services:
         value: /var/data/emploi.sqlite3
       - key: INTERNAL_SCHEDULER
         value: "true"          # run workers in-process on this always-on
-                               # service — no dependency on external cron auth.
-                               # With this on you can delete the cron services.
+                               # service — no dependency on external cron auth,
+                               # and the SOLE scheduler (the duplicate cron
+                               # services were removed; see the note below).
       - key: BREVO_API_KEY
         sync: false
       - key: BREVO_SENDER_EMAIL
@@ -56,146 +57,26 @@ services:
       sizeGB: 1
 
   # ---------------------------------------------------------------------------
-  # Scheduled workers — Render Cron Jobs cannot mount a persistent disk (a
-  # hard product limitation: https://render.com/docs/disks — "Cron jobs
-  # can't provision or access a persistent disk"). Since every worker needs
-  # the same SQLite file the API uses, these cron services don't run the
-  # worker scripts directly. Instead each one is a plain curl call that
-  # triggers a /admin/run/* endpoint on the always-on emploi-api service
-  # above, which already has the disk mounted (see api/main.py).
+  # Scheduled workers run IN-PROCESS on emploi-api via the internal scheduler
+  # (INTERNAL_SCHEDULER=true above; see api/main._start_internal_scheduler).
+  # That service is the only one with the SQLite disk mounted, and the workers
+  # need that disk (Render Cron Jobs can't mount one:
+  # https://render.com/docs/disks — "Cron jobs can't provision or access a
+  # persistent disk").
   #
-  # Heavy workers (ingest, match, verify-employers) run in a background
-  # thread there and the trigger returns 202 immediately — Render's HTTP
-  # proxy kills responses after ~100s, so a synchronous trigger reported
-  # false failures for long runs that actually finished. For those, cron
-  # "success" means "trigger accepted"; the run's real outcome is the
-  # worker's event row (events table) and the emploi-api service log.
-  # Notify and backup finish in seconds and stay synchronous, so their
-  # cron status still reflects the true outcome. `curl -sf` exits non-zero
-  # on any 4xx/5xx either way.
+  # The separate `type: cron` curl-trigger services that used to live here were
+  # REMOVED (2026-07-27). They duplicated the internal scheduler — every worker
+  # was scheduled twice, at the same UTC minute, and ran concurrently against
+  # one SQLite file on a single 0.5-CPU instance. That double-run caused
+  # sustained write-lock + CPU contention, which surfaced as the crons' own
+  # `curl` failing: exit 28 (the ingest 202 couldn't return within --max-time
+  # while the threadpool was blocked on the DB lock) and exit 22 (a worker
+  # raised `database is locked` -> HTTP 500, or the overloaded instance
+  # returned 502/503). The internal scheduler is the single source of truth for
+  # cadence; the /admin/run/* endpoints remain for manual, one-off triggers.
+  # If you ever want external cron instead, disable INTERNAL_SCHEDULER first so
+  # the workers are never scheduled from two places at once.
   # ---------------------------------------------------------------------------
-
-  # High-priority boards, hourly.
-  - type: cron
-    name: emploi-ingest
-    runtime: python
-    plan: starter
-    schedule: "0 * * * *"
-    buildCommand: "true"
-    startCommand: >-
-      curl -sf --max-time 60 -X POST
-      -H "X-API-Key: $EMPLOI_API_KEY"
-      "$EMPLOI_API_URL/admin/run/ingest?min_priority=8"
-    envVars:
-      - key: EMPLOI_API_URL
-        value: https://emploi-api.onrender.com
-      - key: EMPLOI_API_KEY
-        sync: false          # must match emploi-api's EMPLOI_API_KEY
-
-  # All boards, daily.
-  - type: cron
-    name: emploi-ingest-daily
-    runtime: python
-    plan: starter
-    schedule: "0 1 * * *"
-    buildCommand: "true"
-    startCommand: >-
-      curl -sf --max-time 60 -X POST
-      -H "X-API-Key: $EMPLOI_API_KEY"
-      "$EMPLOI_API_URL/admin/run/ingest"
-    envVars:
-      - key: EMPLOI_API_URL
-        value: https://emploi-api.onrender.com
-      - key: EMPLOI_API_KEY
-        sync: false
-
-  # Worker 2 — refresh stale employer trust records.
-  - type: cron
-    name: emploi-verify-employers
-    runtime: python
-    plan: starter
-    schedule: "30 1 * * *"
-    buildCommand: "true"
-    startCommand: >-
-      curl -sf --max-time 60 -X POST
-      -H "X-API-Key: $EMPLOI_API_KEY"
-      "$EMPLOI_API_URL/admin/run/verify-employers"
-    envVars:
-      - key: EMPLOI_API_URL
-        value: https://emploi-api.onrender.com
-      - key: EMPLOI_API_KEY
-        sync: false
-
-  # Worker 3 — match fresh jobs against every completed Career Twin.
-  - type: cron
-    name: emploi-match
-    runtime: python
-    plan: starter
-    schedule: "0 2 * * *"
-    buildCommand: "true"
-    startCommand: >-
-      curl -sf --max-time 60 -X POST
-      -H "X-API-Key: $EMPLOI_API_KEY"
-      "$EMPLOI_API_URL/admin/run/match"
-    envVars:
-      - key: EMPLOI_API_URL
-        value: https://emploi-api.onrender.com
-      - key: EMPLOI_API_KEY
-        sync: false
-
-  # Worker 4 — one digest email per user with unnotified matches. Needs a
-  # verified Brevo sender on emploi-api; missing config = safe no-op there,
-  # never a false "sent" here.
-  - type: cron
-    name: emploi-notify
-    runtime: python
-    plan: starter
-    schedule: "30 2 * * *"
-    buildCommand: "true"
-    startCommand: >-
-      curl -sf --max-time 300 -X POST
-      -H "X-API-Key: $EMPLOI_API_KEY"
-      "$EMPLOI_API_URL/admin/run/notify"
-    envVars:
-      - key: EMPLOI_API_URL
-        value: https://emploi-api.onrender.com
-      - key: EMPLOI_API_KEY
-        sync: false
-
-  # Worker 6 — expire pending interview invites past their 14-day window
-  # (before notify, so digests never advertise an already-dead invite).
-  - type: cron
-    name: emploi-expire-invites
-    runtime: python
-    plan: starter
-    schedule: "15 2 * * *"
-    buildCommand: "true"
-    startCommand: >-
-      curl -sf --max-time 60 -X POST
-      -H "X-API-Key: $EMPLOI_API_KEY"
-      "$EMPLOI_API_URL/admin/run/expire-invites"
-    envVars:
-      - key: EMPLOI_API_URL
-        value: https://emploi-api.onrender.com
-      - key: EMPLOI_API_KEY
-        sync: false
-
-  # Worker 5 — nightly SQLite backup to Cloudflare R2 (after ingest/verify/match).
-  - type: cron
-    name: emploi-backup
-    runtime: python
-    plan: starter
-    schedule: "0 3 * * *"
-    buildCommand: "true"
-    startCommand: >-
-      curl -sf --max-time 300 -X POST
-      -H "X-API-Key: $EMPLOI_API_KEY"
-      "$EMPLOI_API_URL/admin/run/backup"
-    envVars:
-      - key: EMPLOI_API_URL
-        value: https://emploi-api.onrender.com
-      - key: EMPLOI_API_KEY
-        sync: false
 
   # Legacy Streamlit chat app / future internal admin console
   - type: web

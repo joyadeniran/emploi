@@ -29,9 +29,22 @@ def _default_upload(local_path, key):
     s3.upload_file(local_path, os.getenv("R2_BUCKET"), key)
 
 
+def _r2_configured():
+    return all(os.getenv(v) for v in _R2_VARS)
+
+
 def run(db_path, dry_run=False, upload_fn=None):
     if not os.path.exists(db_path):
         return {"ok": False, "error": "database file not found: %s" % db_path}
+    # An unconfigured OPTIONAL integration is not a failure. When no upload
+    # target is injected (prod) and R2 is simply absent, skip cleanly — the
+    # trigger endpoint returns 200 instead of paging as a 500 every night.
+    # A CONFIGURED R2 that then fails still returns ok=False below; that's a
+    # real problem worth surfacing (data-loss risk), and stays loud.
+    if upload_fn is None and not dry_run and not _r2_configured():
+        missing = [v for v in _R2_VARS if not os.getenv(v)]
+        return {"ok": True, "uploaded": False,
+                "skipped": "R2 not configured (missing %s)" % ", ".join(missing)}
     upload_fn = upload_fn or _default_upload
     key = "backups/emploi-%s.sqlite3" % datetime.date.today().isoformat()
     try:

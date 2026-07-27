@@ -40,11 +40,24 @@ with tempfile.TemporaryDirectory() as d:
     r4 = run(os.path.join(d, "missing.sqlite3"), upload_fn=lambda p, k: None)
     check("missing db returns ok=False", r4["ok"] is False)
 
-    # 5. No upload seam and no R2 env: clean 'not configured' error, never fabricates success
+    # 5. No upload seam and no R2 env: an absent OPTIONAL integration is a
+    # clean SKIP (ok=True, uploaded=False), never a failure and never a
+    # fabricated upload — so the nightly trigger doesn't page as a 500.
     for var in ("R2_ENDPOINT", "R2_ACCESS_KEY", "R2_SECRET_KEY", "R2_BUCKET"):
         os.environ.pop(var, None)
     r5 = run(path)
-    check("unconfigured R2 returns ok=False", r5["ok"] is False and "R2" in r5.get("error", ""))
+    check("unconfigured R2 skips cleanly (ok=True, not uploaded, never a 500)",
+          r5["ok"] is True and r5.get("uploaded") is False and "R2" in r5.get("skipped", ""))
+
+    # 6. But a CONFIGURED R2 that fails on upload is still a hard ok=False — a
+    # real integration failure must stay loud (data-loss risk).
+    for var in ("R2_ENDPOINT", "R2_ACCESS_KEY", "R2_SECRET_KEY", "R2_BUCKET"):
+        os.environ[var] = "set"
+    r6 = run(path, upload_fn=lambda p, k: (_ for _ in ()).throw(RuntimeError("upload boom")))
+    check("configured R2 that fails upload still returns ok=False",
+          r6["ok"] is False and "boom" in r6.get("error", ""))
+    for var in ("R2_ENDPOINT", "R2_ACCESS_KEY", "R2_SECRET_KEY", "R2_BUCKET"):
+        os.environ.pop(var, None)
 
 if fails:
     raise SystemExit(1)
