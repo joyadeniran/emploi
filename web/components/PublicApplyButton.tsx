@@ -12,12 +12,18 @@ import { ArrowUpRight, Check, Loader2 } from "lucide-react";
 export function PublicApplyButton({
   roleId,
   signedIn,
+  alreadyApplied = false,
 }: {
   roleId: number;
   signedIn: boolean;
+  alreadyApplied?: boolean;
 }) {
-  const [state, setState] = useState<"idle" | "busy" | "done" | "error">("idle");
-  const [message, setMessage] = useState("");
+  const [state, setState] = useState<"idle" | "busy" | "done" | "error">(
+    alreadyApplied ? "done" : "idle",
+  );
+  const [message, setMessage] = useState(
+    alreadyApplied ? "You've already applied to this role." : "",
+  );
 
   async function apply() {
     if (!signedIn) {

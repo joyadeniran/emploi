@@ -655,6 +655,36 @@ check("trust alerts list low-trust unvouched employers",
 check("metrics never contains candidate PII",
       "ada@example.com" not in _json.dumps(metrics))
 
+# ---------------- inbound applicant: already-applied + employer triage -------
+# Placed late on purpose: mid-suite writes here interleave with the background
+# shortlist threads spawned above and can trip SQLite's immediate read->write
+# upgrade lock on the shared file DB. cand-pub applied to free_role_id earlier.
+check("public application-status: applied=true after applying",
+      client.get(f"/public/roles/{free_role_id}/application",
+                 headers=CANDP).json()["applied"] is True)
+check("public application-status: applied=false for a non-applicant",
+      client.get(f"/public/roles/{free_role_id}/application",
+                 headers={"X-API-Key": "test-key", "X-User-Id": "never-applied"}
+                 ).json()["applied"] is False)
+check("public application-status requires auth -> 401",
+      client.get(f"/public/roles/{free_role_id}/application").status_code == 401)
+r = client.patch(f"/employer/roles/{free_role_id}/applicants/cand-pub",
+                 headers=HM, json={"status": "reviewed"})
+check("employer marks an applicant reviewed -> 200",
+      r.status_code == 200 and r.json()["status"] == "reviewed")
+check("applicant status is reflected back in the applicants list",
+      client.get(f"/employer/roles/{free_role_id}/applicants", headers=HM
+                 ).json()["applicants"][0]["status"] == "reviewed")
+check("invalid applicant status -> 422",
+      client.patch(f"/employer/roles/{free_role_id}/applicants/cand-pub",
+                   headers=HM, json={"status": "hired"}).status_code == 422)
+check("triage on an unknown applicant -> 404",
+      client.patch(f"/employer/roles/{free_role_id}/applicants/ghost",
+                   headers=HM, json={"status": "reviewed"}).status_code == 404)
+check("triage enforces role ownership -> 404",
+      client.patch(f"/employer/roles/{free_role_id}/applicants/cand-pub",
+                   headers=HM2, json={"status": "reviewed"}).status_code == 404)
+
 # ---------------- clear_user coverage (employer side) ----------------
 r = client.delete("/user", headers=HM2)
 check("DELETE /user for an employer user -> ok", r.status_code == 200)

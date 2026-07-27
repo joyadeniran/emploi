@@ -62,6 +62,58 @@ def _pending_invites(conn, user_id):
         "ORDER BY ii.created_at DESC LIMIT 5", (user_id,)).fetchall()
 
 
+def _employer_applicant_digests(conn):
+    """Group un-notified inbound applicants by the role poster (the employer
+    user to email). Returns {poster_user_id: [applicant_row, ...]}."""
+    by_poster = {}
+    for r in db.list_unnotified_role_applicants(conn):
+        by_poster.setdefault(r["poster_user_id"], []).append(r)
+    return by_poster
+
+
+def _notify_employers(conn, dry_run, send_fn):
+    """Second pass: one digest per employer poster with new inbound applicants.
+    Mirrors the candidate loop's diagnostics so a quiet run is explainable."""
+    sent, skipped_no_email, skipped_opted_out, send_failures = 0, 0, 0, []
+    for poster_id, apps in _employer_applicant_digests(conn).items():
+        first = apps[0]
+        if not int(first["notifications_enabled"]):
+            skipped_opted_out += 1
+            continue
+        email = first["poster_email"]
+        if not email:
+            skipped_no_email += 1
+            continue
+        per_role = {}
+        for a in apps:
+            title = a["role_title"] or "your role"
+            per_role[title] = per_role.get(title, 0) + 1
+        total = len(apps)
+        plural = "s" if total != 1 else ""
+        subject = f"You have {total} new applicant{plural} on Emploi"
+        body_parts = [f"Hi {first['poster_name'] or 'there'},", "",
+                      f"You have {total} new applicant{plural}:"]
+        for title, n in per_role.items():
+            body_parts.append(f"- {title}: {n} new applicant{'s' if n != 1 else ''}")
+        body_parts += ["", "Review them: https://app.emploihq.com/employer"]
+        body = "\n".join(body_parts)
+        if not dry_run and send_fn:
+            try:
+                send_fn(email, subject, body)
+            except Exception as exc:
+                send_failures.append(str(exc)[:200])
+                continue
+        elif not dry_run:
+            continue
+        if not dry_run:
+            db.mark_role_applications_notified(conn, [a["id"] for a in apps])
+        sent += 1
+    return {"employer_sent": sent,
+            "employer_skipped_no_email": skipped_no_email,
+            "employer_skipped_opted_out": skipped_opted_out,
+            "employer_send_failures": send_failures}
+
+
 def run(db_path, dry_run=False, send_fn=None):
     conn = db.connect(db_path, check_same_thread=False)
     # LEFT JOIN the new `users` table (source of truth for email + digest
@@ -174,11 +226,14 @@ def run(db_path, dry_run=False, send_fn=None):
                 [inv["id"] for inv in pending_invites])
             conn.commit()
         sent += 1
+    # Second pass: notify employers about inbound (public-link) applicants.
+    employer = _notify_employers(conn, dry_run, send_fn)
     result = {"ok": True, "sent": sent, "users_with_unnotified": len(rows),
               "skipped_no_email": skipped_no_email,
               "skipped_opted_out": skipped_opted_out,
               "sender_configured": send_fn is not None,
-              "send_failures": send_failures, "dry_run": dry_run}
+              "send_failures": send_failures, "dry_run": dry_run,
+              **employer}
     if not dry_run: db.log_event(conn, "NotificationWorkerRun", result)
     return result
 

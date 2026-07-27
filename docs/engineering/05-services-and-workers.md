@@ -35,7 +35,8 @@ Each worker is a standalone script (`workers/<name>.py`), runnable manually with
 
 ### Worker 4 — Notifications (`workers/notify_users.py`)
 - **Inputs:** `matches` rows with `notified = 0`, joined to the user's Career Twin for their captured email (set on `POST /career-twin/complete`).
-- **Output:** one digest email per user via the Brevo transactional API (`BREVO_API_KEY` + `BREVO_SENDER_EMAIL`); `notified`/`notified_at` set only after a confirmed send.
+- **Output:** one digest email per user via the Brevo transactional API (`BREVO_API_KEY` + `BREVO_SENDER_EMAIL`); `notified`/`notified_at` set only after a confirmed send. Candidate digests also carry fresh interview invites and stale-application "how did it go?" nudges.
+- **Second pass (employer side):** one digest per role poster summarizing new inbound applicants (`role_applications` where `notified = 0`), deduped by `role_applications.notified`; opt-out and missing-email are honored and counted separately (`employer_sent` / `employer_skipped_*` / `employer_send_failures`).
 - **Schedule:** nightly, after Worker 3. **Rule:** max one digest per user per scheduled run — never per new match.
 
 ### Worker 5 — Backup (`workers/backup_db.py`)

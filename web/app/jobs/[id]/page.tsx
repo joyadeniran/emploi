@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { BadgeCheck, MapPin, ShieldAlert, ShieldCheck, Sparkles, Wallet } from "lucide-react";
 import { auth } from "@/auth";
 import { Logo } from "@/components/Logo";
-import { ApiUnavailableError, publicApiFetch } from "@/lib/api";
+import { ApiUnavailableError, apiFetch, publicApiFetch } from "@/lib/api";
 import { PublicApplyButton } from "@/components/PublicApplyButton";
 
 interface PublicRole {
@@ -78,6 +78,21 @@ export default async function PublicJobPage({ params }: { params: Promise<{ id: 
   const session = await auth();
   const signedIn = Boolean(session?.user);
 
+  // If signed in, learn whether they've already applied so the button renders
+  // the "already applied" state on load instead of only after a click.
+  // Non-fatal: a failure just falls back to the normal Apply button.
+  let alreadyApplied = false;
+  if (signedIn) {
+    try {
+      const { applied } = await apiFetch<{ applied: boolean }>(
+        `/public/roles/${role.id}/application`,
+      );
+      alreadyApplied = applied;
+    } catch {
+      /* leave alreadyApplied=false */
+    }
+  }
+
   return (
     <div className="min-h-dvh bg-surface">
       <header className="border-b border-line bg-card">
@@ -107,7 +122,7 @@ export default async function PublicJobPage({ params }: { params: Promise<{ id: 
           </div>
 
           <div className="mt-6">
-            <PublicApplyButton roleId={role.id} signedIn={signedIn} />
+            <PublicApplyButton roleId={role.id} signedIn={signedIn} alreadyApplied={alreadyApplied} />
           </div>
 
           <div className="mt-8 border-t border-line pt-6">
