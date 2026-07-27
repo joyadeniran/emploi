@@ -685,6 +685,19 @@ check("triage enforces role ownership -> 404",
       client.patch(f"/employer/roles/{free_role_id}/applicants/cand-pub",
                    headers=HM2, json={"status": "reviewed"}).status_code == 404)
 
+# Employer edits a posted role's fields (the PATCH the role-detail UI drives).
+r = client.patch(f"/employer/roles/{free_role_id}", headers=HM,
+                 json={"title": "Platform Engineer (Senior)", "location": "Remote-first"})
+check("employer edits a role's title/location -> 200", r.status_code == 200)
+check("role edit round-trips through GET",
+      client.get(f"/employer/roles/{free_role_id}", headers=HM).json()["role"]["title"]
+      == "Platform Engineer (Senior)")
+check("blank title in an edit is ignored (never wipes a required field)",
+      client.patch(f"/employer/roles/{free_role_id}", headers=HM,
+                   json={"title": "   "}).status_code == 200
+      and client.get(f"/employer/roles/{free_role_id}", headers=HM).json()["role"]["title"]
+      == "Platform Engineer (Senior)")
+
 # ---------------- clear_user coverage (employer side) ----------------
 r = client.delete("/user", headers=HM2)
 check("DELETE /user for an employer user -> ok", r.status_code == 200)

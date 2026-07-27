@@ -32,18 +32,22 @@ interface ApiRow {
 const FILTERS: ("all" | ApplicationStatus)[] = [
   "all",
   "applied",
+  "heard_back",
   "interview",
   "offer",
   "rejected",
   "withdrawn",
+  "ghosted",
 ];
 
 const STATUSES: ApplicationStatus[] = [
   "applied",
+  "heard_back",
   "interview",
   "offer",
   "rejected",
   "withdrawn",
+  "ghosted",
 ];
 
 const PALETTE = ["#04114d", "#5b4ffd", "#f79009", "#0e9f6e", "#1570ef", "#d92d20"];

@@ -358,6 +358,23 @@ update_role(econn, r1["id"], title="Senior Data Analyst", status="hacked")
 ok &= check("update_role updates allowed fields only",
             get_role(econn, r1["id"])["title"] == "Senior Data Analyst"
             and get_role(econn, r1["id"])["status"] == "open")
+# An edit must never blank the required title/description (public page +
+# shortlist prompt depend on them); optional location/salary ARE clearable.
+# Use a throwaway role so r1 stays intact for the invite tests below.
+redit = create_role(econn, emp_id, "hm-1", {"title": "Editable Role",
+                    "description": "Original desc", "location": "Abuja",
+                    "salary_text": "₦500k"})
+update_role(econn, redit["id"], title="   ", description="")
+ok &= check("update_role never blanks required title/description",
+            get_role(econn, redit["id"])["title"] == "Editable Role"
+            and get_role(econn, redit["id"])["description"] == "Original desc")
+update_role(econn, redit["id"], title="  Lead Analyst  ")
+ok &= check("update_role trims a real title edit",
+            get_role(econn, redit["id"])["title"] == "Lead Analyst")
+update_role(econn, redit["id"], location="", salary_text="")
+ok &= check("update_role can clear optional location/salary",
+            (get_role(econn, redit["id"])["location"] or "") == ""
+            and (get_role(econn, redit["id"])["salary_text"] or "") == "")
 
 # 21. invites: create, dedup, counters, state machine
 inv1 = create_invite(econn, r1["id"], "cand-1", "hm-1", fit_score=88,

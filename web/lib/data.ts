@@ -31,10 +31,12 @@ export interface JobMatch {
 
 export type ApplicationStatus =
   | "applied"
+  | "heard_back"
   | "interview"
   | "offer"
   | "rejected"
-  | "withdrawn";
+  | "withdrawn"
+  | "ghosted";
 
 export interface Application {
   id: string;
@@ -216,8 +218,10 @@ export const statusMeta: Record<
   { label: string; className: string }
 > = {
   applied: { label: "Applied", className: "bg-brand-soft text-brand" },
+  heard_back: { label: "Heard Back", className: "bg-info-soft text-info" },
   interview: { label: "Interview Scheduled", className: "bg-info-soft text-info" },
   offer: { label: "Offer", className: "bg-good-soft text-good" },
   rejected: { label: "Rejected", className: "bg-warn-soft text-warn" },
   withdrawn: { label: "Withdrawn", className: "bg-line text-muted" },
+  ghosted: { label: "Ghosted", className: "bg-line text-muted" },
 };
