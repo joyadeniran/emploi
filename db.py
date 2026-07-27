@@ -1175,6 +1175,18 @@ def list_role_applicants(conn, role_id: int) -> list:
 def update_role(conn, role_id: int, **fields) -> None:
     allowed = {"title", "description", "location", "is_remote", "salary_text"}
     fields = {k: v for k, v in fields.items() if k in allowed}
+    # title/description are required (the public job page + shortlist prompt
+    # both depend on them). An edit must never blank them — drop the key if it
+    # arrives empty-after-strip rather than wiping the stored value. location /
+    # salary_text ARE clearable (optional), so they're left as-is.
+    for required in ("title", "description"):
+        if required in fields:
+            value = fields[required]
+            if isinstance(value, str):
+                value = value.strip()
+                fields[required] = value
+            if not value:
+                del fields[required]
     if not fields:
         return
     if "is_remote" in fields:

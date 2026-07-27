@@ -6,6 +6,7 @@ import { RoleWorkbench } from "@/components/RoleWorkbench";
 import { CloseRoleButton } from "@/components/CloseRoleButton";
 import { ShareJobLink } from "@/components/ShareJobLink";
 import { ApplicantStatusControl } from "@/components/ApplicantStatusControl";
+import { EditRoleForm } from "@/components/EditRoleForm";
 
 interface Role {
   id: number; title: string; description: string; location: string | null;
@@ -87,6 +88,8 @@ export default async function RoleDetailPage({
           {role.description}
         </p>
       </details>
+
+      {role.status === "open" ? <EditRoleForm role={role} /> : null}
 
       {role.status === "open" ? <ShareJobLink roleId={role.id} /> : null}
 
