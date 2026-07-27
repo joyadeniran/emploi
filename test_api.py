@@ -742,8 +742,8 @@ check("chat attach: unclassifiable document changes nothing",
 
 # ---------------- worker triggers (Render Cron -> HTTP, no disk on cron) ----------------
 # Render Cron Jobs can't mount the persistent disk the SQLite file lives on,
-# so scheduled workers run in-process here instead of as their own cron
-# services; render.yaml's crons just curl these endpoints. Monkeypatch the
+# so scheduled workers run in-process here (the internal scheduler), and the
+# /admin/run/* endpoints remain for manual/one-off triggers. Monkeypatch the
 # imported worker modules' run() so this stays fully offline — no real
 # network, no real Gemini calls, no real R2 upload.
 import workers.ingest_jobs as _ingest_mod
@@ -794,10 +794,17 @@ _backup_mod.run = lambda db_path: {"ok": True, "bytes": 4096}
 r = client.post("/admin/run/backup", headers={"X-API-Key": "test-key"})
 check("admin run backup -> 200", r.status_code == 200 and r.json()["bytes"] == 4096)
 
-_backup_mod.run = lambda db_path: {"ok": False, "error": "R2 not configured"}
+_backup_mod.run = lambda db_path: {"ok": False, "error": "R2 upload failed"}
 r = client.post("/admin/run/backup", headers={"X-API-Key": "test-key"})
-check("admin run backup surfaces worker failure as 500, never a false 200",
+check("admin run backup surfaces a real worker failure as 500, never a false 200",
       r.status_code == 500)
+
+# An unconfigured optional integration (R2 absent) is a clean skip, not a 500 —
+# so the nightly backup trigger stops paging when R2 was never set up.
+_backup_mod.run = lambda db_path: {"ok": True, "uploaded": False, "skipped": "R2 not configured"}
+r = client.post("/admin/run/backup", headers={"X-API-Key": "test-key"})
+check("admin run backup returns 200 (not 500) when R2 is simply not configured",
+      r.status_code == 200 and r.json().get("skipped"))
 
 # Worker 6 — expire-invites trigger (Phase 2)
 import workers.expire_invites as _expire_mod
@@ -951,7 +958,8 @@ check("scheduler daily: fires next day at target after a mid-day-deploy seed",
 check("scheduler is OFF unless INTERNAL_SCHEDULER=true (no thread on import)",
       m._scheduler_started is False
       and not any(t.name == "internal-scheduler" for t in __import__("threading").enumerate()))
-check("scheduler mirrors the 7 render.yaml cron jobs", len(m._scheduler_jobs()) == 7)
+check("scheduler runs all 7 workers in-process (sole schedule; crons removed)",
+      len(m._scheduler_jobs()) == 7)
 
 # ---------------- get_conn: per-thread connections (segfault regression) ----
 # The /admin dashboard fires 5 requests in parallel; FastAPI serves sync

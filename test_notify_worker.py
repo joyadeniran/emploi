@@ -22,6 +22,9 @@ with tempfile.TemporaryDirectory() as d:
  check("summary reports sender_configured", r2["sender_configured"] is True)
  r3=run(path,send_fn=None)
  check("summary shows unconfigured sender honestly", r3["sender_configured"] is False)
+ # An unconfigured sender (Brevo not set up) is a safe no-op, never a failure —
+ # so /admin/run/notify returns 200, not a 500 that pages ops every night.
+ check("unconfigured notify is ok=True (never a failure)", r3["ok"] is True)
 
  # Users table wins over career_twins.data.email — a twin without an email
  # blob field still gets a digest if the users row has one. And a user's
