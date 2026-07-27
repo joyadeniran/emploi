@@ -338,6 +338,13 @@ def _migrate(conn) -> None:
         # visibility. Default OFF is a locked product decision — a candidate
         # is invisible to every employer until they flip the Settings toggle.
         "ALTER TABLE career_twins ADD COLUMN recruiter_visibility INTEGER NOT NULL DEFAULT 0",
+        # Employer notification for inbound (public-link) applicants. Same
+        # `notified` dedup pattern as matches/interview_invites: an applicant
+        # rides exactly one employer digest, then the role page's Applicants
+        # list takes over. DEFAULT 0 backfills existing rows as un-notified —
+        # harmless, they just ride the next digest once.
+        "ALTER TABLE role_applications ADD COLUMN notified INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE role_applications ADD COLUMN notified_at TEXT",
     ):
         try:
             conn.execute(statement)
@@ -623,6 +630,11 @@ def clear_user(conn, user_id: str) -> None:
     conn.execute("DELETE FROM interview_invites WHERE candidate_user_id = ?", (user_id,))
     conn.execute("DELETE FROM role_shortlists WHERE candidate_user_id = ?", (user_id,))
     conn.execute("DELETE FROM candidate_unlocks WHERE candidate_user_id = ?", (user_id,))
+    # Inbound public-link applications carry a live FK to a real person's id —
+    # erasure must drop them too, or an employer's Applicants list keeps naming
+    # a deleted user. (The candidate-side mirror lives in `applications`, wiped
+    # above.)
+    conn.execute("DELETE FROM role_applications WHERE candidate_user_id = ?", (user_id,))
     # Employer-side membership: close their employer's open roles, then drop
     # the membership row. The employers row itself stays (audit; an orphaned
     # employer has no active user who can access it). Credits are NOT
@@ -1052,9 +1064,18 @@ def get_public_role(conn, role_id: int) -> Optional[dict]:
 
 def create_role_application(conn, role_id: int, candidate_user_id: str) -> str:
     """A candidate applies to a role via its public link. Idempotent — a second
-    apply is a no-op, never an error. Returns 'ok' | 'exists' | 'closed'."""
+    apply is a no-op, never an error. Returns 'ok' | 'exists' | 'closed'.
+
+    On the first successful apply this ALSO mirrors a row into the candidate's
+    own `applications` tracker (source='public_role'), so a public apply shows
+    up under /applications with outcome nudges — the employer-side
+    role_applications row is invisible to the candidate. The mirror is
+    best-effort: a tracker hiccup must never fail the apply itself.
+    """
     role = conn.execute(
-        "SELECT status FROM employer_roles WHERE id = ?", (role_id,)).fetchone()
+        "SELECT r.status, r.title, e.company_name "
+        "FROM employer_roles r JOIN employers e ON e.id = r.employer_id "
+        "WHERE r.id = ?", (role_id,)).fetchone()
     if not role or role["status"] != "open":
         return "closed"
     existing = conn.execute(
@@ -1062,9 +1083,27 @@ def create_role_application(conn, role_id: int, candidate_user_id: str) -> str:
         "AND candidate_user_id = ?", (role_id, candidate_user_id)).fetchone()
     if existing:
         return "exists"
-    conn.execute(
-        "INSERT INTO role_applications (employer_role_id, candidate_user_id) "
-        "VALUES (?, ?)", (role_id, candidate_user_id))
+    try:
+        conn.execute(
+            "INSERT INTO role_applications (employer_role_id, candidate_user_id) "
+            "VALUES (?, ?)", (role_id, candidate_user_id))
+    except sqlite3.IntegrityError:
+        # Concurrent duplicate apply raced past the SELECT above and tripped
+        # UNIQUE(employer_role_id, candidate_user_id). The first writer won;
+        # this one is a no-op, not an unhandled 500. Drop the partial txn.
+        conn.rollback()
+        return "exists"
+    # Mirror into the candidate's tracker (best-effort, same transaction).
+    try:
+        conn.execute(
+            "INSERT INTO applications (user_id, company, role, status, extra) "
+            "VALUES (?, ?, ?, 'applied', ?)",
+            (candidate_user_id, role["company_name"], role["title"],
+             json.dumps({"source": "public_role", "role_id": role_id})))
+    except sqlite3.Error:
+        # A failed mirror insert doesn't roll back the role_application above
+        # (SQLite only auto-rolls the failed statement); the apply still stands.
+        pass
     conn.commit()
     return "ok"
 
@@ -1073,6 +1112,52 @@ def has_applied(conn, role_id: int, candidate_user_id: str) -> bool:
     return conn.execute(
         "SELECT 1 FROM role_applications WHERE employer_role_id = ? "
         "AND candidate_user_id = ?", (role_id, candidate_user_id)).fetchone() is not None
+
+
+_ROLE_APPLICATION_STATUSES = ("applied", "reviewed", "rejected")
+
+
+def update_role_application_status(conn, role_id: int, candidate_user_id: str,
+                                   status: str) -> bool:
+    """Employer-side triage of an inbound applicant ('applied'→'reviewed'/
+    'rejected'). This is the EMPLOYER's private view of the applicant and is a
+    different axis from the candidate's own tracker status — the two are
+    intentionally not synced. Returns True if a row was updated (the applicant
+    exists on this role), False otherwise. Caller validates `status`."""
+    cur = conn.execute(
+        "UPDATE role_applications SET status = ? "
+        "WHERE employer_role_id = ? AND candidate_user_id = ?",
+        (status, role_id, candidate_user_id))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def list_unnotified_role_applicants(conn) -> list:
+    """Un-notified inbound applicants, joined to their role + the role's poster
+    (created_by_user_id) so the notify worker can email the employer. Grouped
+    by poster in the worker. Oldest first so a digest reads chronologically."""
+    rows = conn.execute(
+        "SELECT ra.id, ra.employer_role_id, ra.candidate_user_id, "
+        "       er.title AS role_title, er.created_by_user_id AS poster_user_id, "
+        "       u.email AS poster_email, u.name AS poster_name, "
+        "       COALESCE(u.notifications_enabled, 1) AS notifications_enabled "
+        "FROM role_applications ra "
+        "JOIN employer_roles er ON er.id = ra.employer_role_id "
+        "LEFT JOIN users u ON u.id = er.created_by_user_id "
+        "WHERE ra.notified = 0 "
+        "ORDER BY ra.id ASC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_role_applications_notified(conn, application_ids: list) -> None:
+    """Flag inbound applicants as having ridden an employer digest (dedup)."""
+    ids = [int(i) for i in application_ids]
+    if not ids:
+        return
+    conn.execute(
+        "UPDATE role_applications SET notified = 1, notified_at = datetime('now') "
+        "WHERE id IN (%s)" % ",".join("?" * len(ids)), ids)
+    conn.commit()
 
 
 def list_role_applicants(conn, role_id: int) -> list:

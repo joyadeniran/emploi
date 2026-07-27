@@ -561,5 +561,54 @@ ok &= check("backfill self-disables once domain_verified exists (no landmine)",
             bconn.execute("SELECT trust_level FROM employers WHERE company_name = 'Impostor'"
                           ).fetchone()["trust_level"] == "high")
 
+# ---------------------------------------------------------------------------
+# Inbound public-link applications: tracker mirror, employer triage,
+# idempotency under a duplicate, and GDPR erasure.
+# ---------------------------------------------------------------------------
+from db import (create_role_application, has_applied, list_role_applicants,
+                update_role_application_status)
+
+rconn = connect(":memory:")
+_remp = create_employer(rconn, "Beta Inc", "beta.com", "boss")
+_rrole = create_role(rconn, _remp, "boss",
+                     {"title": "QA Engineer", "description": "Break things"})["id"]
+ok &= check("create_role_application on an open role -> ok",
+            create_role_application(rconn, _rrole, "applicant-1") == "ok")
+ok &= check("re-apply is idempotent (-> exists), no duplicate row",
+            create_role_application(rconn, _rrole, "applicant-1") == "exists"
+            and len(list_role_applicants(rconn, _rrole)) == 1)
+ok &= check("has_applied reflects the application",
+            has_applied(rconn, _rrole, "applicant-1") is True
+            and has_applied(rconn, _rrole, "nobody") is False)
+# Gap 1: a public apply mirrors into the candidate's OWN tracker so it shows
+# under /applications with outcome nudges.
+_tracker = list_applications(rconn, "applicant-1")
+ok &= check("public apply mirrors a tracker row into applications",
+            len(_tracker) == 1 and _tracker[0]["company"] == "Beta Inc"
+            and _tracker[0]["role"] == "QA Engineer"
+            and _tracker[0]["status"] == "applied"
+            and _tracker[0]["source"] == "public_role")
+# Applying to a closed role is refused and writes nothing (no row, no mirror).
+close_role(rconn, _rrole, "filled")
+ok &= check("apply to a closed role -> closed (no row, no mirror)",
+            create_role_application(rconn, _rrole, "applicant-2") == "closed"
+            and has_applied(rconn, _rrole, "applicant-2") is False
+            and list_applications(rconn, "applicant-2") == [])
+# Gap 4: employer triage of an inbound applicant's status.
+_rrole2 = create_role(rconn, _remp, "boss",
+                      {"title": "SRE", "description": "Keep it up"})["id"]
+create_role_application(rconn, _rrole2, "applicant-3")
+ok &= check("update_role_application_status transitions applied->reviewed",
+            update_role_application_status(rconn, _rrole2, "applicant-3", "reviewed") is True
+            and list_role_applicants(rconn, _rrole2)[0]["status"] == "reviewed")
+ok &= check("update_role_application_status on an unknown applicant -> False",
+            update_role_application_status(rconn, _rrole2, "ghost", "reviewed") is False)
+# Gap 2: GDPR erasure wipes the inbound application AND the tracker mirror.
+clear_user(rconn, "applicant-3")
+ok &= check("clear_user wipes role_applications (no dangling FK to a deleted user)",
+            has_applied(rconn, _rrole2, "applicant-3") is False
+            and list_role_applicants(rconn, _rrole2) == []
+            and list_applications(rconn, "applicant-3") == [])
+
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

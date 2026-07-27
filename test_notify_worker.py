@@ -143,6 +143,62 @@ with tempfile.TemporaryDirectory() as d:
  check("dry-run counts invite digests but sends nothing",
        r5["dry_run"] is True and r5["sent"]>=1 and sent_dry==[])
 
+# ---- Phase 2: employer applicant digests (inbound public-link applies) ------
+with tempfile.TemporaryDirectory() as d:
+ path=os.path.join(d,"emp.sqlite3"); conn=db.connect(path)
+ emp=db.create_employer(conn,"Acme Corp","acme.com","poster-1")
+ db.upsert_user(conn,"poster-1","boss@acme.com","Boss")
+ role=db.create_role(conn,emp,"poster-1",{"title":"Data Analyst","description":"d"})
+ db.create_role_application(conn, role["id"], "cand-a")
+ db.create_role_application(conn, role["id"], "cand-b")
+ sent=[]
+ r=run(path, send_fn=lambda to,s,b: sent.append((to,s,b)))
+ emp_mail=[m for m in sent if m[0]=="boss@acme.com"]
+ check("employer gets one digest for inbound applicants",
+       r["employer_sent"]==1 and len(emp_mail)==1)
+ check("employer digest subject counts applicants",
+       "2 new applicants" in emp_mail[0][1])
+ check("employer digest names the role, count and links /employer",
+       "Data Analyst: 2 new applicants" in emp_mail[0][2]
+       and "app.emploihq.com/employer" in emp_mail[0][2])
+ check("inbound applicants marked notified after the digest",
+       all(row[0]==1 for row in conn.execute("SELECT notified FROM role_applications")))
+ r2=run(path, send_fn=lambda to,s,b: None)
+ check("an inbound applicant rides exactly one employer digest", r2["employer_sent"]==0)
+ # A later applicant on the same role triggers a fresh digest.
+ db.create_role_application(conn, role["id"], "cand-c")
+ sent3=[]
+ r3=run(path, send_fn=lambda to,s,b: sent3.append((to,s,b)))
+ check("a later applicant triggers a fresh digest (1 new)",
+       r3["employer_sent"]==1
+       and any("1 new applicant" in m[1] for m in sent3 if m[0]=="boss@acme.com"))
+ # Opt-out: a poster who disabled notifications is skipped, row stays unnotified.
+ emp2=db.create_employer(conn,"Beta Inc","beta.com","poster-2")
+ db.upsert_user(conn,"poster-2","boss2@beta.com","Boss2")
+ db.set_notifications_enabled(conn,"poster-2",False)
+ role2=db.create_role(conn,emp2,"poster-2",{"title":"SRE","description":"d"})
+ db.create_role_application(conn, role2["id"], "cand-d")
+ r4=run(path, send_fn=lambda to,s,b: None)
+ check("opted-out employer poster is skipped (row stays unnotified)",
+       r4["employer_skipped_opted_out"]>=1
+       and conn.execute("SELECT notified FROM role_applications WHERE candidate_user_id='cand-d'"
+                        ).fetchone()[0]==0)
+ # A poster with no users-row email is counted, never a false send.
+ emp3=db.create_employer(conn,"Gamma","gamma.com","poster-3")
+ role3=db.create_role(conn,emp3,"poster-3",{"title":"QA","description":"d"})
+ db.create_role_application(conn, role3["id"], "cand-e")
+ r5=run(path, send_fn=lambda to,s,b: None)
+ check("employer poster with no email is skipped_no_email (not a false send)",
+       r5["employer_skipped_no_email"]>=1)
+ # dry-run counts employer digests but sends nothing and marks nothing.
+ db.create_role_application(conn, role["id"], "cand-f")
+ dry=[]
+ r6=run(path, dry_run=True, send_fn=lambda *a: dry.append(a))
+ check("dry-run counts employer digests but sends/marks nothing",
+       r6["employer_sent"]>=1 and dry==[]
+       and conn.execute("SELECT notified FROM role_applications WHERE candidate_user_id='cand-f'"
+                        ).fetchone()[0]==0)
+
 # ---- Brevo sender (mocked HTTP, no real network/API key) -------------------
 with patch("requests.post") as mock_post:
     mock_post.return_value = MagicMock(status_code=201, ok=True)

@@ -1458,6 +1458,14 @@ def public_apply_endpoint(role_id: int, user_id: str = Depends(auth)):
     return {"ok": True, "status": "applied", "already_applied": result == "exists"}
 
 
+@app.get("/public/roles/{role_id}/application")
+def public_application_status_endpoint(role_id: int, user_id: str = Depends(auth)):
+    """Has the signed-in visitor already applied to this role? Lets the public
+    job page render the 'already applied' state on load instead of only after a
+    click. Auth-gated (needs a user); unknown role simply reports applied=false."""
+    return {"applied": db.has_applied(get_conn(), role_id, user_id)}
+
+
 @app.get("/employer/roles/{role_id}/applicants")
 def role_applicants_endpoint(role_id: int, user_id: str = Depends(auth)):
     """Inbound applicants who applied via the role's public link. Their contact
@@ -1478,6 +1486,33 @@ def role_applicants_endpoint(role_id: int, user_id: str = Depends(auth)):
                     "status": a["status"], "applied_at": a["created_at"],
                     "contact": contact})
     return {"applicants": out, "count": len(out)}
+
+
+class ApplicantStatusIn(BaseModel):
+    status: str
+
+    def validated(self) -> str:
+        allowed = set(db._ROLE_APPLICATION_STATUSES)
+        if self.status not in allowed:
+            raise HTTPException(status_code=422,
+                                detail=f"status must be one of {sorted(allowed)}")
+        return self.status
+
+
+@app.patch("/employer/roles/{role_id}/applicants/{candidate_user_id}")
+def set_applicant_status_endpoint(role_id: int, candidate_user_id: str,
+                                  body: ApplicantStatusIn,
+                                  user_id: str = Depends(auth)):
+    """Employer triage of an inbound applicant ('applied'→'reviewed'/'rejected').
+    Ownership-gated. This is the employer's private view — it does NOT touch the
+    candidate's own /applications tracker status."""
+    employer = require_employer(user_id)
+    require_owned_role(role_id, employer)
+    status = body.validated()
+    conn = get_conn()
+    if not db.update_role_application_status(conn, role_id, candidate_user_id, status):
+        raise HTTPException(status_code=404, detail="applicant not found on this role")
+    return {"ok": True, "status": status}
 
 
 @app.patch("/employer/roles/{role_id}")

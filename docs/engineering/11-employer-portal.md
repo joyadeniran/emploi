@@ -50,10 +50,23 @@ Employer: `POST /employer/onboarding`, `GET|PATCH /employer`,
 `POST|GET /employer/roles`, `GET|PATCH /employer/roles/{id}`,
 `POST .../close`, `POST .../hire`, `GET .../shortlist`,
 `POST .../shortlist/refresh` (202), `POST .../invites`,
-`POST .../unlocks`, `GET|POST /employer/billing/{status,checkout,verify}`.
+`POST .../unlocks`, `GET .../applicants`,
+`PATCH .../applicants/{candidate_user_id}` (triage: applied/reviewed/rejected,
+a separate axis from the candidate's own tracker),
+`GET|POST /employer/billing/{status,checkout,verify}`.
+Public (funnel): `GET /public/roles/{id}` (unauth, open roles, safe fields
+only), `POST /public/roles/{id}/apply` (auth-gated, idempotent — mirrors a
+`source='public_role'` row into the candidate's own `applications` tracker),
+`GET /public/roles/{id}/application` (auth-gated already-applied check for the
+page-load state).
 Candidate: `GET /invites`, `GET /invites/count`, `GET /invites/{id}`,
 `POST /invites/{id}/{accept,decline}`,
 `GET|PATCH /career-twin/recruiter-visibility`.
+
+Inbound applicants (`role_applications`) are consented on submit, so an
+employer sees contact immediately (no unlock), unlike the curated shortlist.
+Worker 4 emails the role poster a digest of new applicants, deduped by
+`role_applications.notified`. `clear_user` deletes the row on erasure.
 Admin (X-API-Key): `GET /admin/metrics`, `POST /admin/employers/{id}/vouch`,
 `POST /admin/run/expire-invites`.
 

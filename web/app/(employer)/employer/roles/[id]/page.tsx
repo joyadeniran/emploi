@@ -5,6 +5,7 @@ import { ApiUnavailableError, apiFetch } from "@/lib/api";
 import { RoleWorkbench } from "@/components/RoleWorkbench";
 import { CloseRoleButton } from "@/components/CloseRoleButton";
 import { ShareJobLink } from "@/components/ShareJobLink";
+import { ApplicantStatusControl } from "@/components/ApplicantStatusControl";
 
 interface Role {
   id: number; title: string; description: string; location: string | null;
@@ -124,6 +125,13 @@ export default async function RoleDetailPage({
                     ))}
                   </div>
                 ) : null}
+                <div className="mt-3 border-t border-line pt-3">
+                  <ApplicantStatusControl
+                    roleId={role.id}
+                    candidateUserId={a.candidate_user_id}
+                    initialStatus={a.status}
+                  />
+                </div>
               </li>
             ))}
           </ul>

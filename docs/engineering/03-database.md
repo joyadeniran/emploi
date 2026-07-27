@@ -121,7 +121,7 @@ Design choices, deliberate:
 ## Access rules
 
 - Every user query filters by `user_id`. There are no cross-user reads. The PATCH ownership check in `api/main.py` is the pattern: verify `user_id` owns the row before mutating.
-- `db.clear_user()` implements the NDPA/GDPR deletion right and deletes from **every** user-keyed table (`career_twins`, `applications`, `matches`, `events`, `saved_jobs`, `subscriptions`, `generation_log`). Any new table with a `user_id` column must be added there in the same commit.
+- `db.clear_user()` implements the NDPA/GDPR deletion right and deletes from **every** user-keyed table: `users`, `career_twins`, `applications`, `matches`, `events`, `saved_jobs`, `subscriptions`, `generation_log`, plus the candidate-side employer-portal rows (`interview_invites`, `role_shortlists`, `candidate_unlocks`, `role_applications`) and the employer membership drop. Any new table with a `user_id`/`candidate_user_id` column must be added there in the same commit, with an erasure-coverage test.
 - `ingested_jobs`, `employer_trust_records`, `job_sources` are shared (not user-keyed); only workers and admin endpoints write them.
 
 ## Backups
