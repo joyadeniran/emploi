@@ -2,6 +2,7 @@
 
 export type GeneratedDraft = { result: string; fit_score: number | null };
 export type GeneratedCv = { cv: string; company?: string };
+export type GeneratedInterviewPrep = { interview_prep: string; company?: string };
 
 export class GenerationError extends Error {}
 
@@ -117,6 +118,19 @@ export async function generateCv(
 ): Promise<GeneratedCv> {
   const jobId = await submit("/api/applications/cv", { job });
   return pollJob<GeneratedCv>(jobId, onTick);
+}
+
+/**
+ * Prepares STAR interview answers grounded only in the Career Twin. One Gemini
+ * call, drawn from the same monthly allowance as drafts/CVs, so the UI must
+ * disclose the cost before calling. Same async job + poll path.
+ */
+export async function generateInterviewPrep(
+  job: { company_name?: string; title?: string; description: string },
+  onTick?: (elapsedSeconds: number) => void,
+): Promise<GeneratedInterviewPrep> {
+  const jobId = await submit("/api/applications/interview-prep", { job });
+  return pollJob<GeneratedInterviewPrep>(jobId, onTick);
 }
 
 /**

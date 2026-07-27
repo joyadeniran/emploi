@@ -7,6 +7,15 @@ Planned: more job sources (Jooble/Adzuna behind env keys), generic career-page c
 
 - **Web** — fix: preserve OAuth callback during server-side unauthenticated redirects by rendering a client redirect that preserves the current path as `callbackUrl`. Prevents a login → onboarding redirect loop in some environments. (Adds `ClientRedirectToLogin` and updates server layouts.)
 
+### Added — Interview Prep, wired end-to-end (was a dead nav link) (2026-07-27)
+The candidate sidebar linked to **Interview Prep**, but the page was a "coming soon" placeholder — while the backend for it (`core.prepare_interview` + `build_interview_prompt` + `skills/interview_prep.md`) has existed and shipped in the legacy Streamlit app all along. A clicked nav item that dead-ends is a broken flow; this closes it.
+
+- **New `POST /applications/interview-prep`** — generates STAR interview prep grounded ONLY in the candidate's Career Twin (never invented experience, per the interview-prep skill). One Gemini call. Async by default (`202 {job_id}`, poll the shared `GET /applications/generate/{job_id}`); `?background=false` for the sync/test path. Same guards as `/applications/cv`: 409 without a twin, 422 without a job description, 503 without a model key.
+- **Draws from the SAME monthly generation allowance** (`generation_log`, enforced before any Gemini spend) — it does **not** raise anyone's AI budget, only spends from the existing capped pool, so the billing invariant is intact. 402 once the cap is hit. Its own `(10/hour)` rate-limit bucket, alongside generate/cv. The UI discloses "1 AI call, counts toward your monthly allowance".
+- **New page `app/(app)/interview-prep/page.tsx`** (replaces the placeholder) — paste a role (company/title optional, description required), generate with progressive status copy, poll to completion, then read/copy/download the prep as PDF or Word (reuses `/applications/export`). New `generateInterviewPrep` in `lib/generate.ts` and a proxy route mirroring the CV path.
+- Tests: +7 in `test_api` (503 without key, sync STAR result, 422 no description, 409 no twin, async 202 + shared-poll done, 402 when capped); the `used_this_month` assertion now proves interview prep counts against the same allowance (2 drafts + 2 CVs + 2 preps = 6). `tsc`/`eslint`/`next build` clean.
+- **Note (pre-existing, unrelated):** `test_employer.py` is intermittently red under heavy machine load via the WAL read→write-upgrade race the DB-concurrency notes already document (the API's per-thread connection can hit `SQLITE_BUSY_SNAPSHOT` on a write after a read — a latent production 500 under concurrency). It reproduces on `main` without this change and exercises none of this code. Flagged for a dedicated fix (touches the deliberated DB-concurrency model).
+
 ### Fixed — two flow dead-ends: employers couldn't edit a posted role, candidates couldn't record the two most common outcomes (2026-07-27)
 Both were backend-complete features with missing or truncated UI — an employer who posted a role with a typo (or a stale description) could never correct it, and a candidate's outcome tracker silently dropped "heard back" and "ghosted".
 

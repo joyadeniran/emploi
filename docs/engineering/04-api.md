@@ -16,7 +16,7 @@ Deploy the API private to the web tier (Render private service / network rules).
 
 ## Rate limiting (in-process, per user per path)
 
-`rate_limit` dependency; counters reset on restart (single-process deployment, deliberate). Current limits: default 60/min; `/verify` 10/min; `/career-twin/extract` and `/career-twin/upload` 5 per 5 min; `/matches` 30/min; `/applications/generate` 10/hour. Exceeding returns `429`.
+`rate_limit` dependency; counters reset on restart (single-process deployment, deliberate). Current limits: default 60/min; `/verify` 10/min; `/career-twin/extract` and `/career-twin/upload` 5 per 5 min; `/matches` 30/min; `/applications/generate`, `/applications/cv`, `/applications/interview-prep` 10/hour each (independent buckets). Exceeding returns `429`.
 
 ## Endpoints
 
@@ -35,6 +35,8 @@ Deploy the API private to the web tier (Render private service / network rules).
 | `POST /applications` | `{company, role, status, extra?}` | `{id}` (201) | 422 bad status |
 | `POST /applications/generate` | `{job: {description|job_text, company?}, include_review?}` | `{job_id}` (202) — async; poll the job status endpoint. 402 when monthly quota exhausted. | 409 no twin, 402 quota, 422 no description, 429 |
 | `GET /applications/generate/{job_id}` | — | `{status: pending|done|error, result?: {text, fit_score, ...}, error?: str}` | 404 unknown job |
+| `POST /applications/cv` | `{job: {description|job_text, company?}}` | `{job_id}` (202) — async; one Gemini call; poll the shared job endpoint. Counts against the monthly allowance. | 409 no twin, 402 quota, 422 no description, 503, 429 |
+| `POST /applications/interview-prep` | `{job: {description|job_text, company?}}` | `{job_id}` (202) — async; STAR prep from `core.prepare_interview`; one Gemini call; poll the shared job endpoint. Draws from the SAME monthly allowance (no budget increase). | 409 no twin, 402 quota, 422 no description, 503, 429 |
 | `PATCH /applications/{id}` | `{status}` | `{ok}` | 404 not owner, 422 bad status |
 | `POST /matches` | `{jobs: [...]}` | `{matches: [...]}` ranked by fit (ad-hoc ranking) | 409 no twin, 422 no jobs, 503, 429 |
 | `GET /matches` | `?limit=` | `{matches: [...]}` pre-computed by Worker 3, best fit first, joined with job fields incl. description | 401 |
@@ -78,7 +80,7 @@ X-API-Key: ...  X-User-Id: google-sub-123
 ## Behavior contracts
 
 - **AI degradation:** every Gemini-backed endpoint returns `503` with a message naming `GEMINI_API_KEY` when no key is configured; a provider failure mid-call becomes a clean `502` (`run_extraction`), never a raw 500. `/verify` still works fully (its only AI use — site-content consistency — degrades to "unknown").
-- **Cost disclosure:** `/applications/generate` with `include_review` costs 3 Gemini calls (2 without). The web UI must disclose this before invoking — the generation dialog does.
+- **Cost disclosure:** `/applications/generate` with `include_review` costs 3 Gemini calls (2 without); `/applications/cv` and `/applications/interview-prep` cost 1 each. All draw from the SAME monthly generation allowance (`generation_log`), enforced BEFORE any spend. The web UI must disclose the cost before invoking — the generation dialog, CV panel, and the Interview Prep page all do.
 - **Verification caching:** per-process per-domain (`_verify_cache`); network probes run once per domain per process. Preserve when touching `/verify` (test asserts one probe).
 - **Injectable I/O:** `api.main.dns_fn / mx_fn / fetch_fn` and `app.state.model_factory` are the seams tests patch. Never call probes directly in endpoints.
 - **SQLite contention:** connections use a 30s busy timeout to absorb ordinary write contention.

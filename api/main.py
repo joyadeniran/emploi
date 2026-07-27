@@ -98,6 +98,7 @@ RATE_LIMITS = {
     "/matches": (30, 60),
     "/applications/generate": (10, 3600),
     "/applications/cv": (10, 3600),
+    "/applications/interview-prep": (10, 3600),
     # Export is pure rendering (no model call), but it is CPU work on
     # user-supplied text — keep a ceiling on it anyway.
     "/applications/export": (30, 3600),
@@ -374,6 +375,10 @@ class GenerateIn(BaseModel):
 
 
 class CvIn(BaseModel):
+    job: dict
+
+
+class InterviewPrepIn(BaseModel):
     job: dict
 
 
@@ -680,6 +685,64 @@ def generate_cv_endpoint(body: CvIn, response: Response, background: bool = True
                      detail=str(exc)[:200])
 
     threading.Thread(target=task, name=f"cv-{job_id}", daemon=True).start()
+    _prune_generation_jobs()
+    return {"job_id": job_id, "status": "pending"}
+
+
+@app.post("/applications/interview-prep", status_code=202)
+def interview_prep_endpoint(body: InterviewPrepIn, response: Response,
+                            background: bool = True,
+                            user_id: str = Depends(rate_limit)):
+    """STAR interview prep grounded ONLY in the candidate's Career Twin
+    (core.prepare_interview + skills/interview_prep). One model call. Draws from
+    the SAME monthly generation allowance as drafts/CVs — it does not raise a
+    user's AI budget, only spends from the existing capped pool — and the UI
+    discloses the cost. Async by default (same rationale as /applications/cv);
+    poll GET /applications/generate/{job_id}.
+    """
+    model = require_model()
+    conn = get_conn()
+    profile = db.load_career_twin(conn, user_id)
+    if not profile:
+        raise HTTPException(status_code=409,
+                            detail="complete Career Twin setup first")
+    job = body.job if isinstance(body.job, dict) else {}
+    job_text = str(job.get("description") or job.get("job_text") or "").strip()
+    if not job_text:
+        raise HTTPException(status_code=422, detail="job description is required")
+    company = str(job.get("company") or job.get("company_name") or "")
+
+    sub = db.get_subscription(conn, user_id)
+    limit = core.monthly_generation_limit(sub["tier"])
+    used = db.count_generations_this_month(conn, user_id)
+    if used >= limit:
+        raise HTTPException(
+            status_code=402,
+            detail=f"You've used all {limit} AI generations on the {sub['tier'].title()} "
+                   f"plan this month. Upgrade for more.")
+
+    if not background:
+        response.status_code = 200
+        prep = run_extraction(core.prepare_interview, model, profile, job_text, company)
+        db.log_generation(conn, user_id)
+        return {"generated": {"interview_prep": prep, "company": company}}
+
+    job_id = uuid.uuid4().hex
+    _set_job(job_id, status="pending", user_id=user_id)
+
+    def task():
+        try:
+            prep = core.prepare_interview(model, profile, job_text, company)
+            db.log_generation(get_conn(), user_id)
+            _set_job(job_id, status="done",
+                     result={"interview_prep": prep, "company": company})
+        except Exception as exc:
+            log.exception("interview-prep job %s failed", job_id)
+            _set_job(job_id, status="error",
+                     error="The AI service is temporarily unavailable — try again in a moment.",
+                     detail=str(exc)[:200])
+
+    threading.Thread(target=task, name=f"interview-{job_id}", daemon=True).start()
     _prune_generation_jobs()
     return {"job_id": job_id, "status": "pending"}
 

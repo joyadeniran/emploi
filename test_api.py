@@ -414,6 +414,49 @@ check("cv job is per-user (404 for someone else)",
       client.get(f"/applications/generate/{cv_job_id}",
                  headers={**AUTH, "X-User-Id": "someone-else"}).status_code == 404)
 
+# ---------------- interview prep (STAR, single AI call, shared job path) ----------------
+m.app.state.model_factory = lambda: None
+check("interview prep without a model key -> 503",
+      client.post("/applications/interview-prep?background=false", headers=AUTH,
+                  json={"job": {"description": "Lead a design team"}}).status_code == 503)
+
+_PREP = "## Likely questions\n1. Tell me about shipping under pressure.\n## STAR answers\n- Situation: ..."
+m.app.state.model_factory = lambda: FakeModel(_PREP)
+r = client.post("/applications/interview-prep?background=false", headers=AUTH,
+                json={"job": {"company_name": "TestCo", "description": "Lead a design team"}})
+check("interview prep (sync) returns STAR prep grounded in the twin",
+      r.status_code == 200 and "STAR answers" in r.json()["generated"]["interview_prep"])
+check("interview prep rejects a job without a description",
+      client.post("/applications/interview-prep", headers=AUTH,
+                  json={"job": {"company": "TestCo"}}).status_code == 422)
+check("interview prep requires a Career Twin",
+      client.post("/applications/interview-prep", headers={**AUTH, "X-User-Id": "no-twin"},
+                  json={"job": {"description": "Lead a design team"}}).status_code == 409)
+
+r = client.post("/applications/interview-prep", headers=AUTH,
+                json={"job": {"company_name": "TestCo", "description": "Lead a design team"}})
+check("interview prep (async) submit returns 202 with a job_id",
+      r.status_code == 202 and r.json().get("job_id"))
+ip_job_id = r.json()["job_id"]
+for _ in range(50):
+    poll = client.get(f"/applications/generate/{ip_job_id}", headers=AUTH)
+    if poll.json().get("status") != "pending":
+        break
+    _time.sleep(0.05)
+check("interview prep job polls through the shared generation job endpoint",
+      poll.json().get("status") == "done"
+      and "STAR answers" in poll.json()["generated"]["interview_prep"])
+
+# Draws from the SAME monthly allowance as drafts/CVs -> 402 once capped.
+_db.upsert_subscription(_conn, "ip-capped", tier="free")
+for _ in range(10):
+    _db.log_generation(_conn, "ip-capped")
+_db.save_career_twin(_conn, "ip-capped", {"name": "Capped"})
+check("interview prep is blocked with 402 once the monthly cap is reached",
+      client.post("/applications/interview-prep?background=false",
+                  headers={**AUTH, "X-User-Id": "ip-capped"},
+                  json={"job": {"description": "Lead a design team"}}).status_code == 402)
+
 # ---------------- document export (pdf / docx) ----------------
 # Pure rendering: no model call, nothing persisted.
 r = client.post("/applications/export", headers=AUTH,
@@ -540,10 +583,11 @@ check("billing status defaults to free",
       client.get("/billing/status", headers=AUTH).json()["tier"] == "free")
 status = client.get("/billing/status", headers=AUTH).json()
 check("free tier limit is 10", status["limit"] == 10)
-# 2 application drafts + 2 tailored CVs. A CV is a model call and counts
-# against the same allowance; exports are pure rendering and never count.
-check("used_this_month counts drafts AND tailored CVs (2 + 2), not exports",
-      status["used_this_month"] == 4)
+# 2 application drafts + 2 tailored CVs + 2 interview preps. Each is a model
+# call and counts against the SAME monthly allowance; exports are pure
+# rendering and never count.
+check("used_this_month counts drafts, CVs AND interview preps (2+2+2), not exports",
+      status["used_this_month"] == 6)
 
 check("checkout without PAYSTACK_SECRET_KEY -> 503",
       client.post("/billing/checkout", headers=AUTH, json={"tier": "pro"}).status_code == 503)
