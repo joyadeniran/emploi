@@ -12,6 +12,7 @@ Design:
 
 import json
 import sqlite3
+import time
 from typing import Optional
 
 _SCHEMA = """
@@ -375,6 +376,85 @@ def _migrate(conn) -> None:
     conn.commit()
 
 
+_LOCK_RETRIES = 8       # BUSY_SNAPSHOT: cheap (rollback + re-read), retry freely
+_BUSY_RETRIES = 2       # BUSY/LOCKED: busy timeout already waited, retry lightly
+_LOCK_BACKOFF_S = 0.05
+_SQLITE_BUSY = 5
+_SQLITE_LOCKED = 6
+_SQLITE_BUSY_SNAPSHOT = 517
+
+
+class _ResilientConnection(sqlite3.Connection):
+    """A connection that retries a write blocked by SQLite's read→write upgrade.
+
+    In WAL a connection that holds a read snapshot and then upgrades to a write
+    after another connection has committed gets `SQLITE_BUSY_SNAPSHOT` (517)
+    *immediately* — the busy timeout does NOT cover it (it only covers a plain
+    `SQLITE_BUSY` waiting on another writer). Left unhandled that surfaces as a
+    user-facing 500 under concurrency, e.g. `upsert_user` (which runs on every
+    authenticated render) racing a worker or another request thread.
+
+    The fix is safe because `SQLITE_BUSY_SNAPSHOT` is raised at the upgrade
+    point — the first write of the transaction — so NO write has been applied
+    yet. Rolling back releases only the stale read snapshot (no committed work
+    is lost); the retry re-reads a fresh snapshot and proceeds. A plain
+    `SQLITE_BUSY` (contended checkpoint / late busy-timeout expiry) is retried
+    too as a backstop. Every DB access in this codebase goes through
+    `Connection.execute` (no raw cursors, no executemany), so overriding it here
+    covers all callers — API request threads and workers alike.
+    """
+
+    def execute(self, sql, parameters=()):
+        return self._retry_locked(super().execute, sql, parameters, may_rollback=True)
+
+    def executemany(self, sql, parameters):
+        return self._retry_locked(super().executemany, sql, parameters, may_rollback=True)
+
+    def commit(self):
+        # NEVER rollback here: a commit that hits a contended lock must be
+        # re-committed, not discarded. Retry the commit itself.
+        return self._retry_locked(lambda: super(_ResilientConnection, self).commit(),
+                                  may_rollback=False)
+
+    def _retry_locked(self, fn, *args, may_rollback):
+        # SQLITE_BUSY_SNAPSHOT (517) is the case the busy timeout does NOT
+        # cover — the read→write upgrade fails instantly. Retry it generously
+        # (each attempt is cheap: a rollback releases the stale snapshot and
+        # the retry re-reads fresh, no waiting). SQLITE_BUSY (5) / LOCKED (6)
+        # already waited out the full busy timeout inside SQLite, so retry
+        # those only a couple of times — never stack N busy-timeout waits into
+        # a multi-minute hang.
+        def _release():
+            # Drop the stale read snapshot so the retry sees fresh data. Only
+            # for execute paths: BUSY_SNAPSHOT/BUSY there fires at the txn's
+            # first write, so the rollback discards no applied write. Never for
+            # commit (would throw away the work being committed).
+            if may_rollback:
+                try:
+                    self.rollback()
+                except sqlite3.Error:
+                    pass
+
+        for attempt in range(_LOCK_RETRIES):
+            try:
+                return fn(*args)
+            except sqlite3.OperationalError as exc:
+                code = getattr(exc, "sqlite_errorcode", None)
+                if code == _SQLITE_BUSY_SNAPSHOT:
+                    if attempt >= _LOCK_RETRIES - 1:
+                        raise
+                    _release()
+                    time.sleep(_LOCK_BACKOFF_S * (attempt + 1))
+                    continue
+                busy = code in (_SQLITE_BUSY, _SQLITE_LOCKED) or (
+                    code is None and "lock" in str(exc).lower())
+                if busy and attempt < _BUSY_RETRIES:
+                    _release()
+                    time.sleep(_LOCK_BACKOFF_S)
+                    continue
+                raise
+
+
 def connect(path: str, check_same_thread: bool = True) -> sqlite3.Connection:
     """Open (or create) the database and ensure the schema exists.
 
@@ -389,7 +469,8 @@ def connect(path: str, check_same_thread: bool = True) -> sqlite3.Connection:
     """
     # Workers and the API share the Render Disk. Wait briefly for the other
     # writer instead of turning ordinary SQLite serialization into a 500.
-    conn = sqlite3.connect(path, check_same_thread=check_same_thread, timeout=30)
+    conn = sqlite3.connect(path, check_same_thread=check_same_thread, timeout=30,
+                           factory=_ResilientConnection)
     conn.row_factory = sqlite3.Row
     if path != ":memory:":
         # WAL: the API opens one connection per thread and the workers open

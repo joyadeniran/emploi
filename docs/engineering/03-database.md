@@ -144,6 +144,7 @@ Worker 5 (`workers/backup_db.py`, nightly Render cron) snapshots the file with S
 
 - Malformed `extra` JSON → `list_applications` skips it silently (never raises).
 - Two writes from different threads → sqlite serializes; `check_same_thread=False` is required for shared connections (Streamlit/uvicorn threads); the 30s busy timeout absorbs worker/API contention.
+- **Read→write upgrade lock:** in WAL a connection holding a read snapshot that then upgrades to a write after another connection committed gets `SQLITE_BUSY_SNAPSHOT` (517) **immediately** — the busy timeout does not cover it. Unhandled that is a user-facing 500 under concurrency (e.g. `upsert_user` on every authenticated render racing a worker). `db.connect` opens connections with `factory=_ResilientConnection`, which retries a lock-blocked `execute`/`commit` (rolling back first to release the stale snapshot). Safe because `BUSY_SNAPSHOT` is raised at the upgrade point, before any write in the transaction lands, so the rollback discards no committed work. All DB access goes through `Connection.execute` (no raw cursors), so the override covers every caller.
 
 ## Future extensions
 
