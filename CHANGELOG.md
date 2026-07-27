@@ -7,6 +7,9 @@ Planned: more job sources (Jooble/Adzuna behind env keys), generic career-page c
 
 - **Web** — fix: preserve OAuth callback during server-side unauthenticated redirects by rendering a client redirect that preserves the current path as `callbackUrl`. Prevents a login → onboarding redirect loop in some environments. (Adds `ClientRedirectToLogin` and updates server layouts.)
 
+### Fixed — browser tab showed the default Next.js/Vercel favicon (2026-07-27)
+`web/app/favicon.ico` was still the untouched create-next-app default (25,931 bytes — the stock icon), so the live app tab rendered it instead of the Emploi mark, even though `app/icon.svg` was already branded. Regenerated `favicon.ico` (multi-size 16/32/48/64) from the Emploi mark and added a 180×180 `apple-icon.png` for iOS. Renders cleanly on both light and dark tabs. `next build` picks all three up automatically (app-router icon conventions; no `metadata.icons` needed).
+
 ### Fixed — the nightly Render cron failure alerts (double-scheduling + false-500 pages) (2026-07-27)
 Render was paging on repeated cron "failures" for `emploi-ingest` (exit 28), `emploi-match`/`emploi-verify-employers`/`emploi-notify`/`emploi-backup` (exit 22). Those are **curl** exit codes — 28 = timed out, 22 = the `/admin/run/*` endpoint returned HTTP ≥ 400 — so the crons ran fine; the endpoints they hit were failing. Two independent causes, both fixed:
 
