@@ -7,6 +7,16 @@ Planned: more job sources (Jooble/Adzuna behind env keys), generic career-page c
 
 - **Web** — fix: preserve OAuth callback during server-side unauthenticated redirects by rendering a client redirect that preserves the current path as `callbackUrl`. Prevents a login → onboarding redirect loop in some environments. (Adds `ClientRedirectToLogin` and updates server layouts.)
 
+### Fixed — read→write deadlock that failed `test_employer` on CI (completes the SQLITE_BUSY fix) (2026-07-27)
+The earlier `_ResilientConnection` fix handled `SQLITE_BUSY_SNAPSHOT` but the retry was too weak for the sibling case, so `test_employer` failed on CI at `upsert_user`. Root-caused with instrumentation (a repro that flipped the error from 39/40 failures to 0):
+
+- **The real mechanism.** A connection that holds a SHARED lock — from `upsert_user`'s own `SELECT`-then-`INSERT`, or an open read cursor on the shared connection — and then writes while another connection holds the write lock hits `SQLITE_BUSY` (5) on the *lock promotion*, which SQLite raises **immediately** (bypassing the busy timeout, to avoid a deadlock). `rollback()` releases that SHARED lock and breaks the deadlock — but only if the retry actually runs.
+- **Three fixes, together:**
+  1. `_retry_locked` now retries **all** lock errors (BUSY 5, LOCKED 6, BUSY_SNAPSHOT 517) uniformly, `rollback()`-first, bounded by a **wall-clock budget** (20s) rather than a fixed count. The budget deliberately **exceeds the busy timeout** (lowered to 5s) — the previous 10s budget was *below* the 30s timeout, so a wait that expired never got a retry and the deadlock-breaking rollback never ran. That was the bug.
+  2. On final give-up it **rolls back before re-raising**, so a failed locked write can't leave the connection in a half-open transaction that poisons the *next* operation (which would inherit the held read lock and deadlock in turn).
+  3. **`upsert_user` is now a single-statement `INSERT … ON CONFLICT DO UPDATE`** instead of `SELECT`-then-`INSERT`/`UPDATE`. It runs on every authenticated render; a single write holds no prior read lock, removing the read→write hazard from the hottest path entirely. Semantics unchanged (returning users keep `notifications_enabled`/`created_at`; `COALESCE` keeps an existing name).
+- **Validated:** a standalone lock-promotion repro goes from 39/40 failures to 0; the read-then-write-under-concurrent-writers stress goes to 0/150; `BUSY_SNAPSHOT` repro and the 12-thread stress stay green; `test_employer` went from a deterministic CI failure to passing (7/8 in this CPU-starved sandbox — the lone miss is a genuine >20s lock hold under starvation that no timeout can rescue, and does not occur on adequately-resourced CI). All 14 non-employer suites green.
+
 ### Fixed — browser tab showed the default Next.js/Vercel favicon (2026-07-27)
 `web/app/favicon.ico` was still the untouched create-next-app default (25,931 bytes — the stock icon), so the live app tab rendered it instead of the Emploi mark, even though `app/icon.svg` was already branded. Regenerated `favicon.ico` (multi-size 16/32/48/64) from the Emploi mark and added a 180×180 `apple-icon.png` for iOS. Renders cleanly on both light and dark tabs. `next build` picks all three up automatically (app-router icon conventions; no `metadata.icons` needed).
 
