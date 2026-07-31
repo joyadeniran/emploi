@@ -2057,18 +2057,30 @@ def list_ingested_jobs(
     remote_only: bool = False,
     category: Optional[str] = None,
     q: Optional[str] = None,
+    country: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
     user_id: str = Depends(auth),
 ):
-    """Return ingested jobs with optional filters (incl. free-text q). Newest first."""
+    """Return ingested jobs with optional filters (incl. free-text q). Newest first.
+
+    `country` is an ISO-3166 alpha-2 code and means "relevant to someone in
+    this country": that country's roles PLUS remote roles PLUS jobs whose
+    location the ingest parser couldn't place. It never hides a remote-global
+    role, which is the point for a remote seeker in Africa.
+    """
     if limit < 1 or limit > 200:
         raise HTTPException(status_code=422, detail="limit must be 1–200")
     q = (q or "").strip()[:200] or None
+    country = (country or "").strip().upper()[:2] or None
+    if country and not country.isalpha():
+        raise HTTPException(status_code=422,
+                            detail="country must be an ISO-3166 alpha-2 code (e.g. NG)")
     conn = get_conn()
     jobs = db.list_jobs(conn, remote_only=remote_only, category=category,
-                        q=q, limit=limit, offset=offset)
-    total = db.count_jobs(conn, remote_only=remote_only, category=category, q=q)
+                        q=q, country=country, limit=limit, offset=offset)
+    total = db.count_jobs(conn, remote_only=remote_only, category=category, q=q,
+                          country=country)
     return {"jobs": jobs, "total": total, "limit": limit, "offset": offset}
 
 

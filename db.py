@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS ingested_jobs (
     -- employer. Nullable — a company name that doesn't slugify safely leaves
     -- it NULL and verify_employers falls back to the old apply_url logic.
     company_domain TEXT,
+    country        TEXT,
     fetched_at     TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(source, source_job_id)
 );
@@ -346,6 +347,18 @@ def _migrate(conn) -> None:
         # harmless, they just ride the next digest once.
         "ALTER TABLE role_applications ADD COLUMN notified INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE role_applications ADD COLUMN notified_at TEXT",
+        # Country tagging for the job pool (see the ingested_jobs column
+        # comment). Required: upsert_job writes this column, so an existing
+        # production database must gain it or every ingest write would fail.
+        # Existing rows stay NULL until the next ingest upserts them, and NULL
+        # means "keep" in every filter, so the backfill window degrades to
+        # today's behaviour rather than hiding jobs.
+        #
+        # Deliberately NO index on this column: connect() runs on every API
+        # thread and worker start against one shared SQLite file, and
+        # CREATE INDEX there is DDL that takes a write lock on every connect.
+        # The job pool is small enough that scanning `country` is cheap.
+        "ALTER TABLE ingested_jobs ADD COLUMN country TEXT",
     ):
         try:
             conn.execute(statement)
@@ -847,25 +860,29 @@ def upsert_job(conn, source: str, source_job_id: str, fields: dict) -> int:
     """Insert or replace a job row. Returns the row id (new or existing)."""
     allowed = {"title", "company_name", "description", "location",
                "is_remote", "salary_text", "apply_url", "category",
-               "company_domain"}
+               "company_domain", "country"}
     data = {k: v for k, v in fields.items() if k in allowed}
+    country = data.get("country")
+    country = str(country).strip().upper()[:2] if country else None
     cur = conn.execute(
         "INSERT INTO ingested_jobs "
         "(source, source_job_id, title, company_name, description, location, "
-        " is_remote, salary_text, apply_url, category, company_domain, fetched_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) "
+        " is_remote, salary_text, apply_url, category, company_domain, country, "
+        " fetched_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) "
         "ON CONFLICT(source, source_job_id) DO UPDATE SET "
         "  title=excluded.title, company_name=excluded.company_name, "
         "  description=excluded.description, location=excluded.location, "
         "  is_remote=excluded.is_remote, salary_text=excluded.salary_text, "
         "  apply_url=excluded.apply_url, category=excluded.category, "
         "  company_domain=excluded.company_domain, "
+        "  country=excluded.country, "
         "  fetched_at=excluded.fetched_at",
         (source, source_job_id,
          data.get("title"), data.get("company_name"), data.get("description"),
          data.get("location"), int(bool(data.get("is_remote"))),
          data.get("salary_text"), data.get("apply_url"), data.get("category"),
-         data.get("company_domain")))
+         data.get("company_domain"), country))
     conn.commit()
     if cur.lastrowid:
         return cur.lastrowid
@@ -875,10 +892,20 @@ def upsert_job(conn, source: str, source_job_id: str, fields: dict) -> int:
     return row["id"] if row else -1
 
 
-def _job_filters(remote_only: bool, category: Optional[str], q: Optional[str]):
+def _job_filters(remote_only: bool, category: Optional[str], q: Optional[str],
+                 country: Optional[str] = None):
     clauses, params = [], []
     if remote_only:
         clauses.append("is_remote = 1")
+    if country:
+        # "Relevant to someone in <country>" — NOT "located in <country>".
+        # Remote roles are kept because a remote-global job is exactly what a
+        # remote seeker in Lagos wants, and NULL (a location the ingest parser
+        # couldn't place) is kept because hiding a job over a parser miss is
+        # worse than showing one extra. So this trims on-site roles in OTHER
+        # known countries, which is the actual noise.
+        clauses.append("(country = ? OR is_remote = 1 OR country IS NULL)")
+        params.append(str(country).strip().upper()[:2])
     if category:
         clauses.append("category = ?")
         params.append(category)
@@ -893,10 +920,11 @@ def _job_filters(remote_only: bool, category: Optional[str], q: Optional[str]):
 
 
 def list_jobs(conn, *, remote_only: bool = False, category: Optional[str] = None,
-              q: Optional[str] = None, limit: int = 100, offset: int = 0) -> list:
+              q: Optional[str] = None, country: Optional[str] = None,
+              limit: int = 100, offset: int = 0) -> list:
     """Return ingested jobs, newest first. Filters (including free-text `q`
     over title/company/description) are optional."""
-    where, params = _job_filters(remote_only, category, q)
+    where, params = _job_filters(remote_only, category, q, country)
     rows = conn.execute(
         f"SELECT * FROM ingested_jobs {where} "
         f"ORDER BY fetched_at DESC LIMIT ? OFFSET ?",
@@ -905,8 +933,9 @@ def list_jobs(conn, *, remote_only: bool = False, category: Optional[str] = None
 
 
 def count_jobs(conn, *, remote_only: bool = False,
-               category: Optional[str] = None, q: Optional[str] = None) -> int:
-    where, params = _job_filters(remote_only, category, q)
+               category: Optional[str] = None, q: Optional[str] = None,
+               country: Optional[str] = None) -> int:
+    where, params = _job_filters(remote_only, category, q, country)
     row = conn.execute(f"SELECT COUNT(*) AS n FROM ingested_jobs {where}",
                        params).fetchone()
     return row["n"] if row else 0

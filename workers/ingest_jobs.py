@@ -54,6 +54,24 @@ JOOBLE_BASE = "https://jooble.org/api/{apikey}"
 ADZUNA_BASE = ("https://api.adzuna.com/v1/api/jobs/{country}/search/1"
                "?app_id={app_id}&app_key={app_key}&results_per_page=50"
                "&content-type=application/json&what={what}")
+# Workday. The single biggest coverage gap for the Nigerian market: banks and
+# large corporates (the employers this product's users actually name) don't use
+# Greenhouse/Lever — they run Workday, SuccessFactors or Taleo. Workday is the
+# one with a genuinely PUBLIC, keyless JSON API (the same endpoints its own
+# career-site JS calls), so it is implementable honestly; SuccessFactors' RCM
+# OData API requires per-tenant credentials, so it stays a `career_page`
+# placeholder until a partner supplies keys.
+#   list  : POST .../wday/cxs/{tenant}/{site}/jobs   {limit, offset, searchText}
+#   detail: GET  .../wday/cxs/{tenant}/{site}{externalPath}  -> jobPostingInfo
+#   apply : https://{tenant}.{wd}.myworkdayjobs.com/en-US/{site}{externalPath}
+WORKDAY_HOST = "https://{tenant}.{wd}.myworkdayjobs.com"
+WORKDAY_LIST = WORKDAY_HOST + "/wday/cxs/{tenant}/{site}/jobs"
+WORKDAY_DETAIL = WORKDAY_HOST + "/wday/cxs/{tenant}/{site}{path}"
+WORKDAY_APPLY = WORKDAY_HOST + "/en-US/{site}{path}"
+# Workday caps a page at 20; bound total work per source so one huge tenant
+# can't stall a run (the detail fetch below is one request per posting).
+WORKDAY_PAGE_LIMIT = 20
+WORKDAY_MAX_JOBS = 100
 MANUAL_JOBS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "data", "manual_jobs")
@@ -151,6 +169,118 @@ def _derive_company_domain(company_name: str) -> Optional[str]:
     return f"{slug}.com"
 
 
+# ---- Country inference ------------------------------------------------------
+# Why: the source pool is global (90 of 151 seeded sources are global boards),
+# so a Nigerian job seeker browsing "all jobs" mostly sees US on-site roles they
+# can't take. Storing an ISO-3166 alpha-2 country at ingest lets the pool be
+# filtered "Nigeria + remote" WITHOUT discarding remote-global roles, which are
+# genuinely valuable to a remote seeker in Africa. Inference is deliberately
+# conservative: an unrecognised location stores NULL ("unknown"), never a guess,
+# and NULL is treated as "don't filter it out" downstream — we never hide a job
+# because our parser didn't recognise a place name.
+
+# Nigeria first and separately: precision here matters most (this is the home
+# market). Districts of Lagos appear as bare locations on local boards.
+_NG_PLACES = (
+    "nigeria", "lagos", "abuja", "ibadan", "kano", "port harcourt", "portharcourt",
+    "benin city", "enugu", "kaduna", "abeokuta", "ilorin", "jos", "calabar",
+    "uyo", "owerri", "warri", "onitsha", "aba", "akure", "maiduguri", "zaria",
+    "victoria island", "lekki", "ikeja", "yaba", "ikoyi", "surulere", "ajah",
+    "asaba", "awka", "minna", "sokoto", "bauchi", "makurdi", "lokoja",
+    "osogbo", "ado ekiti", "umuahia", "yenagoa", "gombe", "katsina", "abia",
+)
+
+# Other countries, matched on whole words. Order matters only for aliases that
+# contain each other; the regex uses word boundaries so "India" never matches
+# "Indiana". Kept to markets that actually show up in the seeded sources.
+_COUNTRY_MARKERS = (
+    ("KE", ("kenya", "nairobi", "mombasa")),
+    ("GH", ("ghana", "accra", "kumasi")),
+    ("ZA", ("south africa", "johannesburg", "cape town", "pretoria", "durban")),
+    ("EG", ("egypt", "cairo")),
+    ("RW", ("rwanda", "kigali")),
+    ("UG", ("uganda", "kampala")),
+    ("TZ", ("tanzania", "dar es salaam")),
+    ("ET", ("ethiopia", "addis ababa")),
+    ("SN", ("senegal", "dakar")),
+    ("CI", ("ivory coast", "côte d'ivoire", "cote d'ivoire", "abidjan")),
+    ("MA", ("morocco", "casablanca")),
+    ("GB", ("united kingdom", "england", "scotland", "wales", "london",
+            "manchester", "edinburgh", "u.k.", "uk")),
+    ("IE", ("ireland", "dublin")),
+    ("CA", ("canada", "toronto", "vancouver", "montreal", "ottawa", "calgary")),
+    ("DE", ("germany", "deutschland", "berlin", "munich", "hamburg")),
+    ("FR", ("france", "paris")),
+    ("NL", ("netherlands", "amsterdam")),
+    ("ES", ("spain", "madrid", "barcelona")),
+    ("PT", ("portugal", "lisbon")),
+    ("PL", ("poland", "warsaw", "krakow")),
+    ("IN", ("india", "bangalore", "bengaluru", "mumbai", "delhi", "hyderabad")),
+    ("SG", ("singapore",)),
+    ("AE", ("united arab emirates", "dubai", "abu dhabi")),
+    ("AU", ("australia", "sydney", "melbourne")),
+    ("BR", ("brazil", "brasil", "sao paulo", "são paulo")),
+    ("MX", ("mexico", "méxico")),
+    ("US", ("united states", "usa", "u.s.a.", "u.s.", "america",
+            "new york", "san francisco", "los angeles", "seattle", "austin",
+            "boston", "chicago", "denver", "atlanta", "washington dc",
+            "silicon valley", "bay area")),
+)
+
+# Trailing US state codes ("San Francisco, CA"). Only consulted after the
+# explicit country pass, so "Toronto, CA" resolves to Canada (matched by city)
+# rather than California.
+_US_STATES = {
+    "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga", "hi", "id",
+    "il", "in", "ia", "ks", "ky", "la", "ma", "md", "me", "mi", "mn", "ms",
+    "mo", "mt", "nc", "nd", "ne", "nh", "nj", "nm", "nv", "ny", "oh", "ok",
+    "or", "pa", "ri", "sc", "sd", "tn", "tx", "ut", "va", "vt", "wa", "wi",
+    "wv", "wy", "dc",
+}
+
+
+def _mentions(text: str, needle: str) -> bool:
+    """Whole-word(ish) containment. Word boundaries stop 'India' matching
+    'Indiana' and 'aba' matching 'Abadan'; needles with punctuation (u.s.)
+    fall back to plain containment since \\b behaves oddly around dots."""
+    if not needle:
+        return False
+    if any(c in needle for c in ".'’"):
+        return needle in text
+    return re.search(r"\b%s\b" % re.escape(needle), text) is not None
+
+
+def _derive_country(location: str) -> Optional[str]:
+    """Best-effort ISO-3166 alpha-2 country for a job location string.
+
+    Returns None when nothing is recognised — an honest "unknown" that the
+    filters treat as "keep", so a job is never hidden by a parser miss.
+    Nigeria is checked first: a listing open to several places including
+    Nigeria is Nigeria-relevant, which is the bias this product wants.
+    """
+    text = (location or "").strip().lower()
+    if not text:
+        return None
+    # "Benin City" is Nigeria; bare "Benin" is a different country. Resolve the
+    # city form before any generic matching can see the substring.
+    if "benin city" in text:
+        return "NG"
+    for place in _NG_PLACES:
+        if _mentions(text, place):
+            return "NG"
+    for code, markers in _COUNTRY_MARKERS:
+        for marker in markers:
+            if _mentions(text, marker):
+                return code
+    # Trailing US state code, e.g. "Austin, TX" or "Remote - Austin, TX (US)".
+    tail = re.split(r"[,/|()\-–]", text)
+    for part in reversed(tail):
+        token = part.strip()
+        if token in _US_STATES:
+            return "US"
+    return None
+
+
 # ---- Normalisation helpers --------------------------------------------------
 
 _REMOTE_RE = re.compile(r"\bremote\b", re.IGNORECASE)
@@ -200,6 +330,7 @@ def normalize_greenhouse_job(job: dict, company_name: str) -> dict:
         "apply_url": job.get("absolute_url", ""),
         "category": dept,
         "company_domain": _derive_company_domain(company_name),
+        "country": _derive_country(location),
     }
 
 
@@ -222,6 +353,7 @@ def normalize_lever_posting(posting: dict, company_name: str) -> dict:
         "apply_url": posting.get("hostedUrl", ""),
         "category": team,
         "company_domain": _derive_company_domain(company_name),
+        "country": _derive_country(location),
     }
 
 
@@ -237,7 +369,8 @@ def normalize_ashby_posting(posting: dict, company_name: str) -> dict:
             "salary_text": None,
             "apply_url": posting.get("jobUrl") or posting.get("applyUrl") or "",
             "category": posting.get("department") or posting.get("team") or "",
-            "company_domain": _derive_company_domain(company_name)}
+            "company_domain": _derive_company_domain(company_name),
+            "country": _derive_country(location)}
 
 
 def normalize_workable_job(job: dict, company_name: str) -> Optional[dict]:
@@ -269,6 +402,7 @@ def normalize_workable_job(job: dict, company_name: str) -> Optional[dict]:
         "apply_url": apply_url,
         "category": job.get("department") or "",
         "company_domain": _derive_company_domain(company_name),
+        "country": _derive_country(location_str),
     }
 
 
@@ -304,6 +438,65 @@ def normalize_smartrecruiters_posting(posting: dict, company_name: str) -> dict:
         "apply_url": apply_url,
         "category": dept,
         "company_domain": _derive_company_domain(company_name),
+        "country": _derive_country(location_str),
+    }
+
+
+def _parse_workday_token(token: str):
+    """`tenant:site` or `tenant:wdN:site` (host shard defaults to wd3).
+
+    Examples: `mtn:MTN_Careers`, `dangote:wd3:Dangote_External`.
+    Returns (tenant, wd, site) or None when the token is malformed — a bad
+    token must skip the source, never build a nonsense URL.
+    """
+    parts = [p.strip() for p in str(token or "").split(":") if p.strip()]
+    if len(parts) == 2:
+        tenant, site = parts
+        wd = "wd3"
+    elif len(parts) == 3:
+        tenant, wd, site = parts
+    else:
+        return None
+    wd = wd.lower()
+    if not re.fullmatch(r"wd\d+", wd):
+        return None
+    # Tenant/site land in a URL — keep them to the charset Workday actually
+    # uses so a hostile source row can't inject a different host or path.
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", tenant):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", site):
+        return None
+    return tenant, wd, site
+
+
+def normalize_workday_posting(posting: dict, company_name: str, tenant: str,
+                              wd: str, site: str, description: str = "") -> dict:
+    """One Workday jobPostings entry -> the upsert_job fields dict.
+
+    The list response carries no description (Workday returns it only from the
+    per-job detail endpoint), so `description` is passed in by the caller and
+    falls back to the title + location rather than an empty string — an empty
+    description would make the job unscoreable by the match rubric.
+    """
+    title = str(posting.get("title") or "").strip()
+    location = str(posting.get("locationsText") or "").strip()
+    path = str(posting.get("externalPath") or "")
+    apply_url = (WORKDAY_APPLY.format(tenant=tenant, wd=wd, site=site, path=path)
+                 if path else "")
+    body = _strip_html(description) if description else ""
+    if not body:
+        body = " — ".join(x for x in (title, location) if x)
+    return {
+        "title": title,
+        "company_name": company_name,
+        "description": body,
+        "location": location,
+        "is_remote": _is_remote(location) or _is_remote(body),
+        "salary_text": None,
+        "apply_url": apply_url,
+        "category": None,
+        "company_domain": _derive_company_domain(company_name),
+        "country": _derive_country(location),
     }
 
 
@@ -326,6 +519,7 @@ def normalize_jooble_job(job: dict) -> dict:
         # Aggregator rows have no reliable employer domain — leave it unset so
         # verify_employers doesn't probe a guess derived from a noisy name.
         "company_domain": _derive_company_domain(company) if company else None,
+        "country": _derive_country(location),
     }
 
 
@@ -349,6 +543,7 @@ def normalize_adzuna_job(job: dict) -> dict:
         "apply_url": str(job.get("redirect_url") or ""),
         "category": str((job.get("category") or {}).get("label") or ""),
         "company_domain": _derive_company_domain(company) if company else None,
+        "country": _derive_country(location),
     }
 
 
@@ -503,6 +698,74 @@ def _ingest_smartrecruiters(source: dict, conn, dry_run: bool):
     return len(postings), written
 
 
+def _ingest_workday(source: dict, conn, dry_run: bool):
+    """Fetch postings from one public Workday career site. Returns
+    (fetched, written).
+
+    Paginates the POST list endpoint (20/page, capped at WORKDAY_MAX_JOBS) and
+    then fetches each posting's detail for the real description. Every step
+    degrades instead of raising: a bad token skips the source, a failed page
+    stops pagination with what we already have, and a failed detail fetch falls
+    back to the title/location summary so the job is still ingested.
+    """
+    parsed = _parse_workday_token(source.get("token"))
+    if not parsed:
+        log.warning("workday: malformed token %r — skipping", source.get("token"))
+        return 0, 0
+    tenant, wd, site = parsed
+    company_name = source.get("company") or tenant.replace("-", " ").title()
+    list_url = WORKDAY_LIST.format(tenant=tenant, wd=wd, site=site)
+
+    postings, offset = [], 0
+    while len(postings) < WORKDAY_MAX_JOBS:
+        data = _post_json(list_url, {"appliedFacets": {}, "searchText": "",
+                                     "limit": WORKDAY_PAGE_LIMIT, "offset": offset})
+        page = data.get("jobPostings") if isinstance(data, dict) else None
+        if not isinstance(page, list) or not page:
+            break
+        postings.extend(p for p in page if isinstance(p, dict))
+        if len(page) < WORKDAY_PAGE_LIMIT:
+            break
+        offset += WORKDAY_PAGE_LIMIT
+        time.sleep(RATE_SLEEP)
+    postings = postings[:WORKDAY_MAX_JOBS]
+    if not postings:
+        return 0, 0
+
+    written = 0
+    for posting in postings:
+        path = str(posting.get("externalPath") or "")
+        description = ""
+        # Skip the per-job detail fetch on a dry run: spot_check_sources calls
+        # every handler with dry_run=True purely to see whether a token is
+        # alive, and N+1 requests (plus N rate-limit sleeps) per source would
+        # turn a liveness probe into a crawl.
+        if path and not dry_run:
+            detail = _fetch(WORKDAY_DETAIL.format(tenant=tenant, wd=wd, site=site,
+                                                  path=path))
+            info = detail.get("jobPostingInfo") if isinstance(detail, dict) else None
+            if isinstance(info, dict):
+                description = str(info.get("jobDescription") or "")
+            time.sleep(RATE_SLEEP)
+        fields = normalize_workday_posting(posting, company_name, tenant, wd,
+                                           site, description)
+        if not fields["title"]:
+            continue
+        # bulletFields usually carries the requisition id; fall back to the
+        # path so the dedup key is stable across runs either way.
+        bullets = posting.get("bulletFields")
+        req_id = (str(bullets[0]) if isinstance(bullets, list) and bullets
+                  else (path or _stable_id(tenant, site, fields["title"])))
+        source_key = f"workday/{tenant}:{site}"
+        if dry_run:
+            print(f"  [dry-run] {source_key} job {req_id}: {fields['title']}")
+        else:
+            db.upsert_job(conn, source_key, req_id, fields)
+        written += 1
+
+    return len(postings), written
+
+
 def _ingest_manual(source: dict, conn, dry_run: bool):
     """Curated jobs from a human-maintained JSON file at
     `data/manual_jobs/{token}.json`. This is the honest answer for Nigerian
@@ -580,6 +843,7 @@ def _ingest_manual(source: dict, conn, dry_run: bool):
             "apply_url": entry.get("apply_url", "") or "",
             "category": entry.get("category", "") or "",
             "company_domain": _derive_company_domain(company_name),
+            "country": _derive_country(location),
         }
         source_key = f"manual/{token}"
         if dry_run:
@@ -668,6 +932,7 @@ _ATS_HANDLERS = {
     "ashby": _ingest_ashby,
     "workable": _ingest_workable,
     "smartrecruiters": _ingest_smartrecruiters,
+    "workday": _ingest_workday,
     "jooble": _ingest_jooble,
     "adzuna": _ingest_adzuna,
     "manual": _ingest_manual,

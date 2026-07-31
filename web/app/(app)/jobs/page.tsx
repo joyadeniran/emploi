@@ -10,11 +10,15 @@ export const metadata = { title: "Browse Jobs — Emploi" };
 export default async function JobsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; remote?: string }>;
+  searchParams: Promise<{ q?: string; remote?: string; country?: string }>;
 }) {
   const params = await searchParams;
   const q = (params.q ?? "").trim();
   const remoteOnly = params.remote === "true";
+  // ISO-3166 alpha-2. Means "relevant to me in this country": that country's
+  // roles PLUS remote roles PLUS jobs whose location we couldn't place — so a
+  // remote-global role is never hidden, only far-away on-site roles are.
+  const country = (params.country ?? "").trim().toUpperCase().slice(0, 2);
 
   if (DEMO_MODE) {
     return <PagePlaceholder icon={Search} title="Browse Jobs" blurb="Search the live job pool in demo mode." note="Connect the API to browse ingested jobs." />;
@@ -28,6 +32,7 @@ export default async function JobsPage({
     const qs = new URLSearchParams({ limit: "30" });
     if (q) qs.set("q", q);
     if (remoteOnly) qs.set("remote_only", "true");
+    if (/^[A-Z]{2}$/.test(country)) qs.set("country", country);
     const [data, savedRes] = await Promise.all([
       apiFetch<{ jobs: ApiJob[]; total: number }>(`/jobs?${qs.toString()}`),
       apiFetch<{ saved: { id: number }[] }>("/saved-jobs"),
@@ -71,6 +76,12 @@ export default async function JobsPage({
           <input type="checkbox" name="remote" value="true" defaultChecked={remoteOnly}
             className="h-4 w-4 rounded border-line accent-[--color-brand]" />
           Remote only
+        </label>
+        <label className="inline-flex items-center gap-2 text-sm font-semibold text-muted"
+          title="Roles in Nigeria plus remote roles anywhere — hides on-site jobs in other countries">
+          <input type="checkbox" name="country" value="NG" defaultChecked={country === "NG"}
+            className="h-4 w-4 rounded border-line accent-[--color-brand]" />
+          Nigeria + remote
         </label>
         <button type="submit" className="rounded-xl bg-brand px-5 py-2.5 text-sm font-bold text-white">
           Search

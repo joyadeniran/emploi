@@ -32,10 +32,17 @@ CREATE TABLE ingested_jobs (
     title TEXT, company_name TEXT, description TEXT, location TEXT,
     is_remote     INTEGER NOT NULL DEFAULT 0,
     salary_text TEXT, apply_url TEXT, category TEXT,
+    company_domain TEXT,                  -- guessed employer domain (see Worker 1)
+    country       TEXT,                   -- ISO-3166 alpha-2 inferred from location
+                                          -- at ingest; NULL = not recognised, and
+                                          -- every filter treats NULL as "keep"
     fetched_at    TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(source, source_job_id)         -- dedup key across repeat runs
 );
 -- indexes: category, is_remote, fetched_at
+-- NO index on country, deliberately: connect() runs on every API thread and
+-- worker start, and CREATE INDEX there is DDL that takes a write lock on every
+-- connect. The pool is small enough that scanning country is cheap.
 
 -- Cached employer trust results, refreshed by Worker 2 (verify_employers.py).
 CREATE TABLE employer_trust_records (

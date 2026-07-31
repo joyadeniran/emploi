@@ -220,6 +220,57 @@ ok &= check("list_jobs category filter works",
 ok &= check("count_jobs total", count_jobs(jconn) == 3)
 ok &= check("count_jobs remote_only", count_jobs(jconn, remote_only=True) == 2)
 
+# 13b. country filter — "relevant to someone in X", not "located in X".
+upsert_job(jconn, "workday/gtco", "wd-1",
+           {"title": "Teller", "company_name": "GTCO", "is_remote": False,
+            "location": "Lagos, Nigeria", "country": "NG"})
+upsert_job(jconn, "greenhouse/usco", "gh-us",
+           {"title": "US Onsite", "company_name": "USCo", "is_remote": False,
+            "location": "Austin, TX", "country": "US"})
+upsert_job(jconn, "greenhouse/usco", "gh-us-remote",
+           {"title": "US Remote", "company_name": "USCo", "is_remote": True,
+            "location": "Remote (US)", "country": "US"})
+_ng_titles = {j["title"] for j in list_jobs(jconn, country="NG")}
+ok &= check("country filter keeps that country's roles", "Teller" in _ng_titles)
+ok &= check("country filter keeps REMOTE roles from other countries "
+            "(remote-global is the point, not noise)", "US Remote" in _ng_titles)
+ok &= check("country filter drops on-site roles in other countries",
+            "US Onsite" not in _ng_titles)
+ok &= check("country filter keeps rows with an unknown (NULL) country — a "
+            "parser miss must never hide a job", "PM" in _ng_titles)
+ok &= check("country filter is case/format tolerant",
+            {j["title"] for j in list_jobs(jconn, country="ng")} == _ng_titles)
+ok &= check("count_jobs honours the country filter",
+            count_jobs(jconn, country="NG") == len(_ng_titles))
+ok &= check("country stored uppercase regardless of input case",
+            [j for j in list_jobs(jconn) if j["title"] == "Teller"][0]["country"] == "NG")
+# Filters compose (country + remote_only) without dropping the AND.
+ok &= check("country + remote_only compose",
+            {j["title"] for j in list_jobs(jconn, country="NG", remote_only=True)}
+            == {j["title"] for j in list_jobs(jconn, country="NG") if j["is_remote"]})
+
+# 13c. Migration path: a pre-country DB gains the column on connect, and its
+# existing rows (country NULL) stay visible under a country filter.
+import sqlite3 as _sq3
+_old = _tf.NamedTemporaryFile(suffix=".sqlite3", delete=False).name
+_oc = _sq3.connect(_old)
+_oc.execute("CREATE TABLE ingested_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "source TEXT NOT NULL, source_job_id TEXT NOT NULL, title TEXT, "
+            "company_name TEXT, description TEXT, location TEXT, "
+            "is_remote INTEGER NOT NULL DEFAULT 0, salary_text TEXT, "
+            "apply_url TEXT, category TEXT, "
+            "fetched_at TEXT NOT NULL DEFAULT (datetime('now')), "
+            "UNIQUE(source, source_job_id))")
+_oc.execute("INSERT INTO ingested_jobs (source, source_job_id, title, is_remote) "
+            "VALUES ('legacy', 'l-1', 'Legacy Job', 0)")
+_oc.commit(); _oc.close()
+_mc = connect(_old)
+ok &= check("migration adds the country column to an existing ingested_jobs",
+            "country" in {r["name"] for r in _mc.execute("PRAGMA table_info(ingested_jobs)")})
+ok &= check("pre-migration rows keep working and stay visible under a filter",
+            [j["title"] for j in list_jobs(_mc, country="NG")] == ["Legacy Job"])
+_mc.close(); _os2.unlink(_old)
+
 # 14. clear_user also wipes matches (and events)
 upsert_match(jconn, "u1", id1, 85, "Strong match on backend skills")
 upsert_match(jconn, "u1", id1b, 72, "Good match")
