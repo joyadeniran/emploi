@@ -40,7 +40,7 @@ Deploy the API private to the web tier (Render private service / network rules).
 | `PATCH /applications/{id}` | `{status}` | `{ok}` | 404 not owner, 422 bad status |
 | `POST /matches` | `{jobs: [...]}` | `{matches: [...]}` ranked by fit (ad-hoc ranking) | 409 no twin, 422 no jobs, 503, 429 |
 | `GET /matches` | `?limit=` | `{matches: [...]}` pre-computed by Worker 3, best fit first, joined with job fields incl. description | 401 |
-| `GET /jobs` | `?remote_only&category&limit&offset` | `{jobs, total, limit, offset}` (limit ≤ 200) | 422 bad limit |
+| `GET /jobs` | `?remote_only&category&q&country&limit&offset` | `{jobs, total, limit, offset}` (limit ≤ 200). `country` is ISO-3166 alpha-2 and means "relevant to someone there": that country **+ remote anywhere + unknown-location** — it never hides a remote-global role. | 422 bad limit / non-alpha country |
 | `GET /jobs/{id}` | — | single ingested job | 404 |
 | `GET /saved-jobs` | — | `{saved_jobs: [...]}` user's bookmarked jobs joined with ingested_jobs fields | 401 |
 | `POST /saved-jobs` | `{job_id}` | `{ok}` (201) — idempotent via UNIQUE constraint | 422 |

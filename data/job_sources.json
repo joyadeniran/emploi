@@ -1,5 +1,5 @@
 {
-  "_doc": "Curated job source list. This file seeds the `job_sources` DB table on first run. After seeding, the DB is the source of truth — edits here only take effect on the next seed run (or via the admin API). ats: greenhouse | lever | ashby | workable | smartrecruiters | workday | career_page. priority: 10=hourly, 7=every 3h, 5=twice daily, 1=daily. active=false means skip without deleting. Workable/SmartRecruiters entries below are seeded active=false — spot-check the public URL (apply.workable.com/{token}/ or jobs.smartrecruiters.com/{token}) before enabling. A failing source is graceful (0 jobs, no crash) but wastes a request; verify first. Entries below marked active=false with the note `dead_2026-07-15` are ones the spot-check confirmed returned 0 jobs against their ATS endpoint — the token is wrong, the company migrated ATS, or the company no longer publishes a public feed. Re-enable via `PATCH /admin/job-sources/{id}/toggle` after finding the correct token. | aggregators (jooble/adzuna) are env-keyed (JOOBLE_API_KEY / ADZUNA_APP_ID+ADZUNA_APP_KEY). jooble token=location:keywords (free-text location, Nigeria supported); adzuna token=country:keywords (adzuna 2-letter code — NO nigeria; use za/gb/us). New file sources reach an already-seeded prod DB via POST /admin/job-sources/seed?sync=true, then run ingest.",
+  "_doc": "Curated job source list. This file seeds the `job_sources` DB table on first run. After seeding, the DB is the source of truth — edits here only take effect on the next seed run (or via the admin API). ats: greenhouse | lever | ashby | workable | smartrecruiters | workday | career_page. priority: 10=hourly, 7=every 3h, 5=twice daily, 1=daily. active=false means skip without deleting. Workable/SmartRecruiters entries below are seeded active=false — spot-check the public URL (apply.workable.com/{token}/ or jobs.smartrecruiters.com/{token}) before enabling. A failing source is graceful (0 jobs, no crash) but wastes a request; verify first. Entries below marked active=false with the note `dead_2026-07-15` are ones the spot-check confirmed returned 0 jobs against their ATS endpoint — the token is wrong, the company migrated ATS, or the company no longer publishes a public feed. Re-enable via `PATCH /admin/job-sources/{id}/toggle` after finding the correct token. | aggregators (jooble/adzuna) are env-keyed (JOOBLE_API_KEY / ADZUNA_APP_ID+ADZUNA_APP_KEY). jooble token=location:keywords (free-text location, Nigeria supported); adzuna token=country:keywords (adzuna 2-letter code — NO nigeria; use za/gb/us). workday token=tenant:site or tenant:wdN:site (default shard wd3), e.g. 'mtn:MTN_Careers' — public keyless JSON API, covers the bank/corporate tier that greenhouse/lever never will. | New file sources reach an already-seeded prod DB via POST /admin/job-sources/seed?sync=true, then run ingest.",
   "african_tech": [
     {
       "company": "Andela",
@@ -1107,6 +1107,78 @@
       "priority": 1,
       "region": "nigeria",
       "active": false
+    },
+    {
+      "company": "MTN Nigeria",
+      "ats": "workday",
+      "token": "mtn:MTNNigeria_External_Career_Site",
+      "priority": 5,
+      "region": "nigeria",
+      "active": false,
+      "_note": "workday tenant:site UNVERIFIED — confirm via spot_check then enable with PATCH /admin/job-sources/{id}/toggle"
+    },
+    {
+      "company": "Dangote Industries",
+      "ats": "workday",
+      "token": "dangote:Dangote_External_Careers",
+      "priority": 5,
+      "region": "nigeria",
+      "active": false,
+      "_note": "workday tenant:site UNVERIFIED — confirm via spot_check then enable with PATCH /admin/job-sources/{id}/toggle"
+    },
+    {
+      "company": "Unilever",
+      "ats": "workday",
+      "token": "unilever:Unilever_Careers",
+      "priority": 5,
+      "region": "nigeria",
+      "active": false,
+      "_note": "workday tenant:site UNVERIFIED — confirm via spot_check then enable with PATCH /admin/job-sources/{id}/toggle"
+    },
+    {
+      "company": "Nestle",
+      "ats": "workday",
+      "token": "nestle:Nestle_External",
+      "priority": 5,
+      "region": "nigeria",
+      "active": false,
+      "_note": "workday tenant:site UNVERIFIED — confirm via spot_check then enable with PATCH /admin/job-sources/{id}/toggle"
+    },
+    {
+      "company": "Standard Bank",
+      "ats": "workday",
+      "token": "standardbank:Standard_Bank_Careers",
+      "priority": 5,
+      "region": "nigeria",
+      "active": false,
+      "_note": "workday tenant:site UNVERIFIED — confirm via spot_check then enable with PATCH /admin/job-sources/{id}/toggle"
+    },
+    {
+      "company": "Airtel Africa",
+      "ats": "workday",
+      "token": "airtel:Airtel_Careers",
+      "priority": 5,
+      "region": "nigeria",
+      "active": false,
+      "_note": "workday tenant:site UNVERIFIED — confirm via spot_check then enable with PATCH /admin/job-sources/{id}/toggle"
+    },
+    {
+      "company": "Guinness Nigeria",
+      "ats": "workday",
+      "token": "diageo:Diageo_Careers",
+      "priority": 5,
+      "region": "nigeria",
+      "active": false,
+      "_note": "workday tenant:site UNVERIFIED — confirm via spot_check then enable with PATCH /admin/job-sources/{id}/toggle"
+    },
+    {
+      "company": "TotalEnergies",
+      "ats": "workday",
+      "token": "totalenergies:TotalEnergies_Careers",
+      "priority": 5,
+      "region": "nigeria",
+      "active": false,
+      "_note": "workday tenant:site UNVERIFIED — confirm via spot_check then enable with PATCH /admin/job-sources/{id}/toggle"
     }
   ],
   "workable_candidates": [
@@ -1327,6 +1399,166 @@
       "token": "Nigeria:administrative assistant",
       "priority": 5,
       "category": "Admin",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Lagos:software developer",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Lagos:accountant",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Lagos:sales",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Lagos:customer support",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Abuja:accountant",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Abuja:administrative assistant",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Port Harcourt:engineer",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Ibadan:teacher",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Kano:sales",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:frontend developer",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:backend developer",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:business analyst",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:project manager",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:logistics",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:pharmacist",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:teacher",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:legal",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:audit",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:procurement",
+      "priority": 7,
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jooble",
+      "token": "Nigeria:quality assurance",
+      "priority": 7,
       "region": "africa",
       "active": true
     }

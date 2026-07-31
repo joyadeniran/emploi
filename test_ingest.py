@@ -248,6 +248,27 @@ with tempfile.TemporaryDirectory() as tmpdir:
                 all(j["is_remote"] for j in remote_jobs))
     ok &= check("at least 5 remote jobs", len(remote_jobs) >= 5)
 
+    # Country tagging survives the full ingest → upsert → read round trip.
+    _by_title = {j["title"]: j for j in db.list_jobs(conn)}
+    ok &= check("ingest stores an inferred country on the row",
+                _by_title["Product Manager"]["country"] == "NG")
+    ok &= check("ingest leaves country NULL for an unplaceable location "
+                "(honest unknown, never a guess)",
+                _by_title["Senior Engineer"]["country"] is None)
+    # The Nigeria filter must keep NG + remote + unknown, and drop only
+    # on-site roles in OTHER known countries (the actual noise).
+    _ng = db.list_jobs(conn, country="NG")
+    ok &= check("country=NG keeps Nigerian roles",
+                any(j["title"] == "Product Manager" for j in _ng))
+    ok &= check("country=NG keeps remote-global roles (the point for a "
+                "remote seeker in Lagos)",
+                any(j["is_remote"] and j["country"] != "NG" for j in _ng))
+    ok &= check("country=NG drops on-site roles in other known countries",
+                not any((j["country"] not in (None, "NG")) and not j["is_remote"]
+                        for j in _ng))
+    ok &= check("country filter count matches the listing",
+                db.count_jobs(conn, country="NG") == len(_ng))
+
     # Idempotency — second run must not grow the job count
     worker.SOURCES_PATH = sources_path
     ingest_run(db_path, dry_run=False, fetch_fn=fake_fetch)
@@ -747,6 +768,118 @@ ok &= check("adzuna normalizer: salary range formatted, remote detected",
 os.environ.pop("JOOBLE_API_KEY", None)
 os.environ.pop("ADZUNA_APP_ID", None)
 os.environ.pop("ADZUNA_APP_KEY", None)
+
+# ---- country inference (Nigeria-first job pool) ------------------------------
+# The pool is global, so a Nigerian seeker browsing "all jobs" mostly sees US
+# on-site roles. Tagging a country at ingest lets the pool be served
+# "Nigeria + remote" without discarding remote-global roles.
+_dc = _ijmod._derive_country
+ok &= check("country: 'Lagos, Nigeria' -> NG", _dc("Lagos, Nigeria") == "NG")
+ok &= check("country: bare Nigerian city -> NG",
+            _dc("Abuja") == "NG" and _dc("Port Harcourt") == "NG")
+ok &= check("country: Lagos district -> NG", _dc("Victoria Island") == "NG")
+ok &= check("country: 'Remote - Nigeria' -> NG", _dc("Remote - Nigeria") == "NG")
+# 'Benin City' is Nigeria; bare 'Benin' is a different country and must NOT
+# be claimed as NG.
+ok &= check("country: 'Benin City' -> NG but bare 'Benin' -> None",
+            _dc("Benin City") == "NG" and _dc("Benin") is None)
+ok &= check("country: other African markets",
+            _dc("Nairobi, Kenya") == "KE" and _dc("Cape Town") == "ZA"
+            and _dc("Accra") == "GH")
+ok &= check("country: US via city and via trailing state code",
+            _dc("New York, NY") == "US" and _dc("Austin, TX") == "US"
+            and _dc("San Francisco") == "US")
+ok &= check("country: 'London, UK' -> GB", _dc("London, UK") == "GB")
+# ", CA" is California in a US string but Canada in "Toronto, CA" — the
+# explicit country/city pass runs before the state-code fallback.
+ok &= check("country: 'Toronto, CA' -> CA (Canada), not California",
+            _dc("Toronto, CA") == "CA" and _dc("San Jose, CA") == "US")
+ok &= check("country: word boundaries — 'Indiana' is not India",
+            _dc("Bangalore, India") == "IN" and _dc("Indiana") != "IN")
+# Unknown/blank must be None ("unknown"), never a guess — filters treat NULL
+# as keep, so a parser miss can never hide a job.
+ok &= check("country: unrecognised/blank -> None (never a guess)",
+            _dc("") is None and _dc(None) is None and _dc("Remote") is None
+            and _dc("Mars Colony") is None)
+
+# ---- Workday handler (the bank/corporate tier) -------------------------------
+_pwt = _ijmod._parse_workday_token
+ok &= check("workday token: 'tenant:site' defaults to shard wd3",
+            _pwt("mtn:MTN_Careers") == ("mtn", "wd3", "MTN_Careers"))
+ok &= check("workday token: explicit shard honoured",
+            _pwt("dangote:wd5:Careers") == ("dangote", "wd5", "Careers"))
+ok &= check("workday token: malformed forms rejected (no nonsense URLs)",
+            _pwt("") is None and _pwt("solo") is None and _pwt("a:b:c:d") is None
+            and _pwt("x:wdz:y") is None)
+# Tenant/site are interpolated into a URL — a hostile source row must not be
+# able to steer the host or escape the path.
+ok &= check("workday token: path-traversal / injection rejected",
+            _pwt("../evil:site") is None and _pwt("t:si/te") is None
+            and _pwt("t:si te") is None)
+
+_WD_PAGE = {"total": 2, "jobPostings": [
+    {"title": "Network Engineer", "externalPath": "/job/Lagos/Network-Engineer_R1",
+     "locationsText": "Lagos, Nigeria", "bulletFields": ["R1"]},
+    {"title": "Teller", "externalPath": "/job/Abuja/Teller_R2",
+     "locationsText": "Abuja, Nigeria", "bulletFields": ["R2"]},
+]}
+_wd_posts, _wd_gets = [], []
+_ijmod._post_json = lambda url, payload: (_wd_posts.append((url, payload)) or
+                                          (_WD_PAGE if payload["offset"] == 0
+                                           else {"jobPostings": []}))
+_ijmod._fetch = lambda url: (_wd_gets.append(url) or
+                             {"jobPostingInfo": {"jobDescription":
+                                                 "<p>Run the <b>core</b> network</p>"}})
+_ijmod.RATE_SLEEP = 0  # keep the suite fast; sleeps are covered by the real run
+f, w = _ijmod._ingest_workday({"company": "MTN Nigeria", "token": "mtn:MTN_Careers"},
+                              None, dry_run=True)
+ok &= check("workday lists postings via the public POST endpoint", f == 2 and w == 2)
+ok &= check("workday POST hits /wday/cxs/{tenant}/{site}/jobs with paging body",
+            _wd_posts[0][0] == "https://mtn.wd3.myworkdayjobs.com/wday/cxs/mtn/MTN_Careers/jobs"
+            and _wd_posts[0][1]["limit"] == 20 and _wd_posts[0][1]["offset"] == 0)
+ok &= check("workday dry-run skips the N+1 detail fetch (liveness probe stays cheap)",
+            _wd_gets == [])
+_wn = _ijmod.normalize_workday_posting(
+    _WD_PAGE["jobPostings"][0], "MTN Nigeria", "mtn", "wd3", "MTN_Careers",
+    "<p>Run the <b>core</b> network</p>")
+ok &= check("workday normalizer: HTML stripped, apply URL + domain + country set",
+            _wn["description"] == "Run the core network"
+            and _wn["apply_url"] == "https://mtn.wd3.myworkdayjobs.com/en-US/"
+                                    "MTN_Careers/job/Lagos/Network-Engineer_R1"
+            and _wn["company_domain"] == "mtnnigeria.com"
+            and _wn["country"] == "NG")
+# An empty description would make the job unscoreable by the match rubric, so
+# the normalizer falls back to title + location rather than storing "".
+_wn_empty = _ijmod.normalize_workday_posting(
+    {"title": "Teller", "locationsText": "Abuja", "externalPath": "/x"},
+    "GTCO", "gtco", "wd3", "S")
+ok &= check("workday normalizer: missing description falls back to title/location",
+            _wn_empty["description"] == "Teller — Abuja")
+# Degradation: a dead board and a malformed token must be quiet no-ops.
+_ijmod._post_json = lambda url, payload: None
+ok &= check("workday: dead board -> (0, 0), never raises",
+            _ijmod._ingest_workday({"token": "x:y"}, None, True) == (0, 0))
+ok &= check("workday: malformed token -> (0, 0), never raises",
+            _ijmod._ingest_workday({"token": "nope"}, None, True) == (0, 0))
+ok &= check("workday is registered in _ATS_HANDLERS",
+            _ijmod._ATS_HANDLERS.get("workday") is _ijmod._ingest_workday)
+
+# ---- shipped seed file stays valid + Nigeria-weighted ------------------------
+_seed = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "data", "job_sources.json")))
+_entries = [e for k, v in _seed.items()
+            if not k.startswith("_") and isinstance(v, list)
+            for e in v if isinstance(e, dict)]
+ok &= check("seed: every entry has a token and a known ats",
+            all(e.get("token") for e in _entries)
+            and all(e.get("ats") in _ijmod._ATS_HANDLERS or e.get("ats") == "career_page"
+                    for e in _entries))
+ok &= check("seed: every workday token parses",
+            all(_pwt(e["token"]) for e in _entries if e.get("ats") == "workday"))
+ok &= check("seed: unverified workday tokens ship disabled (spot-check first)",
+            all(e.get("active") is False for e in _entries if e.get("ats") == "workday"))
+ok &= check("seed: jooble Nigeria queries are the bulk of the aggregators",
+            sum(1 for e in _entries if e.get("ats") == "jooble") >= 30)
 
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)

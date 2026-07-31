@@ -135,7 +135,8 @@ if __name__ == "__main__":
     p.add_argument("--include-inactive", action="store_true",
                    help="Also probe sources currently marked active=false")
     p.add_argument("--only-ats", default=None,
-                   help="Limit to one ATS (greenhouse|lever|ashby|workable|smartrecruiters)")
+                   help="Limit to one ATS (greenhouse|lever|ashby|workable|"
+                        "smartrecruiters|workday)")
     args = p.parse_args()
     result = run(args.db, from_db=args.from_db,
                  include_inactive=args.include_inactive,

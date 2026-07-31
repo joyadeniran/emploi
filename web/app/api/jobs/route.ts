@@ -6,6 +6,10 @@ export async function GET(req: Request) {
   const remote_only = searchParams.get("remote_only") === "true";
   const category = searchParams.get("category") ?? undefined;
   const q = searchParams.get("q") ?? undefined;
+  // ISO-3166 alpha-2 ("relevant to someone in X" = X + remote + unknown).
+  // Anything that isn't two letters is dropped rather than forwarded, so a
+  // junk query string can't reach the API as a 422.
+  const country = (searchParams.get("country") ?? "").trim().toUpperCase().slice(0, 2);
   const limit = Number(searchParams.get("limit") ?? 50);
   const offset = Number(searchParams.get("offset") ?? 0);
 
@@ -13,6 +17,7 @@ export async function GET(req: Request) {
   if (remote_only) qs.set("remote_only", "true");
   if (category) qs.set("category", category);
   if (q) qs.set("q", q);
+  if (/^[A-Z]{2}$/.test(country)) qs.set("country", country);
   qs.set("limit", String(limit));
   qs.set("offset", String(offset));
 

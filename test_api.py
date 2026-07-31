@@ -295,6 +295,29 @@ check("GET /jobs?q= no hits -> empty, not error",
 check("GET /jobs?q=%25 wildcard is escaped (no match-everything)",
       client.get("/jobs?q=%25", headers=AUTH).json()["total"] == 0)
 
+# country filter — "relevant to someone in NG": that country + remote + unknown.
+_db.upsert_job(_conn, "workday/ng", "api-ng-1",
+               {"title": "Lagos Analyst", "company_name": "NGCo",
+                "is_remote": False, "location": "Lagos, Nigeria", "country": "NG"})
+_db.upsert_job(_conn, "greenhouse/us", "api-us-1",
+               {"title": "Austin Onsite", "company_name": "USCo",
+                "is_remote": False, "location": "Austin, TX", "country": "US"})
+_ng_titles = {j["title"] for j in
+              client.get("/jobs?country=NG&limit=200", headers=AUTH).json()["jobs"]}
+check("GET /jobs?country=NG keeps Nigerian roles", "Lagos Analyst" in _ng_titles)
+check("GET /jobs?country=NG drops on-site roles in other countries",
+      "Austin Onsite" not in _ng_titles)
+check("GET /jobs?country=NG still returns remote + unknown-location jobs",
+      "API Test Engineer" in _ng_titles and "Designer" in _ng_titles)
+check("GET /jobs?country is case-insensitive",
+      {j["title"] for j in
+       client.get("/jobs?country=ng&limit=200", headers=AUTH).json()["jobs"]} == _ng_titles)
+check("GET /jobs?country rejects a non-alpha code -> 422",
+      client.get("/jobs?country=1%3B--", headers=AUTH).status_code == 422)
+check("GET /jobs?country= (blank) behaves as no filter",
+      client.get("/jobs?country=&limit=200", headers=AUTH).json()["total"]
+      == client.get("/jobs?limit=200", headers=AUTH).json()["total"])
+
 job_id = r.json()["jobs"][0]["id"]
 r = client.get(f"/jobs/{job_id}", headers=AUTH)
 check("GET /jobs/{id} returns single job", r.status_code == 200
