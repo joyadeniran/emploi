@@ -1580,6 +1580,15 @@ def add_credits(conn, employer_id: int, delta: int, reason: str,
         conn.commit()
         return True
     except sqlite3.IntegrityError:
+        # Webhook replay: the UNIQUE paystack_reference rejected the INSERT.
+        # ROLL BACK — without this the failed INSERT leaves an OPEN WRITE
+        # TRANSACTION on this connection, which in WAL holds the single
+        # writer lock indefinitely. Every later write anywhere in the process
+        # (any thread, any worker) then blocks and dies with "database is
+        # locked". Paystack retries webhooks as a matter of course, so this
+        # wedged the API's write path in production and was the real cause of
+        # the recurring test_employer lock failure.
+        conn.rollback()
         return False
 
 
@@ -1666,7 +1675,14 @@ def log_event(conn, event_type: str, payload: dict,
             (user_id, event_type, json.dumps(payload)))
         conn.commit()
     except Exception:
-        pass
+        # Same hazard as add_credits: a swallowed write failure (an
+        # unserialisable payload, a lock, a disk error) must not leave an open
+        # write transaction holding the WAL writer lock for the life of this
+        # connection. Logging stays best-effort, but it never wedges the DB.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
