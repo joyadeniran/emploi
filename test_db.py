@@ -555,6 +555,30 @@ ok &= check("balance reflects purchase", credit_balance(econn, emp_id) == 5)
 ok &= check("webhook replay (same reference) never double-credits",
             add_credits(econn, emp_id, 5, "purchase", "ref_1") is False
             and credit_balance(econn, emp_id) == 5)
+# REGRESSION (production wedge): the rejected replay INSERT must be rolled
+# back. Without the rollback the failed statement leaves an OPEN WRITE
+# TRANSACTION, which in WAL holds the single writer lock for the life of this
+# connection — every later write anywhere in the process then dies with
+# "database is locked". Paystack retries webhooks routinely, so this wedged
+# the API's write path in production and made test_employer fail in CI.
+ok &= check("replay rollback leaves NO open transaction on the connection",
+            econn.in_transaction is False)
+_wedge = _tf.NamedTemporaryFile(suffix=".sqlite3", delete=False).name
+_w1 = connect(_wedge, check_same_thread=False)
+_w2 = connect(_wedge, check_same_thread=False)
+_wemp = create_employer(_w1, "Wedge Co", "wedge.com", "wedge-owner")
+add_credits(_w1, _wemp, 5, "purchase", "dup_ref")
+add_credits(_w1, _wemp, 5, "purchase", "dup_ref")   # replay -> IntegrityError
+_wedged = False
+try:
+    # A DIFFERENT connection must still be able to write. This is the exact
+    # cross-connection failure the missing rollback caused.
+    upsert_user(_w2, "after-replay", "a@b.com", "A")
+except Exception:
+    _wedged = True
+ok &= check("a replay does NOT wedge writes on other connections",
+            _wedged is False and get_user(_w2, "after-replay") is not None)
+_w1.close(); _w2.close(); _os2.unlink(_wedge)
 ok &= check("unlock spends one credit",
             create_unlock(econn, r2["id"], emp_id, "cand-1", "hm-1") == "ok"
             and credit_balance(econn, emp_id) == 4
