@@ -18,6 +18,7 @@ import json
 import os
 import re
 import secrets
+import sqlite3
 import sys
 import logging
 import threading
@@ -147,6 +148,26 @@ def get_conn():
     conn = getattr(_conns, "conn", None)
     if conn is None:
         conn = _conns.conn = db.connect(DB_PATH, check_same_thread=False)
+    elif conn.in_transaction:
+        # Defence in depth against a wedged writer. A code path that fails a
+        # write and swallows the exception without rolling back leaves this
+        # connection inside an open write transaction — and in WAL that holds
+        # the database's single writer lock for the LIFE OF THE CONNECTION, so
+        # every later write in the whole process dies with "database is
+        # locked". That shipped once (db.add_credits on a Paystack webhook
+        # replay) and wedged the API's write path.
+        #
+        # Each db.py writer commits before returning, so an open transaction
+        # here always means the previous user of this pooled connection died
+        # mid-write. Rolling back is therefore safe — there is no committed
+        # work to lose — and it bounds the blast radius of any future instance
+        # of that bug to the one failed request instead of the whole process.
+        log.warning("stale open transaction on this thread's connection — "
+                    "rolling back (a previous request failed mid-write)")
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            log.exception("could not roll back a stale transaction")
     return conn
 
 

@@ -7,6 +7,17 @@ Planned: more job sources (Jooble/Adzuna behind env keys), generic career-page c
 
 - **Web** — fix: preserve OAuth callback during server-side unauthenticated redirects by rendering a client redirect that preserves the current path as `callbackUrl`. Prevents a login → onboarding redirect loop in some environments. (Adds `ClientRedirectToLogin` and updates server layouts.)
 
+### Changed — `get_conn` clears a stale transaction: the wedged-writer class of bug can no longer take down the process (2026-07-27)
+Follow-up to the `add_credits` webhook-replay fix. That fixed the one instance; this bounds the blast radius of the whole class.
+
+- **`api.main.get_conn()` now rolls back a pooled connection found `in_transaction`** (with a `log.warning`). Every `db.py` writer commits before returning, so an open transaction on a reused thread-local connection can only mean the previous request died mid-write — there is no committed work to lose, and rolling back is safe. Without it, one swallowed write failure holds WAL's single writer lock **for the life of the connection**, so every later write in the process dies with `database is locked`. Now the damage is one failed request instead of the whole API instance.
+- Regression proves all three steps: a swallowed write really does wedge the connection, `get_conn` clears it on reuse, and writes work again afterwards.
+- **Audit:** `db.py` is the only module that writes SQL (one raw `UPDATE` pair in the notify worker, each immediately committed). Every `except` wrapping a write now rolls back (`add_credits`, `log_event`, `create_role_application`).
+
+**Two corrections to things this changelog previously claimed, both tested rather than reasoned about:**
+- **The `PRAGMA journal_mode=WAL` "lock leak" is NOT a bug.** An earlier entry flagged the unexhausted cursor as "a real latent lock leak". Measured directly: with the cursor unconsumed, another connection still takes the write lock and commits fine — in WAL, readers never block writers. No change shipped; the claim is withdrawn.
+- **The read→write promotion hazard is handled in practice.** Real `SELECT`-then-write functions (`save_job`, `upsert_subscription`) run **0/15 failures** against a connection that is actively holding the write lock — `_ResilientConnection`'s rollback-and-retry covers it now that nothing stays wedged forever.
+
 ### Fixed — a Paystack webhook replay wedged the database's write lock (the real "database is locked" cause) (2026-07-27)
 `db.add_credits` swallowed the `IntegrityError` from a duplicate `paystack_reference` **without rolling back**. The rejected `INSERT` had already opened a write transaction, so the connection kept SQLite's single WAL writer lock **for its entire life** — and every later write anywhere in the process (any API thread, any worker) then failed with `database is locked`. Paystack retries webhooks as a matter of course, so in production one replay could wedge the API's write path until that process restarted.
 

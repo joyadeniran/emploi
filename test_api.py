@@ -1013,6 +1013,27 @@ check("get_conn returns the SAME connection within a thread",
 check("get_conn returns a DISTINCT connection per thread (no cross-thread sharing)",
       len({a for a, _ in _conn_ids.values()}) == 6)
 
+# (a2) Defence in depth: a pooled connection left INSIDE an open write
+# transaction (a request that failed mid-write and swallowed the error) holds
+# WAL's single writer lock for the connection's life, so every later write in
+# the process dies with "database is locked". That shipped once
+# (db.add_credits on a Paystack webhook replay). get_conn must clear a stale
+# transaction so the blast radius is one failed request, not the whole process.
+_stale = m.get_conn()
+_db.upsert_user(_stale, "stale-guard", "sg@example.com", "SG")
+try:  # a failed write whose exception a caller swallows without rolling back
+    _stale.execute("INSERT INTO users (id, email) VALUES ('stale-guard', 'dup@x.com')")
+except Exception:
+    pass
+check("a swallowed write failure really does leave the connection wedged",
+      _stale.in_transaction is True)
+_recovered = m.get_conn()
+check("get_conn rolls back a stale open transaction on reuse",
+      _recovered.in_transaction is False)
+_db.upsert_user(_recovered, "after-stale", "as@example.com", "AS")
+check("writes work again after the stale transaction is cleared",
+      _db.get_user(_recovered, "after-stale") is not None)
+
 # (b) Production config: separate thread-local connections to the same FILE DB
 # must see each other's committed writes (this is why the fix is safe in prod,
 # where EMPLOI_DB_PATH is a Render-disk file, not ":memory:"). Two connections
