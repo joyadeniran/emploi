@@ -54,6 +54,18 @@ JOOBLE_BASE = "https://jooble.org/api/{apikey}"
 ADZUNA_BASE = ("https://api.adzuna.com/v1/api/jobs/{country}/search/1"
                "?app_id={app_id}&app_key={app_key}&results_per_page=50"
                "&content-type=application/json&what={what}")
+# jobdataapi.com — structured global feed with a REAL ISO country filter
+# (country_code=NG), so unlike the other aggregators it tags Nigeria at the
+# source instead of relying on our string inference. DRF-style key in the
+# Authorization header ("Api-Key <key>"). Env-gated on JOBDATAAPI_API_KEY.
+JOBDATAAPI_BASE = "https://jobdataapi.com/api/jobs/"
+# Techmap (jobdatafeeds.com) "Jobs In Nigeria" feed — a Nigeria-localised
+# dataset. Header-keyed GET. The exact field names below are coded defensively
+# against Techmap's documented job-posting shape and confirmed against a live
+# sample when a key is provisioned; until then its seed rows ship inactive.
+# Env-gated on TECHMAP_API_KEY; endpoint host is overridable for the RapidAPI
+# vs direct-api split without a code change.
+TECHMAP_BASE = os.getenv("TECHMAP_BASE", "https://api.techmap.io/v1/jobs")
 # Workday. The single biggest coverage gap for the Nigerian market: banks and
 # large corporates (the employers this product's users actually name) don't use
 # Greenhouse/Lever — they run Workday, SuccessFactors or Taleo. Workday is the
@@ -112,6 +124,27 @@ def _post_json(url: str, payload: dict):
             return json.loads(r.read().decode())
     except Exception as exc:
         log.warning("post failed %s — %s", url, exc)
+        return None
+
+
+def _get_json_auth(url: str, headers: dict):
+    """GET url with custom (auth) headers, return parsed JSON or None.
+
+    Separate seam from _fetch (which sends only a User-Agent) for header-keyed
+    aggregators — jobdataapi.com and Techmap authenticate with an Authorization
+    / x-api-key header, not a query-string key. Tests patch this directly, the
+    same pattern the docstring on _post_json describes for Jooble. Kept tiny and
+    stdlib-only; never raises (a bad key / down endpoint becomes a logged None
+    so the source no-ops instead of failing the whole run)."""
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Emploi-job-sourcer/1.0 (hello@emploihq.com)",
+                     **(headers or {})})
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
+            return json.loads(r.read().decode())
+    except Exception as exc:
+        log.warning("get(auth) failed %s — %s", url, exc)
         return None
 
 
@@ -547,6 +580,86 @@ def normalize_adzuna_job(job: dict) -> dict:
     }
 
 
+def normalize_jobdataapi_job(job: dict) -> dict:
+    """jobdataapi.com job object -> upsert_job fields.
+
+    Richer than the other aggregators: `company` is a nested object and the
+    feed carries its OWN ISO country code. We TRUST that code over string
+    inference when present (it's the source of truth for this feed's whole
+    value proposition — server-side country filtering), and fall back to
+    _derive_country only when the field is missing. Every access is defensive:
+    a shape surprise drops one field, never raises."""
+    company_obj = job.get("company") if isinstance(job.get("company"), dict) else {}
+    company = str(company_obj.get("name") or "").strip()
+    location = str(job.get("location") or "")
+    description = _strip_html(str(job.get("description") or ""))
+    # The feed's own country code beats string inference; fall back when absent.
+    country_obj = job.get("country") if isinstance(job.get("country"), dict) else {}
+    country = str(country_obj.get("code") or "").strip().upper()[:2] or None
+    if not country:
+        country = _derive_country(location)
+    smin, smax = job.get("salary_min"), job.get("salary_max")
+    salary = None
+    try:
+        if smin or smax:
+            salary = (f"{int(smin):,}–{int(smax):,}" if smin and smax
+                      else f"{int(smin or smax):,}")
+    except (TypeError, ValueError):
+        salary = None  # non-numeric salary -> omit rather than crash
+    return {
+        "title": str(job.get("title") or ""),
+        "company_name": company,
+        "description": description,
+        "location": location,
+        # The feed exposes an explicit remote flag; OR it with text detection.
+        "is_remote": bool(job.get("has_remote")) or _is_remote(location)
+                     or _is_remote(description) or _is_remote(str(job.get("title") or "")),
+        "salary_text": salary,
+        "apply_url": str(job.get("application_url") or job.get("apply_url")
+                         or job.get("url") or ""),
+        "category": "",  # feed has employment `types`, not a job category
+        "company_domain": _derive_company_domain(company) if company else None,
+        "country": country,
+    }
+
+
+def normalize_techmap_job(job: dict) -> dict:
+    """Techmap "Jobs In Nigeria" posting -> upsert_job fields.
+
+    Techmap posts are flat documents; location may arrive as a single string or
+    split across locality/region/country. We reuse _derive_country on whichever
+    country/location text is present (so "Nigeria" -> NG through the existing
+    place tables), and read title/description/url from either of the field
+    names Techmap's data dictionary uses. Provisional until confirmed against a
+    live sample — hence purely defensive `.get` access."""
+    company = str(job.get("company") or job.get("orgName") or "").strip()
+    # Location: prefer an explicit combined string, else assemble parts.
+    location = str(job.get("location") or "").strip()
+    if not location:
+        parts = [str(job.get(k) or "").strip()
+                 for k in ("locality", "region", "country")]
+        location = ", ".join(p for p in parts if p)
+    description = _strip_html(str(job.get("text") or job.get("description") or ""))
+    title = str(job.get("name") or job.get("title") or "")
+    # Country: the feed's country field first (full name or code both resolve
+    # through _derive_country), then the assembled location as a fallback.
+    country = _derive_country(str(job.get("country") or "")) or _derive_country(location)
+    salary = str(job.get("salary") or "").strip() or None
+    return {
+        "title": title,
+        "company_name": company,
+        "description": description,
+        "location": location,
+        "is_remote": _is_remote(location) or _is_remote(description)
+                     or _is_remote(title),
+        "salary_text": salary,
+        "apply_url": str(job.get("url") or job.get("link") or ""),
+        "category": str(job.get("category") or ""),
+        "company_domain": _derive_company_domain(company) if company else None,
+        "country": country,
+    }
+
+
 # ---- Per-ATS ingestion ------------------------------------------------------
 
 def _ingest_greenhouse(source: dict, conn, dry_run: bool):
@@ -926,6 +1039,84 @@ def _ingest_adzuna(source: dict, conn, dry_run: bool):
     return len(results), written
 
 
+def _ingest_jobdataapi(source: dict, conn, dry_run: bool):
+    """jobdataapi.com aggregator. source['token'] = 'CC' or 'CC:keywords'
+    (ISO country + optional title search), e.g. 'NG' or 'NG:developer'.
+    Env-gated on JOBDATAAPI_API_KEY; without the key the source no-ops so an
+    unconfigured deploy stays quiet (same posture as Jooble/Adzuna)."""
+    from urllib.parse import urlencode
+    api_key = os.getenv("JOBDATAAPI_API_KEY", "").strip()
+    if not api_key:
+        log.info("jobdataapi skipped — JOBDATAAPI_API_KEY unset")
+        return 0, 0
+    token = str(source["token"])
+    country, _, keywords = token.partition(":") if ":" in token else (token, "", "")
+    params = {"country_code": (country.strip() or "NG").upper(),
+              "page_size": 50, "max_age": 30}
+    if keywords.strip():
+        params["title"] = keywords.strip()
+    url = JOBDATAAPI_BASE + "?" + urlencode(params)
+    data = _get_json_auth(url, {"Authorization": f"Api-Key {api_key}"})
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list):
+        return 0, 0
+    written = 0
+    for job in results:
+        if not isinstance(job, dict):
+            continue
+        job_id = str(job.get("id") or _stable_id(
+            "jobdataapi", str(job.get("application_url", "")), str(job.get("title", ""))))
+        fields = normalize_jobdataapi_job(job)
+        if not (fields.get("title") or "").strip():
+            continue
+        source_key = f"jobdataapi/{token}"
+        if dry_run:
+            print(f"  [dry-run] {source_key} job {job_id}: {fields['title']}")
+        else:
+            db.upsert_job(conn, source_key, job_id, fields)
+        written += 1
+    return len(results), written
+
+
+def _ingest_techmap(source: dict, conn, dry_run: bool):
+    """Techmap "Jobs In Nigeria" feed. source['token'] = a country/location
+    query (e.g. 'NG' or 'Lagos'). Env-gated on TECHMAP_API_KEY; header-keyed
+    GET via the shared _get_json_auth seam. Response shape is read defensively
+    (see normalize_techmap_job) — a paginated {results:[...]} or a bare list
+    are both accepted so a documented-vs-live schema drift can't crash a run."""
+    from urllib.parse import urlencode
+    api_key = os.getenv("TECHMAP_API_KEY", "").strip()
+    if not api_key:
+        log.info("techmap skipped — TECHMAP_API_KEY unset")
+        return 0, 0
+    token = str(source["token"])
+    url = TECHMAP_BASE + "?" + urlencode({"countryCode": token.strip() or "NG",
+                                          "limit": 50})
+    data = _get_json_auth(url, {"x-api-key": api_key})
+    if isinstance(data, dict):
+        results = data.get("results") or data.get("jobs") or data.get("result")
+    else:
+        results = data  # some feeds return a bare array
+    if not isinstance(results, list):
+        return 0, 0
+    written = 0
+    for job in results:
+        if not isinstance(job, dict):
+            continue
+        job_id = str(job.get("id") or job.get("_id") or _stable_id(
+            "techmap", str(job.get("url", "")), str(job.get("name", ""))))
+        fields = normalize_techmap_job(job)
+        if not (fields.get("title") or "").strip():
+            continue
+        source_key = f"techmap/{token}"
+        if dry_run:
+            print(f"  [dry-run] {source_key} job {job_id}: {fields['title']}")
+        else:
+            db.upsert_job(conn, source_key, job_id, fields)
+        written += 1
+    return len(results), written
+
+
 _ATS_HANDLERS = {
     "greenhouse": _ingest_greenhouse,
     "lever": _ingest_lever,
@@ -935,6 +1126,8 @@ _ATS_HANDLERS = {
     "workday": _ingest_workday,
     "jooble": _ingest_jooble,
     "adzuna": _ingest_adzuna,
+    "jobdataapi": _ingest_jobdataapi,
+    "techmap": _ingest_techmap,
     "manual": _ingest_manual,
 }
 

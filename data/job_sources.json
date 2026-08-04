@@ -1,5 +1,5 @@
 {
-  "_doc": "Curated job source list. This file seeds the `job_sources` DB table on first run. After seeding, the DB is the source of truth — edits here only take effect on the next seed run (or via the admin API). ats: greenhouse | lever | ashby | workable | smartrecruiters | workday | career_page. priority: 10=hourly, 7=every 3h, 5=twice daily, 1=daily. active=false means skip without deleting. Workable/SmartRecruiters entries below are seeded active=false — spot-check the public URL (apply.workable.com/{token}/ or jobs.smartrecruiters.com/{token}) before enabling. A failing source is graceful (0 jobs, no crash) but wastes a request; verify first. Entries below marked active=false with the note `dead_2026-07-15` are ones the spot-check confirmed returned 0 jobs against their ATS endpoint — the token is wrong, the company migrated ATS, or the company no longer publishes a public feed. Re-enable via `PATCH /admin/job-sources/{id}/toggle` after finding the correct token. | aggregators (jooble/adzuna) are env-keyed (JOOBLE_API_KEY / ADZUNA_APP_ID+ADZUNA_APP_KEY). jooble token=location:keywords (free-text location, Nigeria supported); adzuna token=country:keywords (adzuna 2-letter code — NO nigeria; use za/gb/us). workday token=tenant:site or tenant:wdN:site (default shard wd3), e.g. 'mtn:MTN_Careers' — public keyless JSON API, covers the bank/corporate tier that greenhouse/lever never will. | New file sources reach an already-seeded prod DB via POST /admin/job-sources/seed?sync=true, then run ingest.",
+  "_doc": "Curated job source list. This file seeds the `job_sources` DB table on first run. After seeding, the DB is the source of truth — edits here only take effect on the next seed run (or via the admin API). ats: greenhouse | lever | ashby | workable | smartrecruiters | workday | career_page. priority: 10=hourly, 7=every 3h, 5=twice daily, 1=daily. active=false means skip without deleting. Workable/SmartRecruiters entries below are seeded active=false — spot-check the public URL (apply.workable.com/{token}/ or jobs.smartrecruiters.com/{token}) before enabling. A failing source is graceful (0 jobs, no crash) but wastes a request; verify first. Entries below marked active=false with the note `dead_2026-07-15` are ones the spot-check confirmed returned 0 jobs against their ATS endpoint — the token is wrong, the company migrated ATS, or the company no longer publishes a public feed. Re-enable via `PATCH /admin/job-sources/{id}/toggle` after finding the correct token. | aggregators (jooble/adzuna/jobdataapi/techmap) are env-keyed (JOOBLE_API_KEY / ADZUNA_APP_ID+ADZUNA_APP_KEY). jooble token=location:keywords (free-text location, Nigeria supported); adzuna token=country:keywords (adzuna 2-letter code — NO nigeria; use za/gb/us). workday token=tenant:site or tenant:wdN:site (default shard wd3), e.g. 'mtn:MTN_Careers' — public keyless JSON API, covers the bank/corporate tier that greenhouse/lever never will. | New file sources reach an already-seeded prod DB via POST /admin/job-sources/seed?sync=true, then run ingest. | jobdataapi token=CC or CC:keywords (real ISO country_code filter — Nigeria supported natively; env JOBDATAAPI_API_KEY). techmap token=countryCode/location (env TECHMAP_API_KEY); seeded active=false until its field mapping is confirmed against a live sample.",
   "african_tech": [
     {
       "company": "Andela",
@@ -1561,6 +1561,98 @@
       "priority": 7,
       "region": "africa",
       "active": true
+    },
+    {
+      "company": "",
+      "ats": "jobdataapi",
+      "token": "NG",
+      "priority": 5,
+      "category": "General",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jobdataapi",
+      "token": "NG:developer",
+      "priority": 5,
+      "category": "Technology",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jobdataapi",
+      "token": "NG:product manager",
+      "priority": 5,
+      "category": "Technology",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jobdataapi",
+      "token": "NG:data analyst",
+      "priority": 5,
+      "category": "Technology",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jobdataapi",
+      "token": "NG:customer support",
+      "priority": 5,
+      "category": "Support",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jobdataapi",
+      "token": "NG:sales",
+      "priority": 5,
+      "category": "Sales",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jobdataapi",
+      "token": "NG:accountant",
+      "priority": 5,
+      "category": "Finance",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "jobdataapi",
+      "token": "NG:virtual assistant",
+      "priority": 5,
+      "category": "Support",
+      "region": "africa",
+      "active": true
+    },
+    {
+      "company": "",
+      "ats": "techmap",
+      "token": "NG",
+      "priority": 5,
+      "category": "General",
+      "region": "africa",
+      "active": false,
+      "note": "provisional_schema_confirm_on_key"
+    },
+    {
+      "company": "",
+      "ats": "techmap",
+      "token": "Lagos",
+      "priority": 5,
+      "category": "General",
+      "region": "africa",
+      "active": false,
+      "note": "provisional_schema_confirm_on_key"
     }
   ]
 }
