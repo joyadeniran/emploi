@@ -125,6 +125,70 @@ export async function apiFetch<T>(
 }
 
 /**
+ * Upsert the signed-in user's identity (email + name) into the API's `users`
+ * table via POST /user/session.
+ *
+ * Nothing else writes that table, and a surprising amount reads it:
+ *   - the employer's Applicants list joins `users` for each applicant's
+ *     name/email (an empty table renders every applicant as a nameless
+ *     "Applicant" with no way to contact them);
+ *   - the notify worker's employer digest reads `poster_email` from `users`
+ *     with NO legacy fallback, so an absent row means the poster is never
+ *     told that anyone applied;
+ *   - `get_employer_owner_email` (invite accept) and the digest opt-in toggle
+ *     both key off it.
+ *
+ * So every authenticated entry point has to call this: both app layouts, and
+ * the public apply route — a candidate who opens a shared /jobs/{id} link,
+ * signs in, and applies never renders either layout.
+ *
+ * Never throws: an identity backfill must not break a page render or block an
+ * application from being submitted.
+ */
+const SESSION_UPSERT_TTL_MS = 60_000;
+const SESSION_UPSERT_MAX_TRACKED = 5_000;
+const lastSessionUpsert = new Map<string, number>();
+
+export async function ensureUserSession(): Promise<void> {
+  const session = await auth();
+  const user = session?.user as
+    | { id?: string; email?: string | null; name?: string | null }
+    | undefined;
+  const userId = user?.id ?? user?.email ?? "";
+  const email = user?.email ?? "";
+  // The API rejects a session row without an email, and an anonymous visitor
+  // has nothing to store — both are a no-op, not an error.
+  if (!userId || !email) return;
+
+  // The upsert is idempotent but this runs on every authenticated render, so
+  // an unthrottled call would add a backend round-trip to every page view.
+  // One write per user per minute per instance keeps `last_seen_at` useful
+  // without that cost. The Map is a cache, not a lock — a cold instance just
+  // writes once more than strictly needed.
+  const now = Date.now();
+  const previous = lastSessionUpsert.get(userId);
+  if (previous !== undefined && now - previous < SESSION_UPSERT_TTL_MS) return;
+  // Bound the memory a long-lived server can hold; entries are disposable.
+  if (lastSessionUpsert.size >= SESSION_UPSERT_MAX_TRACKED) lastSessionUpsert.clear();
+  lastSessionUpsert.set(userId, now);
+
+  try {
+    await apiFetch("/user/session", {
+      method: "POST",
+      // email_verified stays false: the NextAuth session does not carry the
+      // provider, so we cannot substantiate the claim here. Don't assert what
+      // we haven't checked.
+      body: JSON.stringify({ email, name: user?.name ?? null, email_verified: false }),
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch {
+    // Drop the throttle entry so the next render retries immediately rather
+    // than leaving the user without a row for a full minute.
+    lastSessionUpsert.delete(userId);
+  }
+}
+
+/**
  * Fetch a PUBLIC API endpoint — no session required. For the public job pages
  * (/public/roles/{id}), which anyone on the internet can view. Sends the shared
  * secret (server-side only) but never asserts a user. Throws with a `.status`

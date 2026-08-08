@@ -45,11 +45,20 @@ export default async function RoleDetailPage({
   }
 
   // Inbound applicants (public-link applies). Non-fatal if it fails — the rest
-  // of the page still renders.
+  // of the page still renders — but a failure must NOT fall through to the
+  // "No direct applicants yet" empty state. Telling a poster nobody applied
+  // when we simply couldn't load the list is the worst possible lie here: it
+  // reads as "the product is broken" or, worse, is believed.
   let applicants: Applicant[] = [];
+  let applicantsError = "";
   try {
     ({ applicants } = await apiFetch<{ applicants: Applicant[] }>(`/employer/roles/${id}/applicants`));
-  } catch { /* leave empty */ }
+  } catch (error) {
+    applicantsError =
+      error instanceof ApiUnavailableError
+        ? "We couldn’t reach the server to load your applicants. Refresh in a moment — nothing has been lost."
+        : "We couldn’t load your applicants just now. Refresh in a moment — nothing has been lost.";
+  }
 
   const isFree = Boolean(role.is_free);
   return (
@@ -100,7 +109,11 @@ export default async function RoleDetailPage({
             <span className="rounded-full bg-brand px-2 py-0.5 text-[11px] font-bold text-white">{applicants.length}</span>
           ) : null}
         </h2>
-        {applicants.length === 0 ? (
+        {applicantsError ? (
+          <p role="alert" className="rounded-2xl border border-amber/30 bg-amber-soft p-5 text-sm font-semibold text-ink">
+            {applicantsError}
+          </p>
+        ) : applicants.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-line bg-card p-5 text-sm text-muted">
             No direct applicants yet. Share the job link above — anyone who applies through it
             appears here with their contact details (no credit needed — they came to you).

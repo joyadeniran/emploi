@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth, signIn, googleConfigured } from "@/auth";
 import { Logo } from "@/components/Logo";
+import { safeCallbackPath } from "@/lib/safeRedirect";
 
 function GoogleIcon() {
   return (
@@ -25,9 +26,20 @@ function GoogleIcon() {
   );
 }
 
-export default async function EmployerLoginPage() {
+export default async function EmployerLoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ callbackUrl?: string }>;
+}) {
+  // The employer layout bounces a signed-out poster here with the page they
+  // asked for in ?callbackUrl. Honouring it is what makes a bookmarked
+  // /employer/roles/{id} survive a sign-in; hardcoding /employer instead reads
+  // to the poster as "my session didn't persist".
+  // Only same-site paths are honoured — never an absolute URL.
+  const { callbackUrl } = await searchParams;
+  const target = safeCallbackPath(callbackUrl, "/employer");
   const session = await auth();
-  if (session?.user) redirect("/employer");
+  if (session?.user) redirect(target);
 
   return (
     <div className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-surface px-4">
@@ -65,7 +77,7 @@ export default async function EmployerLoginPage() {
               <form
                 action={async () => {
                   "use server";
-                  await signIn("google", { redirectTo: "/employer" });
+                  await signIn("google", { redirectTo: target });
                 }}
               >
                 <button

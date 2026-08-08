@@ -7,6 +7,27 @@ Planned: more job sources (Jooble/Adzuna behind env keys), generic career-page c
 
 - **Web** — fix: preserve OAuth callback during server-side unauthenticated redirects by rendering a client redirect that preserves the current path as `callbackUrl`. Prevents a login → onboarding redirect loop in some environments. (Adds `ClientRedirectToLogin` and updates server layouts.)
 
+### Fixed — `POST /user/session` had zero callers, so the `users` table was always empty (2026-08-08)
+Reported as three separate symptoms on a live posted role (`/jobs/3`): "people have applied but nothing works", "my poster session does not persist", "there's a problem with viewing the applicants". Two of the three are the same root cause.
+
+**Root cause.** `api/main.py:1120` and `db.py:536` both document that the web tier calls `POST /user/session` "on every authenticated render". It never did — `grep -r "user/session" web/` returned **nothing**. The endpoint, the `upsert_user` writer, and their tests were all correct and all unreachable, so the `users` table stayed empty in production forever. Nothing else writes it, and it is a hard dependency for:
+- **the employer's Applicants list** — `db.list_role_applicants` `LEFT JOIN users` supplies each applicant's name and email, and `api/main.py:1567` falls back to `""`. Every applicant rendered as a nameless "Applicant" with no contact link. This is the reported "problem viewing the applicants": the rows were there, the people were unreachable.
+- **the employer digest** — `_notify_employers` reads `poster_email` from `users` with **no legacy fallback** (unlike the candidate digest, which still falls back to `career_twins.data.email`). Every poster was skipped as `employer_skipped_no_email`, so nobody was ever told an application had arrived.
+- `get_employer_owner_email` on invite accept (candidate got an empty employer contact), `PATCH /user/notifications` (409 for everyone), and `GET /admin/users` (always empty).
+
+**Fix.** New `ensureUserSession()` in `web/lib/api.ts`, called from the candidate layout, the employer layout, **and the public apply route**. The third is not redundant: an applicant who opens a shared `/jobs/{id}` link, signs in, and applies never renders either layout — the exact path this role's applicants took. Throttled to one write per user per minute per instance (the row is idempotent but this runs on every authenticated render), bounded by a 5s timeout, and it never throws — an identity backfill must not break a page render or block an application. Existing signed-in users self-heal on their next page view; no migration needed.
+
+### Fixed — employer sign-in discarded `callbackUrl` ("my poster session does not persist") (2026-08-08)
+The employer layout bounced a signed-out poster to `/employer/login?callbackUrl=/employer/roles/3` — and the page ignored the parameter, hardcoding `/employer` in both the already-signed-in redirect and `signIn`'s `redirectTo`. Every deep link and bookmark silently dumped the poster on the dashboard, which reads exactly like a session that didn't survive. The candidate `/login` page had honoured `callbackUrl` correctly all along; the employer page now matches it.
+
+**Open redirect found and closed while fixing it.** Both pages gated on `callbackUrl.startsWith("/")`, which admits `//evil.com` and `/\evil.com` — browsers treat both as protocol-relative *absolute* URLs. That made the sign-in page a phishing primitive with real provenance (`app.emploihq.com`, genuine login flow). New `web/lib/safeRedirect.ts#safeCallbackPath` rejects both forms; both login pages now use it instead of hand-rolling the check.
+
+### Fixed — the Applicants list told employers nobody had applied when it had simply failed to load (2026-08-08)
+`web/app/(employer)/employer/roles/[id]/page.tsx` caught every applicants-fetch error with `catch { /* leave empty */ }` and fell straight through to the "No direct applicants yet" empty state. A backend hiccup was therefore rendered as a *product claim* that nobody applied — the worst available lie on that page, and one an employer would act on. The page now distinguishes "empty" from "couldn't load" and says so, per the repo guardrail that every failure path answers honestly.
+
+### Added — `test_web_wiring.py` (16th suite) (2026-08-08)
+A static audit of the Next.js tier's contract with the API, because no existing suite could see any of the above: the Python side was correct in isolation and the web tier has no runtime test, so a documented-but-unwired endpoint was invisible until production. Follows `test_landing.py`'s precedent (stdlib only, no node, no build). 35 checks covering the `/user/session` wiring at all three entry points, the throttle's never-throw contract, `callbackUrl` handling and the open-redirect guard on both login pages, and the applicants error state. All 16 checks that reproduce the three bugs fail before the fixes and pass after; `tsc`, `eslint`, and `next build` clean.
+
 ### Changed — `get_conn` clears a stale transaction: the wedged-writer class of bug can no longer take down the process (2026-07-27)
 Follow-up to the `add_credits` webhook-replay fix. That fixed the one instance; this bounds the blast radius of the whole class.
 

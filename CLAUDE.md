@@ -14,6 +14,7 @@ Read this whole file before changing anything. The invariants below are load-bea
 | `skills/*.md` | Prompt modules injected into Gemini calls at runtime. Editing them changes behavior with zero code changes. |
 | `test_e2e.py` | Core suite (fake Gemini model, no network, no API key). |
 | `test_verify.py` | Verification suite (fake DNS/HTTP/LLM, no network). |
+| `test_web_wiring.py` | Static audit of `web/`'s contract with the API — catches endpoints that docs claim are called but nothing calls. Stdlib only, no node/build. |
 | `CHANGELOG.md` | Append an entry for EVERY shipped change. |
 | `render.yaml`, `Dockerfile`, `DEPLOY.md` | Deployment (Render free tier / Cloud Run). |
 
@@ -21,14 +22,15 @@ Read this whole file before changing anything. The invariants below are load-bea
 
 ```bash
 python3 -m pip install -r requirements.txt   # never bare `pip` (user machines lack it)
-# ALL FIFTEEN suites must print ALL TESTS PASSED ✅ before any commit:
+# ALL SIXTEEN suites must print ALL TESTS PASSED ✅ before any commit:
 python3 test_e2e.py && python3 test_verify.py && python3 test_db.py \
   && python3 test_api.py && python3 test_ingest.py \
   && python3 test_billing.py && python3 test_landing.py \
   && python3 test_backup_db.py && python3 test_notify_worker.py \
   && python3 test_verify_worker.py && python3 test_spot_check.py \
   && python3 test_heal_sources.py && python3 test_employer.py \
-  && python3 test_invites.py && python3 test_expire_invites.py
+  && python3 test_invites.py && python3 test_expire_invites.py \
+  && python3 test_web_wiring.py
 python3 -m streamlit run app.py               # local run; needs Streamlit >= 1.43
 ```
 
