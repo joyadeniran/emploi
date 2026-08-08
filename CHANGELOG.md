@@ -25,6 +25,14 @@ The employer layout bounced a signed-out poster to `/employer/login?callbackUrl=
 ### Fixed — the Applicants list told employers nobody had applied when it had simply failed to load (2026-08-08)
 `web/app/(employer)/employer/roles/[id]/page.tsx` caught every applicants-fetch error with `catch { /* leave empty */ }` and fell straight through to the "No direct applicants yet" empty state. A backend hiccup was therefore rendered as a *product claim* that nobody applied — the worst available lie on that page, and one an employer would act on. The page now distinguishes "empty" from "couldn't load" and says so, per the repo guardrail that every failure path answers honestly.
 
+### Added — `/admin/diagnostics` reports the employer funnel (2026-08-08)
+The endpoint's `counts` block had no `users`, `employer_roles` or `role_applications` entries, so the one question worth asking after the fix above — "did anyone apply, and can we reach them?" — could only be answered by opening a shell and querying real user data. Six new aggregate counts close that: `users`, `employer_roles`, `employer_roles_open`, `role_applications`, `role_applications_unnotified`, plus the two that actually diagnose:
+
+- **`role_applications_without_user_row`** — applicants with no `users` row. These render in the employer's Applicants list as a nameless "Applicant" with no email and cannot be contacted. Non-zero means either the identity upsert isn't running, or those people applied before it shipped and haven't signed in since.
+- **`open_roles_without_poster_email`** — open roles whose poster has no `users` row, and therefore cannot receive the employer digest at all (`_notify_employers` reads `poster_email` from `users` with no fallback).
+
+Aggregates only — the endpoint's existing "never emits a secret, safe to log or forward to a status page" contract is unchanged, and no count can expose an address or a name. Tests: +12 in `test_api`, including a seeded role with one reachable and one orphaned applicant proving the orphan count finds exactly the second and drops to zero once the row exists. 16/16 suites green.
+
 ### Added — `test_web_wiring.py` (16th suite) (2026-08-08)
 A static audit of the Next.js tier's contract with the API, because no existing suite could see any of the above: the Python side was correct in isolation and the web tier has no runtime test, so a documented-but-unwired endpoint was invisible until production. Follows `test_landing.py`'s precedent (stdlib only, no node, no build). 35 checks covering the `/user/session` wiring at all three entry points, the throttle's never-throw contract, `callbackUrl` handling and the open-redirect guard on both login pages, and the applicants error state. All 16 checks that reproduce the three bugs fail before the fixes and pass after; `tsc`, `eslint`, and `next build` clean.
 

@@ -876,6 +876,54 @@ check("diagnostics.counts has every launch-facing scale metric",
                                      "job_sources_active",
                                      "job_sources_inactive",
                                      "generations_last_30d"})
+
+# --- employer-funnel counts -------------------------------------------------
+# Added so the live instance can answer "did anyone apply, and can we reach
+# them?" without a shell or a raw SQL query against real user data. The
+# orphan count is the one that matters: an applicant with no `users` row
+# renders in the employer's Applicants list as a nameless "Applicant" with no
+# email, which is exactly how the empty-users-table bug presented.
+check("diagnostics.counts has the employer-funnel metrics",
+      set(diag["counts"].keys()) >= {"users", "employer_roles",
+                                     "employer_roles_open",
+                                     "role_applications",
+                                     "role_applications_unnotified",
+                                     "role_applications_without_user_row",
+                                     "open_roles_without_poster_email"})
+
+# Seed a role with two applicants: one who has a users row (reachable) and one
+# who does not (orphaned). The orphan count must find exactly the second.
+_diag_emp = _db.create_employer(_conn, "Diag Co", "diagco.com", "diag-poster",
+                                trust_score=70, trust_level="medium")
+_diag_role = _db.create_role(_conn, _diag_emp, "diag-poster",
+                             {"title": "Diag Engineer", "description": "d" * 60})
+_db.upsert_user(_conn, "diag-reachable", "reachable@example.com", "Reachable")
+check("seeded applicant with a users row applies",
+      _db.create_role_application(_conn, _diag_role["id"], "diag-reachable") == "ok")
+check("seeded applicant WITHOUT a users row applies",
+      _db.create_role_application(_conn, _diag_role["id"], "diag-orphan") == "ok")
+
+_diag2 = client.get("/admin/diagnostics", headers={"X-API-Key": "test-key"}).json()
+_c2 = _diag2["counts"]
+check("diagnostics counts the seeded role", _c2["employer_roles"] >= 1)
+check("diagnostics counts the open seeded role", _c2["employer_roles_open"] >= 1)
+check("diagnostics counts both seeded applicants", _c2["role_applications"] >= 2)
+check("diagnostics counts ONLY the applicant missing a users row",
+      _c2["role_applications_without_user_row"] == 1)
+# Backfilling the orphan's identity must clear it from the orphan count —
+# this is the exact signal Joy watches to confirm the fix took effect.
+check("diagnostics flags the open role whose poster has no email",
+      _c2["open_roles_without_poster_email"] >= 1)
+
+_db.upsert_user(_conn, "diag-orphan", "orphan@example.com", "Orphan")
+_db.upsert_user(_conn, "diag-poster", "poster@diagco.com", "Poster")
+_diag3 = client.get("/admin/diagnostics", headers={"X-API-Key": "test-key"}).json()
+check("orphan count drops to zero once the users row exists",
+      _diag3["counts"]["role_applications_without_user_row"] == 0)
+check("poster-email gap clears once the poster has a users row",
+      _diag3["counts"]["open_roles_without_poster_email"] == 0)
+check("counts are plain integers (safe to log / forward to a status page)",
+      all(isinstance(v, int) for v in _diag3["counts"].values()))
 # The diagnostics response must NEVER echo a secret value — it should
 # only expose booleans for "configured". Prove it by checking that no
 # response value equals the actual API key we set at test setup time.
