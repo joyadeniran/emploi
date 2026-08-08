@@ -1,6 +1,7 @@
 import { auth, signOut } from "@/auth";
 import { AppShell } from "@/components/AppShell";
 import ClientRedirectToLogin from "@/components/ClientRedirectToLogin";
+import { ensureUserSession } from "@/lib/api";
 
 export default async function AppLayout({
   children,
@@ -14,6 +15,10 @@ export default async function AppLayout({
     // `callbackUrl` so sign-in returns the user to their intended page.
     return <ClientRedirectToLogin />;
   }
+
+  // Keep the API's `users` row current (email/name/last_seen_at). Throttled and
+  // failure-swallowing inside — see ensureUserSession.
+  await ensureUserSession();
 
   async function signOutAction() {
     "use server";

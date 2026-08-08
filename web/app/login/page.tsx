@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth, signIn, googleConfigured, devLoginEnabled } from "@/auth";
 import { Logo } from "@/components/Logo";
+import { safeCallbackPath } from "@/lib/safeRedirect";
 import { Sparkles } from "lucide-react";
 
 function GoogleIcon() {
@@ -32,8 +33,9 @@ export default async function LoginPage({
   searchParams: Promise<{ callbackUrl?: string }>;
 }) {
   const { callbackUrl } = await searchParams;
-  // Only same-site paths are honoured — never an absolute URL.
-  const target = callbackUrl?.startsWith("/") ? callbackUrl : "/dashboard";
+  // Only same-site paths are honoured — never an absolute URL, and never a
+  // protocol-relative "//host" that a bare startsWith("/") would let through.
+  const target = safeCallbackPath(callbackUrl, "/dashboard");
   const session = await auth();
   if (session?.user) redirect(target);
 

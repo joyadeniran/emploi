@@ -2527,6 +2527,34 @@ def admin_diagnostics(_: None = Depends(admin_key_auth)):
         "generations_last_30d": _scalar(
             "SELECT COUNT(*) FROM generation_log "
             "WHERE created_at >= datetime('now', '-30 days')"),
+        # --- employer funnel ------------------------------------------------
+        # "Did anyone apply, and can we reach them?" — answerable from here so
+        # nobody has to open a shell and query real user data to find out.
+        # Aggregates only; the endpoint's no-PII contract still holds.
+        "users": _scalar("SELECT COUNT(*) FROM users"),
+        "employer_roles": _scalar("SELECT COUNT(*) FROM employer_roles"),
+        "employer_roles_open": _scalar(
+            "SELECT COUNT(*) FROM employer_roles WHERE status = 'open'"),
+        "role_applications": _scalar("SELECT COUNT(*) FROM role_applications"),
+        "role_applications_unnotified": _scalar(
+            "SELECT COUNT(*) FROM role_applications WHERE notified = 0"),
+        # The load-bearing one. An applicant with no `users` row has no name and
+        # no email to show the employer — they render as a nameless "Applicant"
+        # in the Applicants list and cannot be contacted. Non-zero means either
+        # the identity upsert is not running, or these people applied before it
+        # shipped and have not signed in since.
+        "role_applications_without_user_row": _scalar(
+            "SELECT COUNT(*) FROM role_applications ra "
+            "LEFT JOIN users u ON u.id = ra.candidate_user_id "
+            "WHERE u.id IS NULL"),
+        # A poster with no `users` row cannot receive the employer digest at
+        # all — _notify_employers reads poster_email from `users` and has no
+        # fallback, so every applicant notification for that role is skipped.
+        "open_roles_without_poster_email": _scalar(
+            "SELECT COUNT(*) FROM employer_roles er "
+            "LEFT JOIN users u ON u.id = er.created_by_user_id "
+            "WHERE er.status = 'open' "
+            "  AND (u.email IS NULL OR u.email = '')"),
     }
 
     ready = (config["emploi_api_key"] and config["gemini"]["api_key"]
