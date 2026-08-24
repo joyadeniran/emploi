@@ -57,6 +57,21 @@ export default async function EmployerDashboardPage() {
     throw error;
   }
 
+  // Open roles first, newest first within each group.
+  const sortedRoles = [...roles].sort((a, b) => {
+    if ((a.status === "open") !== (b.status === "open")) return a.status === "open" ? -1 : 1;
+    return b.created_at.localeCompare(a.created_at);
+  });
+  const totals = roles.reduce(
+    (t, r) => ({
+      open: t.open + (r.status === "open" ? 1 : 0),
+      invited: t.invited + r.invites_sent,
+      accepted: t.accepted + r.accepted_count,
+      unread: t.unread + r.unread_responses,
+    }),
+    { open: 0, invited: 0, accepted: 0, unread: 0 },
+  );
+
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -89,6 +104,22 @@ export default async function EmployerDashboardPage() {
           <Plus size={16} /> Post a role
         </Link>
       </header>
+
+      {roles.length > 0 ? (
+        <section aria-label="Hiring pipeline summary" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {([
+            ["Open roles", totals.open],
+            ["Invited", totals.invited],
+            ["Accepted", totals.accepted],
+            ["New responses", totals.unread],
+          ] as const).map(([label, value]) => (
+            <div key={label} className="rounded-2xl border border-line bg-card p-4 shadow-card">
+              <p className="text-2xl font-extrabold">{value}</p>
+              <p className="mt-0.5 text-xs font-semibold text-muted">{label}</p>
+            </div>
+          ))}
+        </section>
+      ) : null}
 
       <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-card p-5 shadow-card">
         <div className="flex items-center gap-3">
@@ -123,7 +154,7 @@ export default async function EmployerDashboardPage() {
             </Link>
           </div>
         ) : (
-          roles.map((role) => (
+          sortedRoles.map((role) => (
             <Link
               key={role.id}
               href={`/employer/roles/${role.id}`}
@@ -139,7 +170,7 @@ export default async function EmployerDashboardPage() {
                   ) : null}
                 </p>
                 <p className="mt-1 text-xs text-muted">
-                  {role.invites_sent} invited · {role.accepted_count} accepted
+                  {role.invites_sent} invited · {role.accepted_count} accepted · posted {role.created_at.slice(0, 10)}
                 </p>
               </div>
               <div className="flex items-center gap-2">

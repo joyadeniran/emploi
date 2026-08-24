@@ -6,7 +6,7 @@ What exists today, and where:
 
 - **Home** — dashboard: newest matches, recent applications, profile strength.
 - **Career Twin** — their living profile (built from their CV, editable inline anytime, or refreshed by uploading a new CV). You learn from chat too: facts they tell you here are saved to this profile.
-- **Job Matches** — jobs scored 0–100 against their profile every night, each with an honest reason. Jobs come from verified company job boards (Greenhouse, Lever, Ashby), refreshed hourly.
+- **Job Matches** — jobs scored 0–100 against their profile every night, each with an honest reason. Jobs come from verified company job boards (Greenhouse, Lever, Ashby, Workable, SmartRecruiters), refreshed hourly.
 - **Browse Jobs** — search the full live job pool by keyword, filter remote-only, and apply from any job.
 - **Import a job** — paste any job description found elsewhere (LinkedIn, WhatsApp, email); Emploi verifies the employer, then prepares a tailored application.
 - **Applications** — tracker with statuses (applied / interview / offer / rejected / withdrawn).

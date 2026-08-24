@@ -58,6 +58,12 @@ check("index: has app links (CTAs into the product)", len(applinks) >= 4)
 check("index: all app links point at https://app.emploihq.com",
       all(u == "https://app.emploihq.com" for u in applinks))
 check("index: no waitlist copy remains", "waitlist" not in index.lower())
+check("index: canonical points to the production landing domain",
+      'rel="canonical" href="https://emploihq.com/"' in index)
+check("index: pricing includes every live billing tier",
+      all(label in index for label in ["₦0", "₦3,500", "₦7,500"]))
+check("index: mockup uses the honest company-checked label",
+      "company checked" in index and ">✓ verified<" not in index)
 check("index: JS rewrites app links to localhost:3000 (Next.js dashboard) for local dev",
       "localhost:3000" in index and "applink" in index)
 
@@ -88,6 +94,7 @@ for page, other in [("privacy.html", "terms.html"), ("terms.html", "privacy.html
     check(f"{page}: cross-links to {other}", f'href="{other}"' in src)
     check(f"{page}: no draft-for-legal-review notice remains", "draft" not in src.lower())
     check(f"{page}: contact is hello@emploihq.com", "mailto:hello@emploihq.com" in src)
+    check(f"{page}: has a production canonical", 'rel="canonical" href="https://emploihq.com/' in src)
 check("terms.html keeps the never-pay-a-fee warning",
       "never pay a fee" in html.get("terms.html", "").lower())
 

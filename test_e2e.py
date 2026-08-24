@@ -73,8 +73,15 @@ ok &= check("generation prompt embeds style guide + rubric",
 rp = build_review_prompt(PROFILE, "JD text", "draft text")
 ok &= check("review prompt embeds draft", "draft text" in rp)
 ok &= check("review prompt enforces style guide", "NO em-dashes" in rp)
+# Regression: the reviewer must see the SAME formatted ground truth as the
+# drafter (_profile_block), never a raw Python dict repr — the raw dict
+# bypassed the email/experience_years anti-fabrication guards.
+ok &= check("review prompt renders profile via _profile_block (no raw dict)",
+            "- Name: Joy Adeniran" in rp and "{'name'" not in rp)
 mp = build_match_prompt(PROFILE, [{"company": "Acme", "title": "VA", "description": "x"}])
 ok &= check("match prompt embeds rubric", "weight 30%" in mp)
+ok &= check("match prompt renders profile via _profile_block (no raw dict)",
+            "- Name: Joy Adeniran" in mp and "{'name'" not in mp)
 ip = build_interview_prompt(PROFILE, "JD here", "Acme")
 ok &= check("interview prompt embeds skill + profile",
             "STAR" in ip and "Joy Adeniran" in ip and "JD here" in ip)
@@ -156,6 +163,7 @@ ok &= check("parse_json_array handles garbage", parse_json_array("nope") == [])
 
 # 7c. Conversational chat turn: context + profile updates
 from core import chat_turn
+from core import PROFILE_KEYS as PROFILE_KEYS_FOR_CHAT
 CHAT_JSON = '{"reply": "Great goal, noted!", "profile_updates": {"goals": "Senior Marketing Manager roles", "bogus_key": "x", "title": ""}}'
 reply, updates = chat_turn(FakeModel([CHAT_JSON]), PROFILE, "I want senior marketing roles", "user: hi")
 ok &= check("chat_turn parses reply", reply == "Great goal, noted!")
@@ -171,6 +179,18 @@ ok &= check("chat prompt includes history + question",
 ok &= check("chat prompt embeds the product-context skill",
             "Trust Check" in m.calls[0] and "Browse Jobs" in m.calls[0]
             and "never pay a fee" in m.calls[0])
+# Regression: chat renders the profile via _profile_block (no raw dict repr)
+# but still names the legacy PROFILE_KEYS as the profile_updates schema —
+# chat_turn/apply_chat_updates only accept those keys.
+ok &= check("chat prompt renders profile via _profile_block (no raw dict)",
+            "- Name: Joy Adeniran" in m.calls[0] and "{'name'" not in m.calls[0])
+ok &= check("chat prompt still names the profile_updates keys",
+            all(k in m.calls[0] for k in PROFILE_KEYS_FOR_CHAT))
+# The product-context skill must name ALL the ATSes we actually ingest —
+# the chat is the product's self-knowledge and must not undersell coverage.
+ok &= check("product context names all 5 ATS sources",
+            all(a in load_skill("emploi_context")
+                for a in ["Greenhouse", "Lever", "Ashby", "Workable", "SmartRecruiters"]))
 
 # 7d. apply_chat_updates: legacy chat keys merged onto the Career Twin schema
 from core import apply_chat_updates
@@ -393,6 +413,24 @@ ok &= check("_profile_block: structured experience entry rendered",
 ok &= check("_profile_block: structured education entry rendered", "BSc Marketing, UNILAG" in twin_block)
 ok &= check("_profile_block: career_goals rendered as goals", "Career Growth" in twin_block and "Remote work" in twin_block)
 ok &= check("_profile_block: no field silently renders 'None'", "None" not in twin_block)
+
+# 11c. Regression: _profile_block must include experience_years and email when
+# present, and must explicitly say "not provided" for missing email — never let
+# the model invent contact details or guess years of experience.
+TWIN_WITH_YEARS = {**TWIN_PROFILE, "experience_years": "6–10 years", "email": "joy@emploihq.com"}
+years_block = _profile_block(TWIN_WITH_YEARS)
+ok &= check("_profile_block: experience_years rendered in experience line",
+            "6–10 years" in years_block)
+ok &= check("_profile_block: email rendered when present",
+            "joy@emploihq.com" in years_block)
+no_email_block = _profile_block(TWIN_PROFILE)
+ok &= check("_profile_block: missing email says 'not provided'",
+            "not provided" in no_email_block.lower())
+cv_prompt = build_cv_prompt(TWIN_PROFILE, "Product Manager at Acme", "Acme")
+ok &= check("cv_template: no 'placeholder' instruction in skill",
+            "placeholder" not in load_skill("cv_template").lower())
+ok &= check("cv_prompt: carries 'NEVER invent contact' constraint",
+            "never" in cv_prompt.lower() and "invent" in cv_prompt.lower())
 
 # When a wizard twin has no structured experience, fall back to bio rather
 # than an empty "Experience:" line.

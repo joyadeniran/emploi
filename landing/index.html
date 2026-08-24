@@ -4,9 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Emploi — Your Career Twin works while you sleep</title>
-<meta name="description" content="Emploi finds the right opportunities, verifies every employer for scam signals, and prepares your best application. Starting in Africa, built for the world.">
+<meta name="description" content="Emploi helps you find opportunities, check employers for scam signals, and prepare honest, tailored applications. Starting in Africa, built for the world.">
+<meta name="theme-color" content="#5b4ffd">
+<meta name="robots" content="index,follow">
+<link rel="canonical" href="https://emploihq.com/">
+<meta property="og:type" content="website">
 <meta property="og:title" content="Emploi — Your Career Twin works while you sleep">
-<meta property="og:description" content="AI job applications with built-in scam protection. Every employer verified before you apply.">
+<meta property="og:description" content="AI job applications with built-in scam protection and honest fit scores.">
 <meta property="og:url" content="https://emploihq.com">
 <link rel="icon" type="image/svg+xml" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 165"><defs><linearGradient id="g" x1="0%25" x2="78%25" y1="61%25" y2="0%25"><stop offset="0%25" stop-color="%238b48fd"/><stop offset="99%25" stop-color="%23435afe"/></linearGradient></defs><path fill="%234651fc" d="M116.7 45.3H15.9A15.9 15.9 0 0 1 15.9 13.5h100.8a15.9 15.9 0 0 1 0 31.8Z"/><path fill="url(%23g)" d="M127.6 95.1H15.9a15.9 15.9 0 0 1 0-31.8h111.7a15.9 15.9 0 0 1 0 31.8Z"/><path fill="%234651fc" d="M120 144.9H25.8a15.9 15.9 0 0 0-15.9 17.1A15.9 15.9 0 0 1 0 147.7v-16.5a15.9 15.9 0 0 1 15.9-18h104a15.9 15.9 0 0 1 0 31.7Z"/></svg>'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -285,8 +289,9 @@
   .swarn{padding:13px 20px;font-size:.82rem;color:var(--muted);background:rgba(255,255,255,.5)}
 
   /* ---------- pricing ---------- */
-  .plans{display:grid;grid-template-columns:repeat(2,minmax(0,400px));gap:22px;justify-content:center;margin-top:48px}
-  @media(max-width:760px){.plans{grid-template-columns:1fr}}
+  .plans{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px;margin-top:48px}
+  @media(max-width:960px){.plans{grid-template-columns:repeat(2,minmax(0,400px));justify-content:center}}
+  @media(max-width:640px){.plans{grid-template-columns:1fr}}
   .plan{
     background:var(--glass);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
     border:1px solid var(--glass-border);border-radius:24px;padding:32px 28px;
@@ -395,7 +400,7 @@
       <span class="line"><span>works while</span></span>
       <span class="line"><span><em class="grad-text underline">you sleep.</em></span></span>
     </h1>
-    <p class="lede">Emploi finds the right opportunities, verifies every employer for scam signals, and prepares your best application — so you can focus on what matters.</p>
+    <p class="lede">Emploi helps you find the right opportunities, check employers for scam signals, and prepare your best application — so you can focus on what matters.</p>
     <div class="ctas">
       <a class="btn applink" href="https://app.emploihq.com">Create your Career Twin →</a>
       <a class="btn ghost" href="#how">See how it works</a>
@@ -408,7 +413,7 @@
       <div class="mock-head">
         <div>
           <div class="hi">Good morning, Joy 👋</div>
-          <div class="sub">Your Career Twin analyzed 120+ opportunities overnight.</div>
+          <div class="sub">Your Career Twin is working through your opportunities.</div>
         </div>
       </div>
       <div class="stat-row">
@@ -421,17 +426,17 @@
       <div class="joblist">
         <div class="jobrow">
           <div class="co" style="background:#04114d">P</div>
-          <div class="meta"><b>Product Designer</b><span>Paystack · Lagos, Nigeria · Hybrid</span> <span class="verified">✓ verified</span></div>
+          <div class="meta"><b>Product Designer</b><span>Adept Labs · Lagos, Nigeria · Hybrid</span> <span class="verified">✓ company checked</span></div>
           <div class="fit"><svg width="44" height="44"><circle class="track" cx="22" cy="22" r="18"/><circle class="bar" cx="22" cy="22" r="18" data-fit="92"/></svg><b>92%</b></div>
         </div>
         <div class="jobrow">
           <div class="co" style="background:#5b4ffd">K</div>
-          <div class="meta"><b>UX Researcher</b><span>Kuda Bank · Lagos, Nigeria · On-site</span> <span class="verified">✓ verified</span></div>
+          <div class="meta"><b>UX Researcher</b><span>Northstar Studio · Lagos, Nigeria · On-site</span> <span class="verified">✓ company checked</span></div>
           <div class="fit"><svg width="44" height="44"><circle class="track" cx="22" cy="22" r="18"/><circle class="bar" cx="22" cy="22" r="18" data-fit="88"/></svg><b>88%</b></div>
         </div>
         <div class="jobrow">
           <div class="co" style="background:#f79009">A</div>
-          <div class="meta"><b>Product Manager</b><span>Autochek · Lagos, Nigeria · Hybrid</span> <span class="verified">✓ verified</span></div>
+          <div class="meta"><b>Product Manager</b><span>Brightway Systems · Lagos, Nigeria · Hybrid</span> <span class="verified">✓ company checked</span></div>
           <div class="fit"><svg width="44" height="44"><circle class="track" cx="22" cy="22" r="18"/><circle class="bar" cx="22" cy="22" r="18" data-fit="75"/></svg><b>75%</b></div>
         </div>
       </div>
@@ -457,7 +462,7 @@
   <h2 class="sec-title rv">Your career, <em class="grad-text">on autopilot</em>.</h2>
   <div class="steps">
     <div class="step rv"><div class="n">1</div><h3>Build your Career Twin</h3><p>Drop your CV and we create a smart, living profile that gets better every time you chat.</p></div>
-    <div class="step rv d1"><div class="n">2</div><h3>We find &amp; verify</h3><p>Load jobs from sheets, PDFs or pasted posts — every employer is checked for trust before you see it.</p></div>
+    <div class="step rv d1"><div class="n">2</div><h3>Find &amp; check</h3><p>Browse opportunities or bring in jobs from sheets, PDFs and pasted posts — then review clear trust signals before you apply.</p></div>
     <div class="step rv d2"><div class="n">3</div><h3>Get your best matches</h3><p>Honest, weighted fit scores rank every opportunity against your real experience and goals.</p></div>
     <div class="step rv d3"><div class="n">4</div><h3>We prepare, you apply</h3><p>A tailored cover letter and a complete, ready-to-send CV for each role — as PDF or Word.</p></div>
     <div class="step rv d4"><div class="n">5</div><h3>Land more interviews</h3><p>Track every application and rehearse the tough questions with interview prep built from your own story.</p></div>
@@ -469,9 +474,9 @@
   <span class="sec-kicker rv">Built different</span>
   <h2 class="sec-title rv">Why professionals <em class="grad-text">love Emploi</em></h2>
   <div class="why">
-    <div class="why-card rv"><div class="ico" style="background:#e5f7ef">🛡️</div><h3>Trust first, always</h3><p>Every employer is verified with real, named signals — domain records, live websites, scam patterns. We protect you from fake jobs and risky listings.</p></div>
+    <div class="why-card rv"><div class="ico" style="background:#e5f7ef">🛡️</div><h3>Trust first, always</h3><p>Named signals — domain records, live websites and scam patterns — help you spot risky listings. A score reduces risk; it never replaces your judgment.</p></div>
     <div class="why-card rv d1"><div class="ico" style="background:#efeaff">🧠</div><h3>AI that understands you</h3><p>Your Career Twin learns from your experience, preferences and goals — and never invents a single line of your CV.</p></div>
-    <div class="why-card rv d2"><div class="ico" style="background:#fff4e5">⚡</div><h3>Works while you sleep</h3><p>Load a job sheet before bed and wake up to ranked, verified matches with applications ready to review and send.</p></div>
+    <div class="why-card rv d2"><div class="ico" style="background:#fff4e5">⚡</div><h3>Works while you sleep</h3><p>Bring in a job sheet before bed and return to ranked matches with drafts ready for you to review and send.</p></div>
     <div class="why-card rv d3"><div class="ico" style="background:#e8f1ff">🎯</div><h3>Honest fit scores</h3><p>No flattery. A weighted rubric scores every match and names your gaps — so you spend time only where you can win.</p></div>
   </div>
 </section>
@@ -532,8 +537,20 @@
         <li>Full interview prep &amp; roleplay</li>
         <li>Early access to new features</li>
       </ul>
-      <a class="btn applink" href="https://app.emploihq.com" style="justify-content:center">Start free, upgrade in-app</a>
-      <p class="note">Pro billing is rolling out in-app — start free today.</p>
+      <a class="btn applink" href="https://app.emploihq.com" style="justify-content:center">Choose Pro in the app</a>
+      <p class="note">Secure checkout is available in your dashboard.</p>
+    </div>
+    <div class="plan rv d2">
+      <span class="tag">Max</span>
+      <div class="price">₦7,500 <span>/ month</span></div>
+      <ul>
+        <li>300 tailored drafts per month</li>
+        <li>Everything in Pro</li>
+        <li>Highest priority in nightly matching</li>
+        <li>Advanced career insights</li>
+      </ul>
+      <a class="btn ghost applink" href="https://app.emploihq.com" style="justify-content:center">Choose Max in the app</a>
+      <p class="note">For a full-time job search.</p>
     </div>
   </div>
 </section>

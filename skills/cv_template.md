@@ -3,7 +3,7 @@
 Produce a COMPLETE, ready-to-send CV tailored to one specific job posting. Output is markdown that renders to PDF/Word.
 
 ## Structure (exactly this order)
-1. `# {Full Name}` then one line: {professional title tailored to the posting} · {location} · {contact placeholders if not in profile}
+1. `# {Full Name}` then one line: {professional title tailored to the posting} · {location} · {email from profile, if provided}. NEVER invent contact details (email, phone, LinkedIn, website) — if they are not in the candidate profile, omit them entirely.
 2. `## Professional Summary` — 3-4 lines positioning the candidate FOR THIS ROLE: lead with the most relevant experience, weave in 2-3 keywords from the posting naturally.
 3. `## Experience` — every role as `**{Title} — {Company}** ({dates})` followed by 3-5 bullets.
 4. `## Skills` — one compact grouped list, most posting-relevant first.
@@ -19,4 +19,4 @@ The CV must fit on ~2 pages, so cut low-value content by scoring each candidate 
 - Never invent roles, dates, employers, numbers, or achievements not present in the profile.
 
 ## Ground truth
-The candidate profile is the ONLY source of facts. Missing information stays missing: no placeholder achievements, no invented metrics. If the profile lacks detail for a section, keep that section short rather than fabricating.
+The candidate profile is the ONLY source of facts. Missing information stays missing: no filler achievements, no invented metrics, no fabricated contact details (email, phone, LinkedIn URL), no guessed years of experience. Use the exact experience_years value from the profile when provided; never round up, extrapolate, or restate it differently. If the profile lacks detail for a section, keep that section short rather than fabricating.
