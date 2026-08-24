@@ -22,6 +22,10 @@ services:
         sync: false
       - key: ADZUNA_COUNTRY
         value: gb            # default country when an adzuna token omits "country:"
+      - key: JOBDATAAPI_API_KEY
+        sync: false          # optional aggregator; real country_code=NG filter — the Nigeria lever. Unset = jobdataapi sources no-op
+      - key: TECHMAP_API_KEY
+        sync: false          # optional aggregator (Techmap "Jobs In Nigeria"); unset = techmap sources no-op. Seed rows ship inactive until schema confirmed
       - key: EMPLOI_DB_PATH
         value: /var/data/emploi.sqlite3
       - key: INTERNAL_SCHEDULER

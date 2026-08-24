@@ -769,6 +769,80 @@ os.environ.pop("JOOBLE_API_KEY", None)
 os.environ.pop("ADZUNA_APP_ID", None)
 os.environ.pop("ADZUNA_APP_KEY", None)
 
+# --- jobdataapi.com (env-keyed, real ISO country filter) --------------------
+os.environ.pop("JOBDATAAPI_API_KEY", None)
+ok &= check("jobdataapi no-ops without JOBDATAAPI_API_KEY",
+            _ijmod._ingest_jobdataapi({"token": "NG"}, None, True) == (0, 0))
+
+os.environ["JOBDATAAPI_API_KEY"] = "jda-key"
+_jda = {}
+_ijmod._get_json_auth = lambda url, headers: (_jda.update(url=url, headers=headers) or
+    {"count": 2, "results": [
+        {"id": 101, "title": "Backend Engineer",
+         "company": {"name": "Paystack", "website_url": "https://paystack.com"},
+         "location": "Lagos", "country": {"code": "ng", "name": "Nigeria"},
+         "has_remote": False, "salary_min": 400000, "salary_max": 600000,
+         "description": "<p>Build &amp; scale payments</p>",
+         "application_url": "https://jobdataapi.example/101"},
+        {"title": "", "description": "no title -> skipped"}]})
+f, w = _ijmod._ingest_jobdataapi({"token": "NG:engineer"}, None, dry_run=True)
+ok &= check("jobdataapi builds a country_code-scoped GET with Api-Key auth",
+            "country_code=NG" in _jda["url"] and "title=engineer" in _jda["url"]
+            and _jda["headers"]["Authorization"] == "Api-Key jda-key")
+ok &= check("jobdataapi normalizes results and skips a titleless row",
+            f == 2 and w == 1)
+_jn = _ijmod.normalize_jobdataapi_job({
+    "title": "Data Analyst", "company": {"name": "Kuda"},
+    "location": "Remote", "country": {"code": "NG"},
+    "has_remote": True, "salary_min": 300000, "salary_max": 500000,
+    "description": "SQL &amp; dashboards", "application_url": "u"})
+ok &= check("jobdataapi normalizer: trusts feed country code, feed remote flag, "
+            "salary range, unescaped desc",
+            _jn["country"] == "NG" and _jn["is_remote"] is True
+            and _jn["salary_text"] == "300,000–500,000"
+            and _jn["description"] == "SQL & dashboards")
+# Missing feed country -> fall back to string inference, not a crash.
+_jn2 = _ijmod.normalize_jobdataapi_job({"title": "X", "location": "Abuja",
+                                        "salary_min": "n/a"})
+ok &= check("jobdataapi normalizer: absent country -> _derive_country, bad "
+            "salary -> None (no crash)",
+            _jn2["country"] == "NG" and _jn2["salary_text"] is None)
+os.environ.pop("JOBDATAAPI_API_KEY", None)
+
+# --- Techmap "Jobs In Nigeria" (env-keyed, defensive schema) ----------------
+os.environ.pop("TECHMAP_API_KEY", None)
+ok &= check("techmap no-ops without TECHMAP_API_KEY",
+            _ijmod._ingest_techmap({"token": "NG"}, None, True) == (0, 0))
+
+os.environ["TECHMAP_API_KEY"] = "tm-key"
+_tm = {}
+_ijmod._get_json_auth = lambda url, headers: (_tm.update(url=url, headers=headers) or
+    {"results": [
+        {"id": "abc", "name": "Sales Lead", "company": "MTN Nigeria",
+         "locality": "Lagos", "region": "Lagos", "country": "Nigeria",
+         "text": "Lead the <b>sales</b> team", "url": "https://techmap.example/abc",
+         "salary": "N800k"},
+        {"name": "", "text": "no title -> skipped"}]})
+f, w = _ijmod._ingest_techmap({"token": "NG"}, None, dry_run=True)
+ok &= check("techmap sends x-api-key header and countryCode query",
+            _tm["headers"]["x-api-key"] == "tm-key"
+            and "countryCode=NG" in _tm["url"])
+ok &= check("techmap normalizes results and skips a titleless row",
+            f == 2 and w == 1)
+_tn = _ijmod.normalize_techmap_job({"name": "Ops Manager", "company": "Flutterwave",
+                                    "country": "Nigeria", "text": "Run ops",
+                                    "url": "u", "salary": "  "})
+ok &= check("techmap normalizer: name->title, country name->NG, blank salary->None",
+            _tn["title"] == "Ops Manager" and _tn["country"] == "NG"
+            and _tn["salary_text"] is None and _tn["apply_url"] == "u")
+# Bare-array response (no wrapper) must also be accepted.
+_ijmod._get_json_auth = lambda url, headers: [
+    {"name": "Analyst", "company": "GTBank", "location": "Abuja",
+     "text": "Reports", "url": "https://t/1"}]
+f, w = _ijmod._ingest_techmap({"token": "NG"}, None, dry_run=True)
+ok &= check("techmap accepts a bare-array response shape", f == 1 and w == 1)
+os.environ.pop("TECHMAP_API_KEY", None)
+
 # ---- country inference (Nigeria-first job pool) ------------------------------
 # The pool is global, so a Nigerian seeker browsing "all jobs" mostly sees US
 # on-site roles. Tagging a country at ingest lets the pool be served
@@ -863,6 +937,9 @@ ok &= check("workday: malformed token -> (0, 0), never raises",
             _ijmod._ingest_workday({"token": "nope"}, None, True) == (0, 0))
 ok &= check("workday is registered in _ATS_HANDLERS",
             _ijmod._ATS_HANDLERS.get("workday") is _ijmod._ingest_workday)
+ok &= check("jobdataapi + techmap are registered in _ATS_HANDLERS",
+            _ijmod._ATS_HANDLERS.get("jobdataapi") is _ijmod._ingest_jobdataapi
+            and _ijmod._ATS_HANDLERS.get("techmap") is _ijmod._ingest_techmap)
 
 # ---- shipped seed file stays valid + Nigeria-weighted ------------------------
 _seed = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -880,6 +957,14 @@ ok &= check("seed: unverified workday tokens ship disabled (spot-check first)",
             all(e.get("active") is False for e in _entries if e.get("ats") == "workday"))
 ok &= check("seed: jooble Nigeria queries are the bulk of the aggregators",
             sum(1 for e in _entries if e.get("ats") == "jooble") >= 30)
+ok &= check("seed: jobdataapi sources present and Nigeria-scoped (token starts NG)",
+            sum(1 for e in _entries if e.get("ats") == "jobdataapi") >= 1
+            and all(e["token"].upper().startswith("NG")
+                    for e in _entries if e.get("ats") == "jobdataapi"))
+ok &= check("seed: techmap ships inactive until its schema is confirmed",
+            sum(1 for e in _entries if e.get("ats") == "techmap") >= 1
+            and all(e.get("active") is False
+                    for e in _entries if e.get("ats") == "techmap"))
 
 print("\n" + ("ALL TESTS PASSED ✅" if ok else "SOME TESTS FAILED ❌"))
 sys.exit(0 if ok else 1)
