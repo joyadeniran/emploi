@@ -12,6 +12,16 @@ Live report: three open roles (`/jobs/1`, `/jobs/2`, `/jobs/3`) received applica
 
 **Google `sub` and email-as-id were two different people.** `apiFetch` sent `X-User-Id: session.user.id ?? session.user.email`. Some requests stored the employer under the email, later ones under the Google `sub`. `get_employer_for_user` then 404'd, the home page always `redirect("/dashboard")`, and `list_unnotified_role_applicants` LEFT JOINed `users` on `created_by_user_id` — so the poster had no email and every digest counted `employer_skipped_no_email`. Fix: `upsert_user` absorbs same-email aliases (membership, posted roles, twins, applications) onto the live Google id; `get_employer_for_user` falls back through email; the unnotified-applicant query also reads the owner membership's users row; `/` calls `GET /user/portal` after `ensureUserSession` and sends posters to `/employer`; candidate login's default return is `/` not `/dashboard`; both shells expose a portal switch; NextAuth `trustHost: true` plus a jwt callback so the session cookie is issued for `app.emploihq.com`.
 
+### Fixed — full audit after the apply-email/identity report (2026-09-20)
+The previous fix still dumped every signed-in user on `/dashboard`. Next.js implements `redirect()` by throwing; `web/app/page.tsx` called it *inside* `try/catch`, which swallowed the employer landing and always fell through to the candidate funnel — and the candidate dashboard then forced anyone without a Career Twin into the wizard. A hiring manager who posted `/jobs/1–3` therefore still looked like a first-time job seeker.
+
+**Also found and fixed in the same pass:**
+- Apply email ran *inline* on the request. SMTP/HTTP to Brevo can take seconds; the web apply fetch times out at 10s, so a slow mailbox made the candidate think the apply failed even after the row was committed. Email now runs on a background thread (hourly digest is the retry net).
+- Interview invites had the same "wait for the digest" hole as applies. `notify_new_invite` emails the candidate immediately.
+- `PATCH /user/notifications` had **zero web callers**. Settings now has an Email alerts toggle, backed by new `GET /user`.
+- Career Twin onboarding never called `ensureUserSession`, so a brand-new Google account could apply/be invited with no `users` row.
+- Diagnostics `open_roles_without_poster_email` still ignored the owner-membership fallback.
+
 - **Web** — fix: preserve OAuth callback during server-side unauthenticated redirects by rendering a client redirect that preserves the current path as `callbackUrl`. Prevents a login → onboarding redirect loop in some environments. (Adds `ClientRedirectToLogin` and updates server layouts.)
 
 ### Fixed — `POST /user/session` had zero callers, so the `users` table was always empty (2026-08-08)

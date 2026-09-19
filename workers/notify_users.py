@@ -193,6 +193,56 @@ def notify_new_application(conn, role_id, candidate_user_id, send_fn=None):
     return {"sent": True, "to": email}
 
 
+def notify_new_invite(conn, invite_id, send_fn=None):
+    """Email the candidate immediately when an employer invites them.
+
+    Same contract as notify_new_application: never raises, marks notified
+    only after a successful send so the hourly digest is the retry net.
+    """
+    if send_fn is None:
+        send_fn = _get_send_fn()
+    if send_fn is None:
+        return {"sent": False, "reason": "no_sender"}
+    inv = db.get_invite_detail(conn, invite_id)
+    if not inv:
+        return {"sent": False, "reason": "nothing_pending"}
+    if int(inv.get("notified") or 0):
+        return {"sent": False, "reason": "already_notified"}
+    if inv.get("status") != "pending":
+        return {"sent": False, "reason": "nothing_pending"}
+    user = db.get_user(conn, inv["candidate_user_id"]) or {}
+    email = user.get("email")
+    if not email:
+        twin = db.load_career_twin(conn, inv["candidate_user_id"]) or {}
+        email = twin.get("email") if isinstance(twin, dict) else None
+    if not email:
+        return {"sent": False, "reason": "no_email"}
+    if user and not int(user.get("notifications_enabled", 1)):
+        return {"sent": False, "reason": "opted_out"}
+    name = user.get("name") or "there"
+    company = inv.get("company_name") or "an employer"
+    title = inv.get("role_title") or "a role"
+    subject = f"{company} invited you to interview for {title}"
+    body = "\n".join([
+        f"Hi {name},",
+        "",
+        f"{company} invited you to interview for {title} on Emploi.",
+        "",
+        "Review and respond: https://app.emploihq.com/invites",
+        "",
+        "— Emploi",
+    ])
+    try:
+        send_fn(email, subject, body)
+    except Exception as exc:
+        return {"sent": False, "reason": "send_failed", "error": str(exc)[:200]}
+    conn.execute(
+        "UPDATE interview_invites SET notified = 1, notified_at = datetime('now') "
+        "WHERE id = ?", (invite_id,))
+    conn.commit()
+    return {"sent": True, "to": email}
+
+
 def run(db_path, dry_run=False, send_fn=None):
     conn = db.connect(db_path, check_same_thread=False)
     # LEFT JOIN the new `users` table (source of truth for email + digest

@@ -949,6 +949,11 @@ check("user/portal reports no employer for a candidate",
       r.status_code == 200 and r.json()["has_employer"] is False
       and r.json()["home"] == "/dashboard")
 
+r = client.get("/user", headers=AUTH)
+check("GET /user returns the session email and digest default-on",
+      r.status_code == 200 and r.json()["email"] == "ada@example.com"
+      and r.json()["notifications_enabled"] is True)
+
 # Notifications endpoint requires a session row (returns 409 otherwise).
 r = client.patch("/user/notifications", headers=AUTH, json={"enabled": False})
 check("user/notifications flips digest opt-in", r.status_code == 200

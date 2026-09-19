@@ -64,6 +64,17 @@ export default async function DashboardPage() {
       sampleData = true;
       unavailable = true;
     }
+    // A hiring manager who never built a Career Twin must not be trapped in
+    // the candidate wizard when they open /dashboard (or when home routing
+    // fails). They already have an account — just not this portal.
+    if (needsOnboarding) {
+      try {
+        const portal = await apiFetch<{ has_employer: boolean }>("/user/portal");
+        if (portal.has_employer) needsOnboarding = false;
+      } catch {
+        /* keep the wizard gate */
+      }
+    }
     if (needsOnboarding) redirect("/create-career-twin");
 
     // 2) Secondary data. These NEVER gate onboarding — on error the dashboard

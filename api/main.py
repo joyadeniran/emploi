@@ -171,6 +171,18 @@ def get_conn():
     return conn
 
 
+def _email_in_background(fn, *args) -> None:
+    """Fire-and-forget a notify_users send. The worker opens its own
+    connection (get_conn is thread-local) so this never shares the request
+    thread's sqlite handle. Failures are logged, never raised to the caller."""
+    def _run():
+        try:
+            fn(get_conn(), *args)
+        except Exception:
+            log.exception("background email %s failed", getattr(fn, "__name__", fn))
+    threading.Thread(target=_run, name="emploi-email", daemon=True).start()
+
+
 GENERATE_CALL_TIMEOUT_S = 25  # per-provider-call bound; see FallbackModel/GroqModel
 
 
@@ -1147,6 +1159,22 @@ def user_session(body: UserSessionIn, user_id: str = Depends(auth)):
     return {"ok": True, "has_employer": employer is not None}
 
 
+@app.get("/user")
+def get_user_me(user_id: str = Depends(auth)):
+    """Signed-in identity + digest opt-in. 409 until POST /user/session
+    has created the row (the web layouts do this on every render)."""
+    u = db.get_user(get_conn(), user_id)
+    if not u:
+        raise HTTPException(status_code=409,
+                            detail="user session not established; POST /user/session first")
+    return {
+        "id": u["id"],
+        "email": u["email"],
+        "name": u["name"],
+        "notifications_enabled": u["notifications_enabled"],
+    }
+
+
 @app.get("/user/portal")
 def user_portal(user_id: str = Depends(auth)):
     """Where a signed-in Google account should land. Posters who also
@@ -1555,12 +1583,11 @@ def public_apply_endpoint(role_id: int, user_id: str = Depends(auth)):
         raise HTTPException(status_code=409, detail="this job is no longer accepting applications")
     if result == "ok":
         db.log_event(conn, "PublicRoleApplied", {"role_id": role_id}, user_id=user_id)
-        # Event email — do not wait for the hourly digest. Failures are
-        # swallowed: a down mail provider must never 500 the apply itself.
-        try:
-            notify_worker.notify_new_application(conn, role_id, user_id)
-        except Exception:
-            log.exception("immediate apply email failed role=%s", role_id)
+        # Event email in a thread: SMTP/HTTP to Brevo can take seconds, and
+        # the web tier's apply fetch times out at 10s. A slow mailbox must
+        # not make the candidate think the apply failed. Hourly digest is
+        # the retry net if this thread dies.
+        _email_in_background(notify_worker.notify_new_application, role_id, user_id)
     return {"ok": True, "status": "applied", "already_applied": result == "exists"}
 
 
@@ -1750,8 +1777,7 @@ def create_invite_endpoint(role_id: int, body: InviteCreateIn,
     invite = db.get_invite(conn, invite_id)
     db.log_event(conn, "InterviewInviteSent",
                  {"invite_id": invite_id, "role_id": role_id}, user_id=user_id)
-    # Email notification rides the nightly notify worker digest; the
-    # dashboard badge (GET /invites/count) is immediate.
+    _email_in_background(notify_worker.notify_new_invite, invite_id)
     return {"invite_id": invite_id, "expires_at": invite["expires_at"]}
 
 
@@ -2575,8 +2601,11 @@ def admin_diagnostics(_: None = Depends(admin_key_auth)):
         "open_roles_without_poster_email": _scalar(
             "SELECT COUNT(*) FROM employer_roles er "
             "LEFT JOIN users u ON u.id = er.created_by_user_id "
+            "LEFT JOIN employer_users eu ON eu.employer_id = er.employer_id "
+            "  AND eu.role = 'owner' "
+            "LEFT JOIN users owner ON owner.id = eu.user_id "
             "WHERE er.status = 'open' "
-            "  AND (u.email IS NULL OR u.email = '')"),
+            "  AND COALESCE(u.email, owner.email, '') = ''"),
     }
 
     ready = (config["emploi_api_key"] and config["gemini"]["api_key"]

@@ -194,6 +194,24 @@ check("home establishes the user session before routing",
 check("home does not hardcode /dashboard for every signed-in user",
       'redirect(session ? "/dashboard"' not in home
       and "redirect(session ? '/dashboard'" not in home)
+check("home does not call redirect() inside the portal try/catch (Next.js swallows it)",
+      "redirect(portal" not in home)
+check("home redirects AFTER the portal lookup, to the resolved path",
+      "redirect(home)" in home)
+
+dashboard = read("app", "(app)", "dashboard", "page.tsx") or ""
+check("dashboard skips the candidate wizard for a signed-in poster",
+      "has_employer" in dashboard)
+
+twin_layout = read("app", "create-career-twin", "layout.tsx") or ""
+check("career-twin onboarding establishes the user session",
+      "ensureUserSession" in twin_layout)
+
+settings = read("app", "(app)", "settings", "page.tsx") or ""
+check("settings page exposes the email-alerts toggle",
+      "EmailNotificationsToggle" in settings)
+check("EmailNotificationsToggle component exists",
+      read("components", "EmailNotificationsToggle.tsx") is not None)
 
 auth_ts = read("auth.ts") or ""
 check("NextAuth trustHost is on (custom domain session cookie)",
@@ -211,6 +229,12 @@ check("employer shell still has a switch to job search",
 main_py = open(os.path.join(ROOT, "api", "main.py"), encoding="utf-8").read()
 check("apply endpoint sends an email immediately, not only via the digest",
       "notify_new_application" in main_py)
+check("apply email is backgrounded so a slow mailbox cannot 500 the apply",
+      "_email_in_background" in main_py)
+check("invite endpoint emails the candidate immediately",
+      "notify_new_invite" in main_py)
+check("GET /user exists so settings can read the digest opt-in",
+      '@app.get("/user")' in main_py)
 notify_py = open(os.path.join(ROOT, "workers", "notify_users.py"), encoding="utf-8").read()
 check("SMTP path exists for a non-xkeysib BREVO_API_KEY",
       "smtp_send_fn" in notify_py and 'startswith("xkeysib-")' in notify_py)

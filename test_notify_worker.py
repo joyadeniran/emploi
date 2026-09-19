@@ -2,7 +2,7 @@
 import os, tempfile
 from unittest.mock import patch, MagicMock
 import db
-from workers.notify_users import run, brevo_send_fn, _get_send_fn, smtp_send_fn, notify_new_application
+from workers.notify_users import run, brevo_send_fn, _get_send_fn, smtp_send_fn, notify_new_application, notify_new_invite
 fails=[]
 def check(label, ok):
  print(("PASS" if ok else "FAIL"), "-", label); fails.extend([] if ok else [label])
@@ -276,6 +276,29 @@ with tempfile.TemporaryDirectory() as d:
           notify_new_application(conn, role["id"], "nobody", send_fn=None).get("reason")
           in ("no_sender", "nothing_pending"))
 
+# Immediate interview-invite email
+with tempfile.TemporaryDirectory() as d:
+    path = os.path.join(d, "inv.sqlite3"); conn = db.connect(path)
+    emp = db.create_employer(conn, "Acme Corp", "acme.com", "hm-now")
+    db.upsert_user(conn, "hm-now", "hm@acme.com", "HM")
+    db.upsert_user(conn, "cand-inv", "ada@example.com", "Ada")
+    db.save_career_twin(conn, "cand-inv", {"name": "Ada"})
+    db.set_recruiter_visibility(conn, "cand-inv", True)
+    role = db.create_role(conn, emp, "hm-now", {"title": "PM", "description": "d"})
+    iid = db.create_invite(conn, role["id"], "cand-inv", "hm-now")
+    sent = []
+    r = notify_new_invite(conn, iid, send_fn=lambda *a: sent.append(a))
+    check("notify_new_invite sends immediately", r.get("sent") is True and len(sent) == 1)
+    check("invite email names the company and role and links /invites",
+          "Acme Corp" in sent[0][1] and "PM" in sent[0][1]
+          and "/invites" in sent[0][2])
+    check("invite is marked notified after the immediate send",
+          conn.execute("SELECT notified FROM interview_invites WHERE id=?", (iid,)).fetchone()[0] == 1)
+    sent2 = []
+    r2 = notify_new_invite(conn, iid, send_fn=lambda *a: sent2.append(a))
+    check("second invite email is a no-op", r2.get("sent") is False and sent2 == [])
+
 if fails: raise SystemExit(1)
 print("ALL TESTS PASSED ✅")
+
 
