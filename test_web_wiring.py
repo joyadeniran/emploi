@@ -183,6 +183,38 @@ check("apiFetch still sends X-API-Key", '"X-API-Key"' in api_lib)
 check("apiFetch still asserts and forwards the user id", '"X-User-Id"' in api_lib)
 check("lib/api.ts is server-only", 'import "server-only"' in api_lib)
 
+# ---------------------------------------------------------------------------
+# 5. Home remembers posters. Apply emails fire now, not at 02:30 UTC.
+# ---------------------------------------------------------------------------
+home = read("app", "page.tsx") or ""
+check("home asks the API which portal this Google account belongs to",
+      "/user/portal" in home)
+check("home establishes the user session before routing",
+      "ensureUserSession" in home)
+check("home does not hardcode /dashboard for every signed-in user",
+      'redirect(session ? "/dashboard"' not in home
+      and "redirect(session ? '/dashboard'" not in home)
+
+auth_ts = read("auth.ts") or ""
+check("NextAuth trustHost is on (custom domain session cookie)",
+      "trustHost: true" in auth_ts)
+check("jwt callback copies user.id onto token.sub",
+      "token.sub" in auth_ts and "jwt(" in auth_ts)
+
+sidebar = read("components", "Sidebar.tsx") or ""
+check("candidate sidebar has a switch to the hiring portal",
+      "Switch to hiring" in sidebar and 'href="/employer"' in sidebar)
+emp_shell = read("components", "EmployerShell.tsx") or ""
+check("employer shell still has a switch to job search",
+      "Switch to job search" in emp_shell)
+
+main_py = open(os.path.join(ROOT, "api", "main.py"), encoding="utf-8").read()
+check("apply endpoint sends an email immediately, not only via the digest",
+      "notify_new_application" in main_py)
+notify_py = open(os.path.join(ROOT, "workers", "notify_users.py"), encoding="utf-8").read()
+check("SMTP path exists for a non-xkeysib BREVO_API_KEY",
+      "smtp_send_fn" in notify_py and 'startswith("xkeysib-")' in notify_py)
+
 
 print()
 if FAILURES:

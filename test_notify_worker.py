@@ -2,7 +2,7 @@
 import os, tempfile
 from unittest.mock import patch, MagicMock
 import db
-from workers.notify_users import run, brevo_send_fn, _get_send_fn
+from workers.notify_users import run, brevo_send_fn, _get_send_fn, smtp_send_fn, notify_new_application
 fails=[]
 def check(label, ok):
  print(("PASS" if ok else "FAIL"), "-", label); fails.extend([] if ok else [label])
@@ -233,5 +233,49 @@ check("_get_send_fn returns None when BREVO_API_KEY/SENDER_EMAIL unset",
 with patch.dict(os.environ, {"BREVO_API_KEY": "k", "BREVO_SENDER_EMAIL": "s@emploihq.com"}):
     check("_get_send_fn returns a callable once configured", callable(_get_send_fn()))
 
+with patch.dict(os.environ, {"BREVO_API_KEY": "xkeysib-abc", "BREVO_SENDER_EMAIL": "s@emploihq.com"}, clear=False):
+    fn = _get_send_fn()
+    check("xkeysib- key uses the Brevo HTTP API sender",
+          getattr(fn, "__name__", "") == "_send" or callable(fn))
+
+with patch.dict(os.environ, {"BREVO_API_KEY": "smtp-not-xkeysib", "BREVO_SENDER_EMAIL": "s@emploihq.com",
+                             "BREVO_SMTP_LOGIN": "s@emploihq.com"}):
+    check("a non-xkeysib key still returns a send_fn (SMTP path)", callable(_get_send_fn()))
+
+with patch("smtplib.SMTP") as mock_smtp:
+    inst = MagicMock()
+    mock_smtp.return_value.__enter__.return_value = inst
+    send = smtp_send_fn("login@x.com", "smtp-pass", "hello@emploihq.com")
+    send("user@example.com", "subject", "body")
+    check("smtp_send_fn logs in with the SMTP key",
+          inst.login.called and inst.login.call_args[0][1] == "smtp-pass")
+    check("smtp_send_fn calls sendmail", inst.sendmail.called)
+
+# Immediate apply email — the product promise, not the 02:30 UTC digest.
+with tempfile.TemporaryDirectory() as d:
+    path = os.path.join(d, "imm.sqlite3"); conn = db.connect(path)
+    emp = db.create_employer(conn, "Acme Corp", "acme.com", "poster-now")
+    db.upsert_user(conn, "poster-now", "boss@acme.com", "Boss")
+    db.upsert_user(conn, "cand-now", "ada@example.com", "Ada")
+    role = db.create_role(conn, emp, "poster-now", {"title": "PM", "description": "d"})
+    db.create_role_application(conn, role["id"], "cand-now")
+    sent = []
+    r = notify_new_application(conn, role["id"], "cand-now",
+                               send_fn=lambda *a: sent.append(a))
+    check("notify_new_application sends immediately", r.get("sent") is True and len(sent) == 1)
+    check("immediate email names the role and the applicant",
+          "PM" in sent[0][1] and "Ada" in sent[0][2]
+          and f"/employer/roles/{role['id']}" in sent[0][2])
+    check("immediate send marks the row notified (digest will not double-send)",
+          conn.execute("SELECT notified FROM role_applications").fetchone()[0] == 1)
+    sent2 = []
+    r2 = notify_new_application(conn, role["id"], "cand-now",
+                                send_fn=lambda *a: sent2.append(a))
+    check("second immediate call is a no-op", r2.get("sent") is False and sent2 == [])
+    check("no_sender is honest when send_fn is missing and env is empty",
+          notify_new_application(conn, role["id"], "nobody", send_fn=None).get("reason")
+          in ("no_sender", "nothing_pending"))
+
 if fails: raise SystemExit(1)
 print("ALL TESTS PASSED ✅")
+

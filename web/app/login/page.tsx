@@ -35,7 +35,7 @@ export default async function LoginPage({
   const { callbackUrl } = await searchParams;
   // Only same-site paths are honoured — never an absolute URL, and never a
   // protocol-relative "//host" that a bare startsWith("/") would let through.
-  const target = safeCallbackPath(callbackUrl, "/dashboard");
+  const target = safeCallbackPath(callbackUrl, "/");
   const session = await auth();
   if (session?.user) redirect(target);
 

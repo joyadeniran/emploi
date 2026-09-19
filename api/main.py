@@ -1143,7 +1143,23 @@ def user_session(body: UserSessionIn, user_id: str = Depends(auth)):
         raise HTTPException(status_code=422, detail="invalid email")
     db.upsert_user(get_conn(), user_id, body.email, body.name,
                    body.email_verified)
-    return {"ok": True}
+    employer = db.get_employer_for_user(get_conn(), user_id)
+    return {"ok": True, "has_employer": employer is not None}
+
+
+@app.get("/user/portal")
+def user_portal(user_id: str = Depends(auth)):
+    """Where a signed-in Google account should land. Posters who also
+    job-seek still have /dashboard via the switcher; the home page must
+    not dump a hiring manager onto the candidate funnel."""
+    conn = get_conn()
+    employer = db.get_employer_for_user(conn, user_id)
+    twin = db.load_career_twin(conn, user_id) or {}
+    return {
+        "has_employer": employer is not None,
+        "has_career_twin": bool(twin),
+        "home": "/employer" if employer else "/dashboard",
+    }
 
 
 @app.patch("/user/notifications")
@@ -1539,6 +1555,12 @@ def public_apply_endpoint(role_id: int, user_id: str = Depends(auth)):
         raise HTTPException(status_code=409, detail="this job is no longer accepting applications")
     if result == "ok":
         db.log_event(conn, "PublicRoleApplied", {"role_id": role_id}, user_id=user_id)
+        # Event email — do not wait for the hourly digest. Failures are
+        # swallowed: a down mail provider must never 500 the apply itself.
+        try:
+            notify_worker.notify_new_application(conn, role_id, user_id)
+        except Exception:
+            log.exception("immediate apply email failed role=%s", role_id)
     return {"ok": True, "status": "applied", "already_applied": result == "exists"}
 
 
@@ -2296,7 +2318,7 @@ def _scheduler_jobs():
         ("verify",        ("daily", 1, 30), lambda: verify_worker.run(DB_PATH)),
         ("match",         ("daily", 2, 0),  lambda: match_worker.run(DB_PATH)),
         ("expire",        ("daily", 2, 15), lambda: expire_invites_worker.run(DB_PATH)),
-        ("notify",        ("daily", 2, 30), lambda: notify_worker.run(DB_PATH, send_fn=notify_worker._get_send_fn())),
+        ("notify",        ("hourly",),      lambda: notify_worker.run(DB_PATH, send_fn=notify_worker._get_send_fn())),
         ("backup",        ("daily", 3, 0),  lambda: backup_worker.run(DB_PATH)),
     ]
 

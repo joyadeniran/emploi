@@ -47,11 +47,23 @@ if (devLoginEnabled) {
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers,
+  // Vercel / custom-domain: trust the Host header so the session cookie is
+  // issued for the URL the browser actually used (app.emploihq.com), not a
+  // stale AUTH_URL pointing at a preview deployment.
+  trustHost: true,
   session: { strategy: "jwt" },
   pages: { signIn: "/login", signOut: "/signout" },
   callbacks: {
+    jwt({ token, user }) {
+      if (user?.id) token.sub = user.id;
+      if (user?.email) token.email = user.email;
+      if (user?.name) token.name = user.name;
+      return token;
+    },
     session({ session, token }) {
       if (token.sub) session.user.id = token.sub;
+      if (token.email && session.user) session.user.email = token.email as string;
+      if (token.name && session.user) session.user.name = token.name as string;
       return session;
     },
   },

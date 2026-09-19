@@ -944,6 +944,11 @@ r = client.post("/user/session", headers=AUTH,
                       "email_verified": True})
 check("user/session accepts a valid session", r.status_code == 200)
 
+r = client.get("/user/portal", headers=AUTH)
+check("user/portal reports no employer for a candidate",
+      r.status_code == 200 and r.json()["has_employer"] is False
+      and r.json()["home"] == "/dashboard")
+
 # Notifications endpoint requires a session row (returns 409 otherwise).
 r = client.patch("/user/notifications", headers=AUTH, json={"enabled": False})
 check("user/notifications flips digest opt-in", r.status_code == 200

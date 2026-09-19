@@ -12,7 +12,9 @@ from db import (connect, save_career_twin, load_career_twin,
                 upsert_match, list_matches, log_event,
                 get_subscription, upsert_subscription,
                 log_generation, count_generations_this_month,
-                upsert_user, get_user, set_notifications_enabled)
+                upsert_user, get_user, set_notifications_enabled,
+                create_employer, get_employer_for_user, create_role,
+                create_role_application, list_unnotified_role_applicants)
 
 
 def check(label, cond):
@@ -147,6 +149,32 @@ ok &= check("upsert_user without email raises", raised)
 
 # get_user returns None (never raises) for unknown user
 ok &= check("get_user on unknown user -> None", get_user(conn, "unknown") is None)
+
+# Split identity: Google sub vs email-as-id must collapse onto the live login.
+# This is the "emploi can't remember me / I'm a poster not a seeker" bug.
+_split = connect(":memory:")
+upsert_user(_split, "joy@emploihq.com", "joy@emploihq.com", "Joy")
+_emp = create_employer(_split, "Crost Limited", "emploihq.com", "joy@emploihq.com")
+_role = create_role(_split, _emp, "joy@emploihq.com",
+            {"title": "Engineer", "description": "build"})
+ok &= check("employer exists under the email-as-id",
+            get_employer_for_user(_split, "joy@emploihq.com") is not None)
+upsert_user(_split, "google-sub-joy", "joy@emploihq.com", "Joy Adeniran")
+ok &= check("Google-sub login absorbs the email-as-id employer",
+            get_employer_for_user(_split, "google-sub-joy") is not None
+            and get_employer_for_user(_split, "google-sub-joy")["company_name"] == "Crost Limited")
+ok &= check("alias users row is gone after absorb",
+            get_user(_split, "joy@emploihq.com") is None)
+ok &= check("canonical users row kept the email",
+            get_user(_split, "google-sub-joy")["email"] == "joy@emploihq.com")
+# Poster email for notify: created_by was the alias; owner join must still
+# find the live users row.
+_apps = list_unnotified_role_applicants(_split)
+# no applications yet — seed one
+create_role_application(_split, _role["id"], "cand-x")
+_pending = list_unnotified_role_applicants(_split)
+ok &= check("inbound applicant poster_email is the live Google account",
+            len(_pending) == 1 and _pending[0]["poster_email"] == "joy@emploihq.com")
 
 # 9. clear_user wipes only that user (NDPA/GDPR right)
 clear_user(conn, "user-1")
