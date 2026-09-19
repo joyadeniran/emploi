@@ -1209,7 +1209,8 @@ def user_session(body: UserSessionIn, user_id: str = Depends(auth)):
         raise HTTPException(status_code=422, detail="invalid email")
     db.upsert_user(get_conn(), user_id, body.email, body.name,
                    body.email_verified)
-    employer = db.get_employer_for_user(get_conn(), user_id)
+    employer = db.consolidate_employers_for_user(
+        get_conn(), user_id, body.email) or db.get_employer_for_user(get_conn(), user_id)
     return {"ok": True, "has_employer": employer is not None}
 
 
@@ -1235,7 +1236,11 @@ def user_portal(user_id: str = Depends(auth)):
     job-seek still have /dashboard via the switcher; the home page must
     not dump a hiring manager onto the candidate funnel."""
     conn = get_conn()
-    employer = db.get_employer_for_user(conn, user_id)
+    user = db.get_user(conn, user_id)
+    email = (user or {}).get("email") or (user_id if "@" in user_id else "")
+    employer = db.consolidate_employers_for_user(conn, user_id, email)
+    if not employer:
+        employer = db.get_employer_for_user(conn, user_id)
     twin = db.load_career_twin(conn, user_id) or {}
     return {
         "has_employer": employer is not None,
@@ -1331,7 +1336,12 @@ class VisibilityIn(BaseModel):
 
 
 def require_employer(user_id: str) -> dict:
-    employer = db.get_employer_for_user(get_conn(), user_id)
+    conn = get_conn()
+    user = db.get_user(conn, user_id)
+    email = (user or {}).get("email") or (user_id if "@" in user_id else "")
+    employer = db.consolidate_employers_for_user(conn, user_id, email)
+    if not employer:
+        employer = db.get_employer_for_user(conn, user_id)
     if not employer:
         raise HTTPException(status_code=404,
                             detail="no employer account — complete employer onboarding first")
@@ -1419,12 +1429,27 @@ def _generate_shortlist(role_id: int, refinement_note: str = "") -> int:
 # ---- employer onboarding / identity ----
 
 @app.post("/employer/onboarding", status_code=201)
-def employer_onboarding(body: EmployerOnboardIn, user_id: str = Depends(auth)):
+def employer_onboarding(body: EmployerOnboardIn, response: Response,
+                        user_id: str = Depends(auth)):
     conn = get_conn()
-    if db.get_employer_for_user(conn, user_id):
-        raise HTTPException(status_code=409, detail="you already have an employer account")
     domain = (body.company_domain or "").strip().lower() or \
         ingest_worker._derive_company_domain(body.company_name)
+    user = db.get_user(conn, user_id)
+    email = (user or {}).get("email") or (user_id if "@" in user_id else "")
+    # Split-identity heal: if this Google account already posted jobs under
+    # an alias, or a Supplya already exists on this domain/name they own,
+    # attach — never mint another empty company.
+    reclaimed = db.reclaim_employer(
+        conn, user_id, email, domain, body.company_name.strip())
+    if reclaimed:
+        response.status_code = 200
+        db.log_event(conn, "EmployerReclaimed",
+                     {"employer_id": reclaimed["id"]}, user_id=user_id)
+        return {"employer_id": reclaimed["id"],
+                "trust_score": reclaimed.get("trust_score"),
+                "trust_level": reclaimed.get("trust_level"),
+                "warm_intro_by": reclaimed.get("warm_intro_by"),
+                "reclaimed": True}
     score, level = _employer_trust_check(body.company_name, domain, conn)
     if level == "avoid":
         # Never create the row — an avoid-tier employer must not exist.
@@ -1437,7 +1462,7 @@ def employer_onboarding(body: EmployerOnboardIn, user_id: str = Depends(auth)):
     db.log_event(conn, "EmployerOnboarded",
                  {"employer_id": employer_id, "trust_level": level}, user_id=user_id)
     return {"employer_id": employer_id, "trust_score": score,
-            "trust_level": level, "warm_intro_by": None}
+            "trust_level": level, "warm_intro_by": None, "reclaimed": False}
 
 
 @app.get("/employer")

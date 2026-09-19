@@ -94,9 +94,11 @@ check("cold onboarding is NEVER 'high' — domain control is unproven",
       r.json()["trust_level"] == "medium")
 emp_id = r.json()["employer_id"]
 
-check("duplicate onboarding -> 409",
-      client.post("/employer/onboarding", headers=HM,
-                  json={"company_name": "Acme Again"}).status_code == 409)
+r = client.post("/employer/onboarding", headers=HM,
+                json={"company_name": "Acme Again"})
+check("duplicate onboarding reattaches the existing company (does not mint a second)",
+      r.status_code in (200, 201) and r.json()["employer_id"] == emp_id
+      and r.json().get("reclaimed") is True)
 
 r = client.get("/employer", headers=HM)
 check("GET /employer returns identity + billing snapshot",

@@ -249,6 +249,11 @@ check("toMatchCard does not stamp every match as New",
       "isNew: true" not in (read("lib", "api.ts") or ""))
 check("applications page does not fall back to demo rows on error",
       "demoApplications" not in (read("app", "(app)", "applications", "page.tsx") or ""))
+onb = read("app", "(employer)", "employer", "onboarding", "page.tsx") or ""
+check("onboarding page skips the form if this Google account already has a company",
+      "hasEmployer" in onb and "ensureUserSession" in onb)
+check("onboarding page does not swallow redirect() inside try/catch",
+      "if (hasEmployer) redirect" in onb)
 
 
 print()

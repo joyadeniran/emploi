@@ -14,7 +14,8 @@ from db import (connect, save_career_twin, load_career_twin,
                 log_generation, count_generations_this_month,
                 upsert_user, get_user, set_notifications_enabled,
                 create_employer, get_employer_for_user, create_role,
-                create_role_application, list_unnotified_role_applicants)
+                create_role_application, list_unnotified_role_applicants,
+                consolidate_employers_for_user, reclaim_employer, list_roles)
 
 
 def check(label, cond):
@@ -175,6 +176,37 @@ create_role_application(_split, _role["id"], "cand-x")
 _pending = list_unnotified_role_applicants(_split)
 ok &= check("inbound applicant poster_email is the live Google account",
             len(_pending) == 1 and _pending[0]["poster_email"] == "joy@emploihq.com")
+
+# 8c. Duplicate "create Supplya" heal — empty later employer must not hide
+# the one that actually has jobs.
+_dup = connect(":memory:")
+upsert_user(_dup, "email-joy", "joy@emploihq.com", "Joy")
+_old = create_employer(_dup, "Supplya", "supplya.co", "email-joy")
+create_role(_dup, _old, "email-joy", {"title": "Ops", "description": "run"})
+create_role(_dup, _old, "email-joy", {"title": "Eng", "description": "build"})
+create_role(_dup, _old, "email-joy", {"title": "Sales", "description": "sell"})
+upsert_user(_dup, "sub-joy", "joy@emploihq.com", "Joy")
+_empty = create_employer(_dup, "Supplya", "supplya.co", "sub-joy")
+ok &= check("split identity currently has two Supplya rows",
+            _old != _empty)
+_healed = consolidate_employers_for_user(_dup, "sub-joy", "joy@emploihq.com")
+ok &= check("consolidate keeps the Supplya that has the jobs",
+            _healed is not None and _healed["id"] == _old)
+ok &= check("all three roles now sit on the kept employer",
+            len(list_roles(_dup, _old)) == 3)
+ok &= check("empty duplicate was merged away from membership",
+            get_employer_for_user(_dup, "sub-joy")["id"] == _old)
+# Onboarding with the same name on a brand-new sub must reclaim, not mint.
+_new = connect(":memory:")
+upsert_user(_new, "email-joy", "joy@emploihq.com", "Joy")
+_kept = create_employer(_new, "Supplya", "supplya.co", "email-joy")
+create_role(_new, _kept, "email-joy", {"title": "Ops", "description": "run"})
+upsert_user(_new, "fresh-sub", "joy@emploihq.com", "Joy")
+_re = reclaim_employer(_new, "fresh-sub", "joy@emploihq.com", "supplya.co", "Supplya")
+ok &= check("onboarding Supplya again reclaims the existing company",
+            _re is not None and _re["id"] == _kept)
+ok &= check("reclaimed company still has its role",
+            len(list_roles(_new, _kept)) == 1)
 
 # 9. clear_user wipes only that user (NDPA/GDPR right)
 clear_user(conn, "user-1")

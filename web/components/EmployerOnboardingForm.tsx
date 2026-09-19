@@ -63,9 +63,11 @@ export function EmployerOnboardingForm({ email }: { email: string }) {
         setState("idle");
         return;
       }
-      if (res.status === 409) { router.replace("/employer"); return; }
-      if (!res.ok) throw new Error(data.error || "Something went wrong");
-      router.replace("/employer");
+      if (res.status === 409 || res.status === 200 || res.ok) {
+        router.replace("/employer");
+        return;
+      }
+      throw new Error(data.error || "Something went wrong");
     } catch (err) {
       setError({ message: (err as Error).message || "Something went wrong — try again." });
       setState("idle");
