@@ -11,7 +11,7 @@ const WORKERS: { key: string; label: string; event: string; hint: string }[] = [
   { key: "match", label: "Match", event: "MatchingWorkerRun", hint: "Score jobs vs Career Twins (heavy — AI)" },
   { key: "verify-employers", label: "Verify employers", event: "VerificationWorkerRun", hint: "Refresh trust records" },
   { key: "expire-invites", label: "Expire invites", event: "ExpireInvitesRun", hint: "Close stale invites" },
-  { key: "notify", label: "Notify", event: "NotifyWorkerRun", hint: "Send digest emails" },
+  { key: "notify", label: "Notify", event: "NotificationWorkerRun", hint: "Send digest emails" },
   { key: "backup", label: "Backup", event: "BackupWorkerRun", hint: "Snapshot DB to R2" },
 ];
 

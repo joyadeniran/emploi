@@ -898,6 +898,35 @@ def get_subscription(conn, user_id: str) -> dict:
            "paystack_email": None, "current_period_end": None}
 
 
+def effective_subscription(sub: dict) -> dict:
+    """Access-control view of a billing row.
+
+    Cancelled Pro/Max stays paid until `current_period_end`. After that
+    date (or if the date is unparseable-and-clearly-past) the user is
+    free. A cancelled row with no period end keeps the paid tier — the
+    Settings copy promises access until period end, and dropping them
+    the moment Paystack fires `subscription.disable` broke that promise.
+    """
+    out = dict(sub)
+    if out.get("status") != "cancelled":
+        return out
+    if out.get("tier") in (None, "free"):
+        return out
+    end = (out.get("current_period_end") or "").strip()
+    if not end:
+        return out
+    try:
+        from datetime import datetime, timezone
+        parsed = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        if parsed <= datetime.utcnow():
+            out["tier"] = "free"
+    except ValueError:
+        pass
+    return out
+
+
 def upsert_subscription(conn, user_id: str, **fields) -> None:
     """Create or update a user's billing row. Only known columns are
     written; unspecified fields keep their existing value."""

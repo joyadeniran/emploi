@@ -69,6 +69,10 @@ if AUTH_ENABLED and not admin_allowed(getattr(st.user, "email", None), _ADMIN_EM
     st.stop()
 
 _ADMIN_CODE = _conf("EMPLOI_ADMIN_CODE")
+if not _ADMIN_CODE and not _ADMIN_EMAILS:
+    st.title("💼 Emploi")
+    st.error("This console is disabled — set EMPLOI_ADMIN_CODE (and EMPLOI_ADMIN_EMAILS) before exposing it.")
+    st.stop()
 if _ADMIN_CODE and not st.session_state.get("admin_unlocked"):
     st.title("💼 Emploi")
     st.caption("Internal console — enter the access code to continue.")

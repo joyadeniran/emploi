@@ -72,7 +72,10 @@ export default async function DashboardPage() {
         const portal = await apiFetch<{ has_employer: boolean }>("/user/portal");
         if (portal.has_employer) needsOnboarding = false;
       } catch {
-        /* keep the wizard gate */
+        // Unknown — do not trap a poster in the candidate wizard because
+        // /user/portal blipped. A genuine new seeker sees the dashboard
+        // empty/sample state until the API answers again.
+        needsOnboarding = false;
       }
     }
     if (needsOnboarding) redirect("/create-career-twin");

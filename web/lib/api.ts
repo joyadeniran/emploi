@@ -29,6 +29,7 @@ export interface ApiMatch {
   apply_url?: string | null;
   fit_score?: number | null;
   reason?: string | null;
+  created_at?: string | null;
 }
 
 const COMPANY_COLORS = ["#04114d", "#5b4ffd", "#f79009", "#0e9f6e", "#1570ef", "#d92d20"];
@@ -56,8 +57,15 @@ export function toMatchCard(row: ApiMatch): JobMatch {
     level: fit >= 85 ? "great" : fit >= 60 ? "good" : "fair",
     reason: row.reason?.trim() || "Your Career Twin found a relevant overlap to review.",
     // Never claim verification until a trust record has actually been joined.
-    verified: false, isNew: true,
+    verified: false, isNew: isFreshMatch(row.created_at),
   };
+}
+
+function isFreshMatch(createdAt?: string | null): boolean {
+  if (!createdAt) return false;
+  const ts = Date.parse(String(createdAt).replace(" ", "T") + (String(createdAt).endsWith("Z") ? "" : "Z"));
+  if (!Number.isFinite(ts)) return false;
+  return Date.now() - ts < 48 * 3_600_000;
 }
 
 export interface ApiJob {

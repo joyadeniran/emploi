@@ -239,6 +239,17 @@ notify_py = open(os.path.join(ROOT, "workers", "notify_users.py"), encoding="utf
 check("SMTP path exists for a non-xkeysib BREVO_API_KEY",
       "smtp_send_fn" in notify_py and 'startswith("xkeysib-")' in notify_py)
 
+workers_ui = read("components", "admin", "WorkerControls.tsx") or ""
+check("admin UI looks up NotificationWorkerRun (the name the worker logs)",
+      "NotificationWorkerRun" in workers_ui
+      and "NotifyWorkerRun" not in workers_ui)
+check("scheduler injects the API model factory into nightly matching",
+      "model=app.state.model_factory()" in main_py)
+check("toMatchCard does not stamp every match as New",
+      "isNew: true" not in (read("lib", "api.ts") or ""))
+check("applications page does not fall back to demo rows on error",
+      "demoApplications" not in (read("app", "(app)", "applications", "page.tsx") or ""))
+
 
 print()
 if FAILURES:

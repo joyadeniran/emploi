@@ -47,12 +47,21 @@ DEFAULT_BATCH_SIZE = 50     # jobs per Gemini call
 
 
 def _get_model():
+    """CLI fallback. Production scheduler injects the API factory (Gemini +
+    Groq + 25s timeout). A bare GenerativeModel has no timeout and will
+    stall the whole in-process scheduler if Gemini hangs."""
     key = os.getenv("GEMINI_API_KEY", "")
     if not key:
         return None
     import google.generativeai as genai
     genai.configure(api_key=key)
-    return genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+    inner = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+
+    class _Timeout:
+        def generate_content(self, prompt: str):
+            return inner.generate_content(
+                prompt, request_options={"timeout": 25})
+    return _Timeout()
 
 
 def _get_users_with_twins(conn) -> list:

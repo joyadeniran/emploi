@@ -322,6 +322,30 @@ def rate_limit(request: Request, user_id: str = Depends(auth)) -> str:
     return user_id
 
 
+def require_api_key(x_api_key: str = Header(default="")) -> None:
+    """Service-to-service key only — used by public GETs that must not
+    impersonate a user but also must not be an open scrape surface."""
+    if API_KEY and not secrets.compare_digest(x_api_key, API_KEY):
+        raise HTTPException(status_code=401, detail="invalid API key")
+
+
+def public_rate_limit(request: Request) -> None:
+    """IP bucket for unauthenticated-user public reads. 30/min is enough
+    for a job page + OG crawlers, not a sequential id scrape."""
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    ip = forwarded or (request.client.host if request.client else "unknown")
+    path = _NUMERIC_SEGMENT_RE.sub("/{id}", request.url.path)
+    limit, window = 30, 60
+    now = time()
+    key = f"ip:{ip}:{path}"
+    calls = [stamp for stamp in _rate_counters[key] if now - stamp < window]
+    if len(calls) >= limit:
+        raise HTTPException(status_code=429,
+                            detail=f"Rate limit: {limit} requests per {window}s")
+    calls.append(now)
+    _rate_counters[key] = calls
+
+
 # Upload / payload bounds — the wizard caps uploads at 10 MB client-side; the
 # API enforces its own ceiling so a direct caller can't exhaust memory, and
 # career-twin blobs stay small enough for the JSON-in-SQLite design.
@@ -629,7 +653,7 @@ def generate_application_endpoint(body: GenerateIn, response: Response,
         raise HTTPException(status_code=422, detail="job description is required")
     company = str(job.get("company") or job.get("company_name") or "")
 
-    sub = db.get_subscription(conn, user_id)
+    sub = _quota_sub(conn, user_id)
     limit = core.monthly_generation_limit(sub["tier"])
     used = db.count_generations_this_month(conn, user_id)
     if used >= limit:
@@ -688,7 +712,7 @@ def generate_cv_endpoint(body: CvIn, response: Response, background: bool = True
         raise HTTPException(status_code=422, detail="job description is required")
     company = str(job.get("company") or job.get("company_name") or "")
 
-    sub = db.get_subscription(conn, user_id)
+    sub = _quota_sub(conn, user_id)
     limit = core.monthly_generation_limit(sub["tier"])
     used = db.count_generations_this_month(conn, user_id)
     if used >= limit:
@@ -745,7 +769,7 @@ def interview_prep_endpoint(body: InterviewPrepIn, response: Response,
         raise HTTPException(status_code=422, detail="job description is required")
     company = str(job.get("company") or job.get("company_name") or "")
 
-    sub = db.get_subscription(conn, user_id)
+    sub = _quota_sub(conn, user_id)
     limit = core.monthly_generation_limit(sub["tier"])
     used = db.count_generations_this_month(conn, user_id)
     if used >= limit:
@@ -865,17 +889,28 @@ def require_paystack() -> None:
                             detail="Billing is not configured on this server.")
 
 
+def _quota_sub(conn, user_id: str) -> dict:
+    """Paid access after cancel lasts until current_period_end."""
+    return db.effective_subscription(db.get_subscription(conn, user_id))
+
+
+def _paystack_period_end(data: dict) -> Optional[str]:
+    """Paystack's next_payment_date, if present. Stored as text; never invented."""
+    end = data.get("next_payment_date") or ""
+    return end if isinstance(end, str) and end.strip() else None
+
+
 @app.get("/billing/status")
 def billing_status(user_id: str = Depends(auth)):
     conn = get_conn()
-    sub = db.get_subscription(conn, user_id)
-    tier = sub["tier"]
+    raw = db.get_subscription(conn, user_id)
+    sub = db.effective_subscription(raw)
     return {
-        "tier": tier,
-        "status": sub["status"],
-        "current_period_end": sub.get("current_period_end"),
+        "tier": sub["tier"],
+        "status": raw["status"],
+        "current_period_end": raw.get("current_period_end"),
         "used_this_month": db.count_generations_this_month(conn, user_id),
-        "limit": core.monthly_generation_limit(tier),
+        "limit": core.monthly_generation_limit(sub["tier"]),
         "prices_ngn": core.TIER_PRICES_NGN,
     }
 
@@ -891,11 +926,12 @@ def billing_checkout(body: CheckoutIn, user_id: str = Depends(auth)):
                             detail=f"The {body.tier} plan isn't configured yet — try again shortly.")
     conn = get_conn()
     twin = db.load_career_twin(conn, user_id)
-    email = (twin or {}).get("email") or ""
+    user = db.get_user(conn, user_id) or {}
+    email = (user.get("email") or (twin or {}).get("email") or "").strip()
     if not email:
         raise HTTPException(status_code=422,
                             detail="We need your email on file before checkout — "
-                                   "complete your Career Twin first.")
+                                   "sign in again, or complete your Career Twin.")
     try:
         data = billing.initialize_transaction(
             PAYSTACK_SECRET_KEY, email, core.TIER_PRICES_NGN[body.tier], plan_code,
@@ -930,7 +966,8 @@ def billing_verify(body: VerifyIn, user_id: str = Depends(auth)):
     db.upsert_subscription(
         conn, user_id, tier=tier, status="active",
         paystack_customer_code=(data.get("customer") or {}).get("customer_code"),
-        paystack_email=(data.get("customer") or {}).get("email"))
+        paystack_email=(data.get("customer") or {}).get("email"),
+        **({"current_period_end": end} if (end := _paystack_period_end(data)) else {}))
     return {"tier": tier, "status": "active"}
 
 
@@ -948,7 +985,11 @@ def billing_cancel(user_id: str = Depends(auth)):
     except Exception:
         log.exception("Paystack cancel failed for user %s", user_id[-8:])
         raise HTTPException(status_code=502, detail="Couldn't cancel with Paystack — try again shortly.")
-    db.upsert_subscription(conn, user_id, status="cancelled")
+    end = _paystack_period_end(details) if isinstance(details, dict) else None
+    fields = {"status": "cancelled"}
+    if end:
+        fields["current_period_end"] = end
+    db.upsert_subscription(conn, user_id, **fields)
     return {"ok": True}
 
 
@@ -988,10 +1029,12 @@ async def billing_webhook(request: Request):
         user_id = metadata.get("user_id")
         tier = metadata.get("tier")
         if user_id and tier in ("pro", "max"):
+            end = _paystack_period_end(data)
             db.upsert_subscription(
                 conn, user_id, tier=tier, status="active",
                 paystack_customer_code=(data.get("customer") or {}).get("customer_code"),
-                paystack_email=(data.get("customer") or {}).get("email"))
+                paystack_email=(data.get("customer") or {}).get("email"),
+                **({"current_period_end": end} if end else {}))
     elif kind == "subscription.create":
         # Paystack creates the subscription asynchronously after the first
         # successful charge; this is the only reliable place we learn its
@@ -999,18 +1042,29 @@ async def billing_webhook(request: Request):
         customer_code = (data.get("customer") or {}).get("customer_code")
         sub_code = data.get("subscription_code", "")
         if customer_code and sub_code:
+            end = _paystack_period_end(data)
+            extra = ", current_period_end = ?" if end else ""
+            params = [sub_code]
+            if end:
+                params.append(end)
+            params.append(customer_code)
             conn.execute(
-                "UPDATE subscriptions SET paystack_subscription_code = ?, "
-                "updated_at = datetime('now') WHERE paystack_customer_code = ?",
-                (sub_code, customer_code))
+                "UPDATE subscriptions SET paystack_subscription_code = ?"
+                f"{extra}, updated_at = datetime('now') "
+                "WHERE paystack_customer_code = ?", params)
             conn.commit()
     elif kind in ("subscription.disable", "subscription.not_renew"):
         code = data.get("subscription_code", "")
         if code:
-            conn.execute(
-                "UPDATE subscriptions SET tier = 'free', status = 'cancelled', "
-                "updated_at = datetime('now') WHERE paystack_subscription_code = ?", (code,))
-            conn.commit()
+            row = conn.execute(
+                "SELECT user_id FROM subscriptions "
+                "WHERE paystack_subscription_code = ?", (code,)).fetchone()
+            if row:
+                end = _paystack_period_end(data)
+                fields = {"status": "cancelled"}
+                if end:
+                    fields["current_period_end"] = end
+                db.upsert_subscription(conn, row["user_id"], **fields)
     elif kind == "invoice.payment_failed":
         code = (data.get("subscription") or {}).get("subscription_code", "")
         if code:
@@ -1561,7 +1615,9 @@ def _public_trust(role: dict) -> dict:
 
 
 @app.get("/public/roles/{role_id}")
-def public_role_endpoint(role_id: int):
+def public_role_endpoint(role_id: int, request: Request,
+                         _: None = Depends(require_api_key)):
+    public_rate_limit(request)
     conn = get_conn()
     role = db.get_public_role(conn, role_id)
     if not role:
@@ -2341,8 +2397,10 @@ def _scheduler_jobs():
     return [
         ("ingest-hourly", ("hourly",),      lambda: ingest_worker.run(DB_PATH, min_priority=8)),
         ("ingest-daily",  ("daily", 1, 0),  lambda: ingest_worker.run(DB_PATH, min_priority=1)),
-        ("verify",        ("daily", 1, 30), lambda: verify_worker.run(DB_PATH)),
-        ("match",         ("daily", 2, 0),  lambda: match_worker.run(DB_PATH)),
+        ("verify",        ("daily", 1, 30), lambda: verify_worker.run(
+            DB_PATH, model=app.state.model_factory())),
+        ("match",         ("daily", 2, 0),  lambda: match_worker.run(
+            DB_PATH, model=app.state.model_factory())),
         ("expire",        ("daily", 2, 15), lambda: expire_invites_worker.run(DB_PATH)),
         ("notify",        ("hourly",),      lambda: notify_worker.run(DB_PATH, send_fn=notify_worker._get_send_fn())),
         ("backup",        ("daily", 3, 0),  lambda: backup_worker.run(DB_PATH)),
@@ -2378,10 +2436,17 @@ def _start_internal_scheduler() -> bool:
                     continue
                 log.info("scheduler: running %s", name)
                 try:
-                    runner()
+                    # Heavy Gemini/network jobs must not occupy this thread —
+                    # a hung match run used to skip hourly ingest/notify until
+                    # it returned. last_run is stamped immediately so we do
+                    # not hot-loop while the background job is still going.
+                    if name in ("match", "verify", "ingest-hourly",
+                                "ingest-daily", "backup"):
+                        _run_in_background(name, runner)
+                    else:
+                        runner()
                 except Exception:
                     log.exception("scheduler: %s failed", name)
-                # Record even on failure — retry next window, don't hot-loop.
                 last[name] = datetime.utcnow()
 
     threading.Thread(target=loop, name="internal-scheduler", daemon=True).start()
@@ -2477,7 +2542,7 @@ def admin_run_backup(_: None = Depends(admin_key_auth)):
 
 _WORKER_EVENT_TYPES = (
     "JobIngestionRun", "MatchingWorkerRun", "VerificationWorkerRun",
-    "NotifyWorkerRun", "BackupWorkerRun", "ExpireInvitesRun",
+    "NotificationWorkerRun", "BackupWorkerRun", "ExpireInvitesRun",
 )
 
 

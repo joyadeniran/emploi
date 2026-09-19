@@ -10,7 +10,7 @@ from db import (connect, save_career_twin, load_career_twin,
                 upsert_job, list_jobs, count_jobs,
                 upsert_trust_record, get_trust_record,
                 upsert_match, list_matches, log_event,
-                get_subscription, upsert_subscription,
+                get_subscription, upsert_subscription, effective_subscription,
                 log_generation, count_generations_this_month,
                 upsert_user, get_user, set_notifications_enabled,
                 create_employer, get_employer_for_user, create_role,
@@ -325,6 +325,15 @@ upsert_subscription(jconn, "u3", status="cancelled")
 ok &= check("upsert_subscription updates only the given fields (tier untouched)",
             get_subscription(jconn, "u3")["tier"] == "pro"
             and get_subscription(jconn, "u3")["status"] == "cancelled")
+ok &= check("cancelled Pro with no period end still counts as Pro",
+            effective_subscription(get_subscription(jconn, "u3"))["tier"] == "pro")
+upsert_subscription(jconn, "u3", current_period_end="2099-01-01T00:00:00Z")
+ok &= check("cancelled Pro with a future period end stays Pro",
+            effective_subscription(get_subscription(jconn, "u3"))["tier"] == "pro")
+upsert_subscription(jconn, "u3", current_period_end="2020-01-01T00:00:00Z")
+ok &= check("cancelled Pro past period end is free",
+            effective_subscription(get_subscription(jconn, "u3"))["tier"] == "free")
+upsert_subscription(jconn, "u3", current_period_end=None, status="active")
 upsert_subscription(jconn, "u3", tier="max", nonsense="x")  # unknown field must be dropped, not error
 ok &= check("upsert_subscription ignores unknown fields (no SQL injection surface)",
             get_subscription(jconn, "u3")["tier"] == "max"
