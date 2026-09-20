@@ -78,7 +78,7 @@ export function EmailNotificationsToggle() {
       </div>
       {error ? (
         <p role="alert" className="mt-3 text-xs font-semibold text-warn">
-          Couldn't update — try again.
+          {"Couldn't update — try again."}
         </p>
       ) : null}
     </section>

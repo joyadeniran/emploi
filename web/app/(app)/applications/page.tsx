@@ -143,7 +143,7 @@ export default function ApplicationsPage() {
       {loadError ? (
         <p className="mt-4 inline-flex items-center gap-2 rounded-xl bg-amber-soft px-4 py-2.5 text-xs font-semibold text-ink">
           <Info size={14} className="shrink-0" />
-          We couldn't load your applications. Refresh in a moment — nothing has been lost.
+          {"We couldn't load your applications. Refresh in a moment — nothing has been lost."}
         </p>
       ) : null}
 
