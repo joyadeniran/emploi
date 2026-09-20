@@ -50,11 +50,16 @@ export default async function EmployerDashboardPage() {
   let roles: RoleRow[] = [];
   try {
     ({ employer } = await apiFetch<{ employer: Employer }>("/employer"));
-    ({ roles } = await apiFetch<{ roles: RoleRow[] }>("/employer/roles"));
   } catch (error) {
     if (error instanceof ApiUnavailableError) throw error;
     if ((error as { status?: number }).status === 404) redirect("/employer/onboarding");
     throw error;
+  }
+  try {
+    ({ roles } = await apiFetch<{ roles: RoleRow[] }>("/employer/roles"));
+  } catch (error) {
+    if (error instanceof ApiUnavailableError) throw error;
+    // Do not send a working company to onboarding because the roles list 404'd.
   }
 
   return (
