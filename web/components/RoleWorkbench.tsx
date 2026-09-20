@@ -92,11 +92,17 @@ export function RoleWorkbench({
   async function refresh() {
     setRefining(true);
     setError(null);
-    await fetch(`/api/employer/roles/${roleId}/shortlist/refresh`, {
+    const res = await fetch(`/api/employer/roles/${roleId}/shortlist/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refinement_note: note.trim() || undefined }),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || "Couldn't regenerate the shortlist. Try again.");
+      setRefining(false);
+      return;
+    }
     setNote("");
     // Regeneration runs in the background — poll briefly.
     setTimeout(async () => { await load(); setRefining(false); }, 4000);

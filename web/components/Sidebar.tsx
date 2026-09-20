@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Settings,
   X,
+  ArrowLeftRight,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { PlanCard } from "./PlanCard";
@@ -109,6 +110,12 @@ export function Sidebar({
       </nav>
 
       <div className="space-y-3 p-4">
+        <Link
+          href="/employer"
+          className="flex items-center gap-2.5 rounded-xl border border-line px-3.5 py-2.5 text-sm font-semibold text-muted transition-colors hover:bg-surface hover:text-ink"
+        >
+          <ArrowLeftRight size={16} /> Switch to hiring
+        </Link>
         <div className="flex justify-center">
           <ThemeToggle />
         </div>

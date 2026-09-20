@@ -112,7 +112,7 @@ export function Topbar({
             aria-haspopup="menu"
           >
             <Bell size={17} />
-            {notices === null || notices.length > 0 ? (
+            {notices !== null && notices.length > 0 ? (
               <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-brand ring-2 ring-white" />
             ) : null}
           </button>

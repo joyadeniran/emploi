@@ -171,6 +171,18 @@ def get_conn():
     return conn
 
 
+def _email_in_background(fn, *args) -> None:
+    """Fire-and-forget a notify_users send. The worker opens its own
+    connection (get_conn is thread-local) so this never shares the request
+    thread's sqlite handle. Failures are logged, never raised to the caller."""
+    def _run():
+        try:
+            fn(get_conn(), *args)
+        except Exception:
+            log.exception("background email %s failed", getattr(fn, "__name__", fn))
+    threading.Thread(target=_run, name="emploi-email", daemon=True).start()
+
+
 GENERATE_CALL_TIMEOUT_S = 25  # per-provider-call bound; see FallbackModel/GroqModel
 
 
@@ -308,6 +320,30 @@ def rate_limit(request: Request, user_id: str = Depends(auth)) -> str:
     calls.append(now)
     _rate_counters[key] = calls
     return user_id
+
+
+def require_api_key(x_api_key: str = Header(default="")) -> None:
+    """Service-to-service key only — used by public GETs that must not
+    impersonate a user but also must not be an open scrape surface."""
+    if API_KEY and not secrets.compare_digest(x_api_key, API_KEY):
+        raise HTTPException(status_code=401, detail="invalid API key")
+
+
+def public_rate_limit(request: Request) -> None:
+    """IP bucket for unauthenticated-user public reads. 30/min is enough
+    for a job page + OG crawlers, not a sequential id scrape."""
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    ip = forwarded or (request.client.host if request.client else "unknown")
+    path = _NUMERIC_SEGMENT_RE.sub("/{id}", request.url.path)
+    limit, window = 30, 60
+    now = time()
+    key = f"ip:{ip}:{path}"
+    calls = [stamp for stamp in _rate_counters[key] if now - stamp < window]
+    if len(calls) >= limit:
+        raise HTTPException(status_code=429,
+                            detail=f"Rate limit: {limit} requests per {window}s")
+    calls.append(now)
+    _rate_counters[key] = calls
 
 
 # Upload / payload bounds — the wizard caps uploads at 10 MB client-side; the
@@ -617,7 +653,7 @@ def generate_application_endpoint(body: GenerateIn, response: Response,
         raise HTTPException(status_code=422, detail="job description is required")
     company = str(job.get("company") or job.get("company_name") or "")
 
-    sub = db.get_subscription(conn, user_id)
+    sub = _quota_sub(conn, user_id)
     limit = core.monthly_generation_limit(sub["tier"])
     used = db.count_generations_this_month(conn, user_id)
     if used >= limit:
@@ -676,7 +712,7 @@ def generate_cv_endpoint(body: CvIn, response: Response, background: bool = True
         raise HTTPException(status_code=422, detail="job description is required")
     company = str(job.get("company") or job.get("company_name") or "")
 
-    sub = db.get_subscription(conn, user_id)
+    sub = _quota_sub(conn, user_id)
     limit = core.monthly_generation_limit(sub["tier"])
     used = db.count_generations_this_month(conn, user_id)
     if used >= limit:
@@ -733,7 +769,7 @@ def interview_prep_endpoint(body: InterviewPrepIn, response: Response,
         raise HTTPException(status_code=422, detail="job description is required")
     company = str(job.get("company") or job.get("company_name") or "")
 
-    sub = db.get_subscription(conn, user_id)
+    sub = _quota_sub(conn, user_id)
     limit = core.monthly_generation_limit(sub["tier"])
     used = db.count_generations_this_month(conn, user_id)
     if used >= limit:
@@ -853,17 +889,28 @@ def require_paystack() -> None:
                             detail="Billing is not configured on this server.")
 
 
+def _quota_sub(conn, user_id: str) -> dict:
+    """Paid access after cancel lasts until current_period_end."""
+    return db.effective_subscription(db.get_subscription(conn, user_id))
+
+
+def _paystack_period_end(data: dict) -> Optional[str]:
+    """Paystack's next_payment_date, if present. Stored as text; never invented."""
+    end = data.get("next_payment_date") or ""
+    return end if isinstance(end, str) and end.strip() else None
+
+
 @app.get("/billing/status")
 def billing_status(user_id: str = Depends(auth)):
     conn = get_conn()
-    sub = db.get_subscription(conn, user_id)
-    tier = sub["tier"]
+    raw = db.get_subscription(conn, user_id)
+    sub = db.effective_subscription(raw)
     return {
-        "tier": tier,
-        "status": sub["status"],
-        "current_period_end": sub.get("current_period_end"),
+        "tier": sub["tier"],
+        "status": raw["status"],
+        "current_period_end": raw.get("current_period_end"),
         "used_this_month": db.count_generations_this_month(conn, user_id),
-        "limit": core.monthly_generation_limit(tier),
+        "limit": core.monthly_generation_limit(sub["tier"]),
         "prices_ngn": core.TIER_PRICES_NGN,
     }
 
@@ -879,11 +926,12 @@ def billing_checkout(body: CheckoutIn, user_id: str = Depends(auth)):
                             detail=f"The {body.tier} plan isn't configured yet — try again shortly.")
     conn = get_conn()
     twin = db.load_career_twin(conn, user_id)
-    email = (twin or {}).get("email") or ""
+    user = db.get_user(conn, user_id) or {}
+    email = (user.get("email") or (twin or {}).get("email") or "").strip()
     if not email:
         raise HTTPException(status_code=422,
                             detail="We need your email on file before checkout — "
-                                   "complete your Career Twin first.")
+                                   "sign in again, or complete your Career Twin.")
     try:
         data = billing.initialize_transaction(
             PAYSTACK_SECRET_KEY, email, core.TIER_PRICES_NGN[body.tier], plan_code,
@@ -918,7 +966,8 @@ def billing_verify(body: VerifyIn, user_id: str = Depends(auth)):
     db.upsert_subscription(
         conn, user_id, tier=tier, status="active",
         paystack_customer_code=(data.get("customer") or {}).get("customer_code"),
-        paystack_email=(data.get("customer") or {}).get("email"))
+        paystack_email=(data.get("customer") or {}).get("email"),
+        **({"current_period_end": end} if (end := _paystack_period_end(data)) else {}))
     return {"tier": tier, "status": "active"}
 
 
@@ -936,7 +985,11 @@ def billing_cancel(user_id: str = Depends(auth)):
     except Exception:
         log.exception("Paystack cancel failed for user %s", user_id[-8:])
         raise HTTPException(status_code=502, detail="Couldn't cancel with Paystack — try again shortly.")
-    db.upsert_subscription(conn, user_id, status="cancelled")
+    end = _paystack_period_end(details) if isinstance(details, dict) else None
+    fields = {"status": "cancelled"}
+    if end:
+        fields["current_period_end"] = end
+    db.upsert_subscription(conn, user_id, **fields)
     return {"ok": True}
 
 
@@ -976,10 +1029,12 @@ async def billing_webhook(request: Request):
         user_id = metadata.get("user_id")
         tier = metadata.get("tier")
         if user_id and tier in ("pro", "max"):
+            end = _paystack_period_end(data)
             db.upsert_subscription(
                 conn, user_id, tier=tier, status="active",
                 paystack_customer_code=(data.get("customer") or {}).get("customer_code"),
-                paystack_email=(data.get("customer") or {}).get("email"))
+                paystack_email=(data.get("customer") or {}).get("email"),
+                **({"current_period_end": end} if end else {}))
     elif kind == "subscription.create":
         # Paystack creates the subscription asynchronously after the first
         # successful charge; this is the only reliable place we learn its
@@ -987,18 +1042,29 @@ async def billing_webhook(request: Request):
         customer_code = (data.get("customer") or {}).get("customer_code")
         sub_code = data.get("subscription_code", "")
         if customer_code and sub_code:
+            end = _paystack_period_end(data)
+            extra = ", current_period_end = ?" if end else ""
+            params = [sub_code]
+            if end:
+                params.append(end)
+            params.append(customer_code)
             conn.execute(
-                "UPDATE subscriptions SET paystack_subscription_code = ?, "
-                "updated_at = datetime('now') WHERE paystack_customer_code = ?",
-                (sub_code, customer_code))
+                "UPDATE subscriptions SET paystack_subscription_code = ?"
+                f"{extra}, updated_at = datetime('now') "
+                "WHERE paystack_customer_code = ?", params)
             conn.commit()
     elif kind in ("subscription.disable", "subscription.not_renew"):
         code = data.get("subscription_code", "")
         if code:
-            conn.execute(
-                "UPDATE subscriptions SET tier = 'free', status = 'cancelled', "
-                "updated_at = datetime('now') WHERE paystack_subscription_code = ?", (code,))
-            conn.commit()
+            row = conn.execute(
+                "SELECT user_id FROM subscriptions "
+                "WHERE paystack_subscription_code = ?", (code,)).fetchone()
+            if row:
+                end = _paystack_period_end(data)
+                fields = {"status": "cancelled"}
+                if end:
+                    fields["current_period_end"] = end
+                db.upsert_subscription(conn, row["user_id"], **fields)
     elif kind == "invoice.payment_failed":
         code = (data.get("subscription") or {}).get("subscription_code", "")
         if code:
@@ -1143,7 +1209,44 @@ def user_session(body: UserSessionIn, user_id: str = Depends(auth)):
         raise HTTPException(status_code=422, detail="invalid email")
     db.upsert_user(get_conn(), user_id, body.email, body.name,
                    body.email_verified)
-    return {"ok": True}
+    employer = db.consolidate_employers_for_user(
+        get_conn(), user_id, body.email) or db.get_employer_for_user(get_conn(), user_id)
+    return {"ok": True, "has_employer": employer is not None}
+
+
+@app.get("/user")
+def get_user_me(user_id: str = Depends(auth)):
+    """Signed-in identity + digest opt-in. 409 until POST /user/session
+    has created the row (the web layouts do this on every render)."""
+    u = db.get_user(get_conn(), user_id)
+    if not u:
+        raise HTTPException(status_code=409,
+                            detail="user session not established; POST /user/session first")
+    return {
+        "id": u["id"],
+        "email": u["email"],
+        "name": u["name"],
+        "notifications_enabled": u["notifications_enabled"],
+    }
+
+
+@app.get("/user/portal")
+def user_portal(user_id: str = Depends(auth)):
+    """Where a signed-in Google account should land. Posters who also
+    job-seek still have /dashboard via the switcher; the home page must
+    not dump a hiring manager onto the candidate funnel."""
+    conn = get_conn()
+    user = db.get_user(conn, user_id)
+    email = (user or {}).get("email") or (user_id if "@" in user_id else "")
+    employer = db.consolidate_employers_for_user(conn, user_id, email)
+    if not employer:
+        employer = db.get_employer_for_user(conn, user_id)
+    twin = db.load_career_twin(conn, user_id) or {}
+    return {
+        "has_employer": employer is not None,
+        "has_career_twin": bool(twin),
+        "home": "/employer" if employer else "/dashboard",
+    }
 
 
 @app.patch("/user/notifications")
@@ -1233,7 +1336,12 @@ class VisibilityIn(BaseModel):
 
 
 def require_employer(user_id: str) -> dict:
-    employer = db.get_employer_for_user(get_conn(), user_id)
+    conn = get_conn()
+    user = db.get_user(conn, user_id)
+    email = (user or {}).get("email") or (user_id if "@" in user_id else "")
+    employer = db.consolidate_employers_for_user(conn, user_id, email)
+    if not employer:
+        employer = db.get_employer_for_user(conn, user_id)
     if not employer:
         raise HTTPException(status_code=404,
                             detail="no employer account — complete employer onboarding first")
@@ -1321,12 +1429,27 @@ def _generate_shortlist(role_id: int, refinement_note: str = "") -> int:
 # ---- employer onboarding / identity ----
 
 @app.post("/employer/onboarding", status_code=201)
-def employer_onboarding(body: EmployerOnboardIn, user_id: str = Depends(auth)):
+def employer_onboarding(body: EmployerOnboardIn, response: Response,
+                        user_id: str = Depends(auth)):
     conn = get_conn()
-    if db.get_employer_for_user(conn, user_id):
-        raise HTTPException(status_code=409, detail="you already have an employer account")
     domain = (body.company_domain or "").strip().lower() or \
         ingest_worker._derive_company_domain(body.company_name)
+    user = db.get_user(conn, user_id)
+    email = (user or {}).get("email") or (user_id if "@" in user_id else "")
+    # Split-identity heal: if this Google account already posted jobs under
+    # an alias, or a Supplya already exists on this domain/name they own,
+    # attach — never mint another empty company.
+    reclaimed = db.reclaim_employer(
+        conn, user_id, email, domain, body.company_name.strip())
+    if reclaimed:
+        response.status_code = 200
+        db.log_event(conn, "EmployerReclaimed",
+                     {"employer_id": reclaimed["id"]}, user_id=user_id)
+        return {"employer_id": reclaimed["id"],
+                "trust_score": reclaimed.get("trust_score"),
+                "trust_level": reclaimed.get("trust_level"),
+                "warm_intro_by": reclaimed.get("warm_intro_by"),
+                "reclaimed": True}
     score, level = _employer_trust_check(body.company_name, domain, conn)
     if level == "avoid":
         # Never create the row — an avoid-tier employer must not exist.
@@ -1339,7 +1462,7 @@ def employer_onboarding(body: EmployerOnboardIn, user_id: str = Depends(auth)):
     db.log_event(conn, "EmployerOnboarded",
                  {"employer_id": employer_id, "trust_level": level}, user_id=user_id)
     return {"employer_id": employer_id, "trust_score": score,
-            "trust_level": level, "warm_intro_by": None}
+            "trust_level": level, "warm_intro_by": None, "reclaimed": False}
 
 
 @app.get("/employer")
@@ -1517,7 +1640,9 @@ def _public_trust(role: dict) -> dict:
 
 
 @app.get("/public/roles/{role_id}")
-def public_role_endpoint(role_id: int):
+def public_role_endpoint(role_id: int, request: Request,
+                         _: None = Depends(require_api_key)):
+    public_rate_limit(request)
     conn = get_conn()
     role = db.get_public_role(conn, role_id)
     if not role:
@@ -1539,6 +1664,11 @@ def public_apply_endpoint(role_id: int, user_id: str = Depends(auth)):
         raise HTTPException(status_code=409, detail="this job is no longer accepting applications")
     if result == "ok":
         db.log_event(conn, "PublicRoleApplied", {"role_id": role_id}, user_id=user_id)
+        # Event email in a thread: SMTP/HTTP to Brevo can take seconds, and
+        # the web tier's apply fetch times out at 10s. A slow mailbox must
+        # not make the candidate think the apply failed. Hourly digest is
+        # the retry net if this thread dies.
+        _email_in_background(notify_worker.notify_new_application, role_id, user_id)
     return {"ok": True, "status": "applied", "already_applied": result == "exists"}
 
 
@@ -1728,8 +1858,7 @@ def create_invite_endpoint(role_id: int, body: InviteCreateIn,
     invite = db.get_invite(conn, invite_id)
     db.log_event(conn, "InterviewInviteSent",
                  {"invite_id": invite_id, "role_id": role_id}, user_id=user_id)
-    # Email notification rides the nightly notify worker digest; the
-    # dashboard badge (GET /invites/count) is immediate.
+    _email_in_background(notify_worker.notify_new_invite, invite_id)
     return {"invite_id": invite_id, "expires_at": invite["expires_at"]}
 
 
@@ -2293,10 +2422,12 @@ def _scheduler_jobs():
     return [
         ("ingest-hourly", ("hourly",),      lambda: ingest_worker.run(DB_PATH, min_priority=8)),
         ("ingest-daily",  ("daily", 1, 0),  lambda: ingest_worker.run(DB_PATH, min_priority=1)),
-        ("verify",        ("daily", 1, 30), lambda: verify_worker.run(DB_PATH)),
-        ("match",         ("daily", 2, 0),  lambda: match_worker.run(DB_PATH)),
+        ("verify",        ("daily", 1, 30), lambda: verify_worker.run(
+            DB_PATH, model=app.state.model_factory())),
+        ("match",         ("daily", 2, 0),  lambda: match_worker.run(
+            DB_PATH, model=app.state.model_factory())),
         ("expire",        ("daily", 2, 15), lambda: expire_invites_worker.run(DB_PATH)),
-        ("notify",        ("daily", 2, 30), lambda: notify_worker.run(DB_PATH, send_fn=notify_worker._get_send_fn())),
+        ("notify",        ("hourly",),      lambda: notify_worker.run(DB_PATH, send_fn=notify_worker._get_send_fn())),
         ("backup",        ("daily", 3, 0),  lambda: backup_worker.run(DB_PATH)),
     ]
 
@@ -2330,10 +2461,17 @@ def _start_internal_scheduler() -> bool:
                     continue
                 log.info("scheduler: running %s", name)
                 try:
-                    runner()
+                    # Heavy Gemini/network jobs must not occupy this thread —
+                    # a hung match run used to skip hourly ingest/notify until
+                    # it returned. last_run is stamped immediately so we do
+                    # not hot-loop while the background job is still going.
+                    if name in ("match", "verify", "ingest-hourly",
+                                "ingest-daily", "backup"):
+                        _run_in_background(name, runner)
+                    else:
+                        runner()
                 except Exception:
                     log.exception("scheduler: %s failed", name)
-                # Record even on failure — retry next window, don't hot-loop.
                 last[name] = datetime.utcnow()
 
     threading.Thread(target=loop, name="internal-scheduler", daemon=True).start()
@@ -2429,7 +2567,7 @@ def admin_run_backup(_: None = Depends(admin_key_auth)):
 
 _WORKER_EVENT_TYPES = (
     "JobIngestionRun", "MatchingWorkerRun", "VerificationWorkerRun",
-    "NotifyWorkerRun", "BackupWorkerRun", "ExpireInvitesRun",
+    "NotificationWorkerRun", "BackupWorkerRun", "ExpireInvitesRun",
 )
 
 
@@ -2553,8 +2691,11 @@ def admin_diagnostics(_: None = Depends(admin_key_auth)):
         "open_roles_without_poster_email": _scalar(
             "SELECT COUNT(*) FROM employer_roles er "
             "LEFT JOIN users u ON u.id = er.created_by_user_id "
+            "LEFT JOIN employer_users eu ON eu.employer_id = er.employer_id "
+            "  AND eu.role = 'owner' "
+            "LEFT JOIN users owner ON owner.id = eu.user_id "
             "WHERE er.status = 'open' "
-            "  AND (u.email IS NULL OR u.email = '')"),
+            "  AND COALESCE(u.email, owner.email, '') = ''"),
     }
 
     ready = (config["emploi_api_key"] and config["gemini"]["api_key"]

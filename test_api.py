@@ -620,11 +620,10 @@ m.PAYSTACK_PLAN_CODES = {"pro": "PLN_pro", "max": "PLN_max"}
 
 check("checkout rejects an unknown tier",
       client.post("/billing/checkout", headers=AUTH, json={"tier": "enterprise"}).status_code == 422)
-check("checkout requires an email on the Career Twin",
+check("checkout 422 without an email on file",
       client.post("/billing/checkout", headers=AUTH, json={"tier": "pro"}).status_code == 422)
 
-client.patch("/career-twin", headers=AUTH, json={"data": {"email": "ada@example.com"}})
-
+_db.upsert_user(_conn, "user-1", "ada@example.com", "Ada")
 init_calls = []
 m.billing.initialize_transaction = lambda *a, **k: (init_calls.append((a, k)) or {
     "authorization_url": "https://checkout.paystack.com/xyz", "reference": "ref_abc"})
@@ -678,10 +677,14 @@ check("cancel succeeds once a subscription code is on file", r.status_code == 20
 check("cancel marks status cancelled (tier stays until Paystack confirms via webhook)",
       client.get("/billing/status", headers=AUTH).json()["tier"] == "pro")
 
-raw, sig = _signed({"event": "subscription.disable", "data": {"subscription_code": "SUB_123"}})
+raw, sig = _signed({"event": "subscription.disable",
+                    "data": {"subscription_code": "SUB_123",
+                             "next_payment_date": "2099-01-01T00:00:00.000Z"}})
 client.post("/billing/webhook", content=raw, headers={"x-paystack-signature": sig})
-check("subscription.disable webhook downgrades the user to free",
-      client.get("/billing/status", headers=AUTH).json()["tier"] == "free")
+status_after_disable = client.get("/billing/status", headers=AUTH).json()
+check("subscription.disable keeps Pro until current_period_end",
+      status_after_disable["tier"] == "pro"
+      and status_after_disable["status"] == "cancelled")
 
 raw, sig = _signed({"event": "invoice.payment_failed",
                     "data": {"subscription": {"subscription_code": "SUB_123"}}})
@@ -867,7 +870,9 @@ check("diagnostics reports emploi_api_key=True when set",
 check("diagnostics.last_worker_runs has all six worker event types",
       set(diag["last_worker_runs"].keys()) == {
           "JobIngestionRun", "MatchingWorkerRun", "VerificationWorkerRun",
-          "NotifyWorkerRun", "BackupWorkerRun", "ExpireInvitesRun"})
+          "NotificationWorkerRun", "BackupWorkerRun", "ExpireInvitesRun"})
+check("diagnostics looks up the event name the notify worker actually logs",
+      "NotificationWorkerRun" in m._WORKER_EVENT_TYPES)
 check("diagnostics.counts has every launch-facing scale metric",
       set(diag["counts"].keys()) >= {"career_twins", "applications",
                                      "ingested_jobs", "matches",
@@ -943,6 +948,16 @@ r = client.post("/user/session", headers=AUTH,
                 json={"email": "ada@example.com", "name": "Ada",
                       "email_verified": True})
 check("user/session accepts a valid session", r.status_code == 200)
+
+r = client.get("/user/portal", headers=AUTH)
+check("user/portal reports no employer for a candidate",
+      r.status_code == 200 and r.json()["has_employer"] is False
+      and r.json()["home"] == "/dashboard")
+
+r = client.get("/user", headers=AUTH)
+check("GET /user returns the session email and digest default-on",
+      r.status_code == 200 and r.json()["email"] == "ada@example.com"
+      and r.json()["notifications_enabled"] is True)
 
 # Notifications endpoint requires a session row (returns 409 otherwise).
 r = client.patch("/user/notifications", headers=AUTH, json={"enabled": False})

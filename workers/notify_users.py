@@ -37,12 +37,46 @@ def brevo_send_fn(api_key: str, sender_email: str, sender_name: str = "Emploi Ca
     return _send
 
 
+def smtp_send_fn(login: str, password: str, sender_email: str,
+                 host: str = "smtp-relay.brevo.com", port: int = 587,
+                 sender_name: str = "Emploi Career Twin"):
+    """Return a send_fn(email, subject, body) that sends via SMTP.
+
+    Production has been storing a Brevo *SMTP* key in BREVO_API_KEY (not an
+    `xkeysib-` v3 API key). Posting to api.brevo.com/v3 then 401s every
+    digest. SMTP is the honest path for that key.
+    """
+    def _send(to_email: str, subject: str, body: str):
+        import smtplib
+        from email.mime.text import MIMEText
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = subject
+        msg["From"] = f"{sender_name} <{sender_email}>"
+        msg["To"] = to_email
+        with smtplib.SMTP(host, port, timeout=10) as smtp:
+            smtp.starttls()
+            smtp.login(login, password)
+            smtp.sendmail(sender_email, [to_email], msg.as_string())
+    return _send
+
+
 def _get_send_fn():
     api_key = os.getenv("BREVO_API_KEY", "")
     sender = os.getenv("BREVO_SENDER_EMAIL", "")
     if not api_key or not sender:
         return None
-    return brevo_send_fn(api_key, sender)
+    # v3 transactional API keys start with xkeysib-. Anything else in this
+    # env var (including the SMTP key that has been in production) goes
+    # through smtp-relay.brevo.com so apply emails actually leave.
+    if api_key.startswith("xkeysib-"):
+        return brevo_send_fn(api_key, sender)
+    login = os.getenv("BREVO_SMTP_LOGIN", "") or sender
+    host = os.getenv("BREVO_SMTP_HOST", "") or "smtp-relay.brevo.com"
+    try:
+        port = int(os.getenv("BREVO_SMTP_PORT", "587") or 587)
+    except ValueError:
+        port = 587
+    return smtp_send_fn(login, api_key, sender, host, port)
 
 def _pending_invites(conn, user_id):
     """Un-notified pending interview invites for one candidate (Phase 2).
@@ -112,6 +146,101 @@ def _notify_employers(conn, dry_run, send_fn):
             "employer_skipped_no_email": skipped_no_email,
             "employer_skipped_opted_out": skipped_opted_out,
             "employer_send_failures": send_failures}
+
+
+def notify_new_application(conn, role_id, candidate_user_id, send_fn=None):
+    """Email the poster immediately when someone applies. Never raises.
+
+    The nightly/hourly digest is a retry net, not the product promise —
+    'someone applied' is an event, not a morning summary. Marks the row
+    notified on a successful send so the digest does not double-send.
+    """
+    if send_fn is None:
+        send_fn = _get_send_fn()
+    if send_fn is None:
+        return {"sent": False, "reason": "no_sender"}
+    pending = [r for r in db.list_unnotified_role_applicants(conn)
+               if int(r["employer_role_id"]) == int(role_id)
+               and r["candidate_user_id"] == candidate_user_id]
+    if not pending:
+        return {"sent": False, "reason": "nothing_pending"}
+    row = pending[0]
+    if not int(row["notifications_enabled"]):
+        return {"sent": False, "reason": "opted_out"}
+    email = row["poster_email"]
+    if not email:
+        return {"sent": False, "reason": "no_email"}
+    candidate = db.get_user(conn, candidate_user_id) or {}
+    cand_name = candidate.get("name") or "A candidate"
+    cand_email = candidate.get("email") or ""
+    title = row["role_title"] or "your role"
+    subject = f"New applicant for {title} on Emploi"
+    body = "\n".join([
+        f"Hi {row['poster_name'] or 'there'},",
+        "",
+        f"{cand_name} just applied to {title}.",
+        (f"Email: {cand_email}" if cand_email else ""),
+        "",
+        f"Review the application: https://app.emploihq.com/employer/roles/{role_id}",
+        "",
+        "— Emploi",
+    ])
+    try:
+        send_fn(email, subject, body)
+    except Exception as exc:
+        return {"sent": False, "reason": "send_failed", "error": str(exc)[:200]}
+    db.mark_role_applications_notified(conn, [row["id"]])
+    return {"sent": True, "to": email}
+
+
+def notify_new_invite(conn, invite_id, send_fn=None):
+    """Email the candidate immediately when an employer invites them.
+
+    Same contract as notify_new_application: never raises, marks notified
+    only after a successful send so the hourly digest is the retry net.
+    """
+    if send_fn is None:
+        send_fn = _get_send_fn()
+    if send_fn is None:
+        return {"sent": False, "reason": "no_sender"}
+    inv = db.get_invite_detail(conn, invite_id)
+    if not inv:
+        return {"sent": False, "reason": "nothing_pending"}
+    if int(inv.get("notified") or 0):
+        return {"sent": False, "reason": "already_notified"}
+    if inv.get("status") != "pending":
+        return {"sent": False, "reason": "nothing_pending"}
+    user = db.get_user(conn, inv["candidate_user_id"]) or {}
+    email = user.get("email")
+    if not email:
+        twin = db.load_career_twin(conn, inv["candidate_user_id"]) or {}
+        email = twin.get("email") if isinstance(twin, dict) else None
+    if not email:
+        return {"sent": False, "reason": "no_email"}
+    if user and not int(user.get("notifications_enabled", 1)):
+        return {"sent": False, "reason": "opted_out"}
+    name = user.get("name") or "there"
+    company = inv.get("company_name") or "an employer"
+    title = inv.get("role_title") or "a role"
+    subject = f"{company} invited you to interview for {title}"
+    body = "\n".join([
+        f"Hi {name},",
+        "",
+        f"{company} invited you to interview for {title} on Emploi.",
+        "",
+        "Review and respond: https://app.emploihq.com/invites",
+        "",
+        "— Emploi",
+    ])
+    try:
+        send_fn(email, subject, body)
+    except Exception as exc:
+        return {"sent": False, "reason": "send_failed", "error": str(exc)[:200]}
+    conn.execute(
+        "UPDATE interview_invites SET notified = 1, notified_at = datetime('now') "
+        "WHERE id = ?", (invite_id,))
+    conn.commit()
+    return {"sent": True, "to": email}
 
 
 def run(db_path, dry_run=False, send_fn=None):

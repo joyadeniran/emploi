@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { Info, Loader2 } from "lucide-react";
 import {
-  applications as demoApplications,
   statusMeta,
   type ApplicationStatus,
 } from "@/lib/data";
@@ -78,6 +77,7 @@ export default function ApplicationsPage() {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
   const [rows, setRows] = useState<Row[] | null>(null);
   const [live, setLive] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,8 +92,9 @@ export default function ApplicationsPage() {
         }
       } catch {
         if (!cancelled) {
-          setRows(demoApplications as Row[]);
+          setRows([]);
           setLive(false);
+          setLoadError(true);
         }
       }
     })();
@@ -107,7 +108,7 @@ export default function ApplicationsPage() {
     setRows((rs) =>
       rs ? rs.map((r) => (r.id === row.id ? { ...r, status } : r)) : rs,
     );
-    if (!live) return; // demo data: local-only change
+    if (!live) return;
     try {
       const res = await fetch(`/api/applications/${row.id}`, {
         method: "PATCH",
@@ -139,11 +140,10 @@ export default function ApplicationsPage() {
         Everything your Career Twin has sent, and where each one stands.
       </p>
 
-      {rows !== null && !live ? (
+      {loadError ? (
         <p className="mt-4 inline-flex items-center gap-2 rounded-xl bg-amber-soft px-4 py-2.5 text-xs font-semibold text-ink">
           <Info size={14} className="shrink-0" />
-          Showing sample data — the Emploi API isn&apos;t reachable, so changes
-          here won&apos;t be saved.
+          {"We couldn't load your applications. Refresh in a moment — nothing has been lost."}
         </p>
       ) : null}
 

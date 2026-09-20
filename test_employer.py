@@ -94,9 +94,11 @@ check("cold onboarding is NEVER 'high' — domain control is unproven",
       r.json()["trust_level"] == "medium")
 emp_id = r.json()["employer_id"]
 
-check("duplicate onboarding -> 409",
-      client.post("/employer/onboarding", headers=HM,
-                  json={"company_name": "Acme Again"}).status_code == 409)
+r = client.post("/employer/onboarding", headers=HM,
+                json={"company_name": "Acme Again"})
+check("duplicate onboarding reattaches the existing company (does not mint a second)",
+      r.status_code in (200, 201) and r.json()["employer_id"] == emp_id
+      and r.json().get("reclaimed") is True)
 
 r = client.get("/employer", headers=HM)
 check("GET /employer returns identity + billing snapshot",
@@ -250,9 +252,11 @@ check("role endpoints require an employer account",
 
 # ---------------- public job page + apply funnel ----------------
 CANDP = {"X-API-Key": "test-key", "X-User-Id": "cand-pub"}
-# Public view: no auth header at all.
-r = client.get(f"/public/roles/{free_role_id}")
-check("public role page is viewable with NO auth",
+PUB = {"X-API-Key": "test-key"}
+# Public view: API key (service-to-service) but no user id — the Next.js
+# server fetches this; browsers never hit the API directly.
+r = client.get(f"/public/roles/{free_role_id}", headers=PUB)
+check("public role page is viewable with the API key and no user",
       r.status_code == 200 and r.json()["role"]["id"] == free_role_id
       and r.json()["role"]["company_name"] == "Acme Corp")
 check("public role exposes only safe fields (no invites/shortlist/employer internals)",
@@ -262,8 +266,10 @@ check("public role exposes only safe fields (no invites/shortlist/employer inter
 check("public role trust is honest ('Company checked', not 'Verified employer')",
       r.json()["role"]["trust"]["verified"] is False
       and r.json()["role"]["trust"]["label"] == "Company checked")
+check("public role without API key -> 401",
+      client.get(f"/public/roles/{free_role_id}").status_code == 401)
 check("unknown public role -> 404",
-      client.get("/public/roles/999999").status_code == 404)
+      client.get("/public/roles/999999", headers=PUB).status_code == 404)
 
 # Apply is auth-gated (the Google sign-in funnel).
 check("applying without auth -> 401",
@@ -293,10 +299,10 @@ _emp1 = _db.get_employer_for_user(conn, "hm-1")
 _tmp = _db.create_role(conn, _emp1["id"], "hm-1",
                        {"title": "Temp Role", "description": "temp", "is_remote": False})
 check("public view of an open role works before close",
-      client.get(f"/public/roles/{_tmp['id']}").status_code == 200)
+      client.get(f"/public/roles/{_tmp['id']}", headers=PUB).status_code == 200)
 _db.close_role(conn, _tmp["id"], "filled")
 check("public view of a closed role -> 404",
-      client.get(f"/public/roles/{_tmp['id']}").status_code == 404)
+      client.get(f"/public/roles/{_tmp['id']}", headers=PUB).status_code == 404)
 check("applying to a closed role -> 409",
       client.post(f"/public/roles/{_tmp['id']}/apply",
                   headers={"X-API-Key": "test-key", "X-User-Id": "cand-2"}).status_code == 409)

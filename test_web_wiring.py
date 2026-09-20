@@ -183,6 +183,78 @@ check("apiFetch still sends X-API-Key", '"X-API-Key"' in api_lib)
 check("apiFetch still asserts and forwards the user id", '"X-User-Id"' in api_lib)
 check("lib/api.ts is server-only", 'import "server-only"' in api_lib)
 
+# ---------------------------------------------------------------------------
+# 5. Home remembers posters. Apply emails fire now, not at 02:30 UTC.
+# ---------------------------------------------------------------------------
+home = read("app", "page.tsx") or ""
+check("home asks the API which portal this Google account belongs to",
+      "/user/portal" in home)
+check("home establishes the user session before routing",
+      "ensureUserSession" in home)
+check("home does not hardcode /dashboard for every signed-in user",
+      'redirect(session ? "/dashboard"' not in home
+      and "redirect(session ? '/dashboard'" not in home)
+check("home does not call redirect() inside the portal try/catch (Next.js swallows it)",
+      "redirect(portal" not in home)
+check("home redirects AFTER the portal lookup, to the resolved path",
+      "redirect(home)" in home)
+
+dashboard = read("app", "(app)", "dashboard", "page.tsx") or ""
+check("dashboard skips the candidate wizard for a signed-in poster",
+      "has_employer" in dashboard)
+
+twin_layout = read("app", "create-career-twin", "layout.tsx") or ""
+check("career-twin onboarding establishes the user session",
+      "ensureUserSession" in twin_layout)
+
+settings = read("app", "(app)", "settings", "page.tsx") or ""
+check("settings page exposes the email-alerts toggle",
+      "EmailNotificationsToggle" in settings)
+check("EmailNotificationsToggle component exists",
+      read("components", "EmailNotificationsToggle.tsx") is not None)
+
+auth_ts = read("auth.ts") or ""
+check("NextAuth trustHost is on (custom domain session cookie)",
+      "trustHost: true" in auth_ts)
+check("jwt callback copies user.id onto token.sub",
+      "token.sub" in auth_ts and "jwt(" in auth_ts)
+
+sidebar = read("components", "Sidebar.tsx") or ""
+check("candidate sidebar has a switch to the hiring portal",
+      "Switch to hiring" in sidebar and 'href="/employer"' in sidebar)
+emp_shell = read("components", "EmployerShell.tsx") or ""
+check("employer shell still has a switch to job search",
+      "Switch to job search" in emp_shell)
+
+main_py = open(os.path.join(ROOT, "api", "main.py"), encoding="utf-8").read()
+check("apply endpoint sends an email immediately, not only via the digest",
+      "notify_new_application" in main_py)
+check("apply email is backgrounded so a slow mailbox cannot 500 the apply",
+      "_email_in_background" in main_py)
+check("invite endpoint emails the candidate immediately",
+      "notify_new_invite" in main_py)
+check("GET /user exists so settings can read the digest opt-in",
+      '@app.get("/user")' in main_py)
+notify_py = open(os.path.join(ROOT, "workers", "notify_users.py"), encoding="utf-8").read()
+check("SMTP path exists for a non-xkeysib BREVO_API_KEY",
+      "smtp_send_fn" in notify_py and 'startswith("xkeysib-")' in notify_py)
+
+workers_ui = read("components", "admin", "WorkerControls.tsx") or ""
+check("admin UI looks up NotificationWorkerRun (the name the worker logs)",
+      "NotificationWorkerRun" in workers_ui
+      and "NotifyWorkerRun" not in workers_ui)
+check("scheduler injects the API model factory into nightly matching",
+      "model=app.state.model_factory()" in main_py)
+check("toMatchCard does not stamp every match as New",
+      "isNew: true" not in (read("lib", "api.ts") or ""))
+check("applications page does not fall back to demo rows on error",
+      "demoApplications" not in (read("app", "(app)", "applications", "page.tsx") or ""))
+onb = read("app", "(employer)", "employer", "onboarding", "page.tsx") or ""
+check("onboarding page skips the form if this Google account already has a company",
+      "hasEmployer" in onb and "ensureUserSession" in onb)
+check("onboarding page does not swallow redirect() inside try/catch",
+      "if (hasEmployer) redirect" in onb)
+
 
 print()
 if FAILURES:

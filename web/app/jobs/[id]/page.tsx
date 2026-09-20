@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { BadgeCheck, MapPin, ShieldAlert, ShieldCheck, Sparkles, Wallet } from "lucide-react";
 import { auth } from "@/auth";
 import { Logo } from "@/components/Logo";
-import { ApiUnavailableError, apiFetch, publicApiFetch } from "@/lib/api";
+import { ApiUnavailableError, apiFetch, ensureUserSession, publicApiFetch } from "@/lib/api";
 import { PublicApplyButton } from "@/components/PublicApplyButton";
 
 interface PublicRole {
@@ -77,6 +77,7 @@ export default async function PublicJobPage({ params }: { params: Promise<{ id: 
   }
   const session = await auth();
   const signedIn = Boolean(session?.user);
+  if (signedIn) await ensureUserSession();
 
   // If signed in, learn whether they've already applied so the button renders
   // the "already applied" state on load instead of only after a click.
@@ -98,7 +99,7 @@ export default async function PublicJobPage({ params }: { params: Promise<{ id: 
       <header className="border-b border-line bg-card">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-4">
           <Link href="/" aria-label="Emploi home"><Logo markSize={22} /></Link>
-          <Link href="/login" className="text-sm font-bold text-brand hover:underline">
+          <Link href="/" className="text-sm font-bold text-brand hover:underline">
             {signedIn ? "Dashboard" : "Sign in"}
           </Link>
         </div>

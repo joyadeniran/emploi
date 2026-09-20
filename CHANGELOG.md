@@ -5,6 +5,31 @@ All notable changes to this project. Format loosely follows [Keep a Changelog](h
 ## [Unreleased]
 Planned: more job sources (Jooble/Adzuna behind env keys), generic career-page connector + company registry (design pass first), browser extension, WHOIS domain-age check, OCR for scanned CVs, curator partner pilot (Halo), BYOK option for users, Postgres migration when multi-instance is needed. Employer Portal v1.x: volume discounts on unlock packs, credit-back on declined invites (design pass), candidate block button, team accounts, per-job full-description fetch for Workable/SmartRecruiters.
 
+### Fixed — no email on apply, and Google login could not tell a poster from a seeker (2026-09-19)
+Live report: three open roles (`/jobs/1`, `/jobs/2`, `/jobs/3`) received applications with no email to the poster; signing in with Google several times did not restore the employer account.
+
+**Apply email was a 02:30 UTC digest, and the key was the wrong kind.** `POST /public/roles/{id}/apply` only wrote a `role_applications` row. The notify worker ran once a day, and only if the process had been up across 02:30 UTC (`last_run` is seeded to "now" on deploy so daily jobs do not retro-fire). On top of that `BREVO_API_KEY` in production is an SMTP key, not an `xkeysib-` v3 API key, so every digest 401'd against `api.brevo.com`. Fix: send the poster an email in the apply request itself (`notify_new_application`); mark that row notified so the digest does not double-send; if the env key is not `xkeysib-`, send via `smtp-relay.brevo.com` instead of pretending the HTTP API will work; run the digest hourly as a retry net. A mail failure never 500s the apply.
+
+**Google `sub` and email-as-id were two different people.** `apiFetch` sent `X-User-Id: session.user.id ?? session.user.email`. Some requests stored the employer under the email, later ones under the Google `sub`. `get_employer_for_user` then 404'd, the home page always `redirect("/dashboard")`, and `list_unnotified_role_applicants` LEFT JOINed `users` on `created_by_user_id` — so the poster had no email and every digest counted `employer_skipped_no_email`. Fix: `upsert_user` absorbs same-email aliases (membership, posted roles, twins, applications) onto the live Google id; `get_employer_for_user` falls back through email; the unnotified-applicant query also reads the owner membership's users row; `/` calls `GET /user/portal` after `ensureUserSession` and sends posters to `/employer`; candidate login's default return is `/` not `/dashboard`; both shells expose a portal switch; NextAuth `trustHost: true` plus a jwt callback so the session cookie is issued for `app.emploihq.com`.
+
+### Fixed — sixth empty Supplya (2026-09-20)
+Each Google login that the identity split didn't recognise 404'd `/employer` and the onboarding form minted a **new** company. Jobs posted under the previous identity stayed on the old row, so the portal looked empty and applicants were invisible. `consolidate_employers_for_user` now merges every employer this email has ever owned onto the one with the most roles, `reclaim_employer` attaches onboarding by domain/name instead of creating a seventh Supplya, GET `/employer` runs that heal, and the onboarding page redirects if a company already exists.
+
+### Fixed — second audit pass (2026-09-20)
+Admin diagnostics looked for `NotifyWorkerRun` while the worker logged `NotificationWorkerRun`, so `/admin` showed notify as **never run** even when hourly mail was healthy. Nightly matching used a bare Gemini client (no Groq, no timeout) on the scheduler thread, so a hung `generate_content` stalled ingest/notify. Cancelled Pro was dropped to free the moment Paystack fired `subscription.disable`, against the Settings copy. Candidate checkout required `career_twins.data.email` even when Google email was already on `users`.
+
+Also: notification bell always looked unread; every match was labelled New; Applications showed demo OPay rows on any API error; dashboard still wizard-trapped posters if `/user/portal` blipped; admin login was unthrottled; shortlist Regenerate swallowed errors; Streamlit console failed open with no `EMPLOI_ADMIN_CODE`; `GET /public/roles/{id}` was keyless and unrate-limited on a public Render service.
+
+### Fixed — full audit after the apply-email/identity report (2026-09-20)
+The previous fix still dumped every signed-in user on `/dashboard`. Next.js implements `redirect()` by throwing; `web/app/page.tsx` called it *inside* `try/catch`, which swallowed the employer landing and always fell through to the candidate funnel — and the candidate dashboard then forced anyone without a Career Twin into the wizard. A hiring manager who posted `/jobs/1–3` therefore still looked like a first-time job seeker.
+
+**Also found and fixed in the same pass:**
+- Apply email ran *inline* on the request. SMTP/HTTP to Brevo can take seconds; the web apply fetch times out at 10s, so a slow mailbox made the candidate think the apply failed even after the row was committed. Email now runs on a background thread (hourly digest is the retry net).
+- Interview invites had the same "wait for the digest" hole as applies. `notify_new_invite` emails the candidate immediately.
+- `PATCH /user/notifications` had **zero web callers**. Settings now has an Email alerts toggle, backed by new `GET /user`.
+- Career Twin onboarding never called `ensureUserSession`, so a brand-new Google account could apply/be invited with no `users` row.
+- Diagnostics `open_roles_without_poster_email` still ignored the owner-membership fallback.
+
 - **Web** — fix: preserve OAuth callback during server-side unauthenticated redirects by rendering a client redirect that preserves the current path as `callbackUrl`. Prevents a login → onboarding redirect loop in some environments. (Adds `ClientRedirectToLogin` and updates server layouts.)
 
 ### Fixed — `POST /user/session` had zero callers, so the `users` table was always empty (2026-08-08)

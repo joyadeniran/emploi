@@ -538,6 +538,10 @@ def upsert_user(conn, user_id: str, email: str, name: Optional[str] = None,
     email/name/email_verified are written from the session — notifications_
     enabled and created_at are preserved once set, so a returning user
     keeps their preference.
+
+    Same-email aliases (Google `sub` on one visit, email-as-id on another)
+    are collapsed onto `user_id` so an employer who posted roles under a
+    previous id still owns them after the next sign-in.
     """
     if not user_id:
         raise ValueError("user_id required")
@@ -560,6 +564,7 @@ def upsert_user(conn, user_id: str, email: str, name: Optional[str] = None,
         "  last_seen_at = datetime('now')",
         (user_id, email, name, 1 if email_verified else 0))
     conn.commit()
+    adopt_email_aliases(conn, user_id, email)
 
 
 def get_user(conn, user_id: str) -> Optional[dict]:
@@ -572,6 +577,122 @@ def get_user(conn, user_id: str) -> Optional[dict]:
     out["email_verified"] = bool(out.get("email_verified"))
     out["notifications_enabled"] = bool(out.get("notifications_enabled", 1))
     return out
+
+
+def adopt_email_aliases(conn, canonical_user_id: str, email: str) -> int:
+    """Re-point every row keyed by a same-email alias onto canonical_user_id.
+
+    Production split: NextAuth sometimes forwarded Google `sub`, sometimes
+    the email, as X-User-Id. Employer membership, posted roles, and the
+    users-table email the notify worker reads then lived on different ids,
+    so a returning Google login looked like a stranger and apply emails
+    had no poster address. Returns how many alias user rows were absorbed.
+    """
+    if not canonical_user_id or not email:
+        return 0
+    aliases = [r["id"] for r in conn.execute(
+        "SELECT id FROM users WHERE lower(email) = lower(?) AND id != ?",
+        (email, canonical_user_id)).fetchall()]
+    # Also catch employer_users / created_by ids that never got a users row
+    # but match this email-as-id (the pre-users-table / email-fallback path).
+    if email != canonical_user_id and email not in aliases:
+        if conn.execute(
+                "SELECT 1 FROM employer_users WHERE user_id = ?",
+                (email,)).fetchone():
+            aliases.append(email)
+    moved = 0
+    for old_id in aliases:
+        _repoint_user_id(conn, old_id, canonical_user_id)
+        moved += 1
+    if moved:
+        conn.commit()
+    return moved
+
+
+def _repoint_user_id(conn, old_id: str, new_id: str) -> None:
+    """Move every FK from old_id to new_id, then drop the alias users row."""
+    if not old_id or not new_id or old_id == new_id:
+        return
+
+    def _update(sql, params):
+        try:
+            conn.execute(sql, params)
+        except sqlite3.IntegrityError:
+            pass
+
+    # Preserve an explicit opt-out on the alias.
+    old = conn.execute(
+        "SELECT notifications_enabled FROM users WHERE id = ?",
+        (old_id,)).fetchone()
+    if old is not None and not int(old["notifications_enabled"]):
+        conn.execute(
+            "UPDATE users SET notifications_enabled = 0 WHERE id = ?",
+            (new_id,))
+
+    _update("UPDATE employer_users SET user_id = ? WHERE user_id = ?",
+            (new_id, old_id))
+    conn.execute("DELETE FROM employer_users WHERE user_id = ?", (old_id,))
+    conn.execute(
+        "UPDATE employer_roles SET created_by_user_id = ? "
+        "WHERE created_by_user_id = ?", (new_id, old_id))
+    conn.execute(
+        "UPDATE employer_roles SET hired_candidate_user_id = ? "
+        "WHERE hired_candidate_user_id = ?", (new_id, old_id))
+
+    if conn.execute("SELECT 1 FROM career_twins WHERE user_id = ?",
+                    (new_id,)).fetchone():
+        conn.execute("DELETE FROM career_twins WHERE user_id = ?", (old_id,))
+    else:
+        _update("UPDATE career_twins SET user_id = ? WHERE user_id = ?",
+                (new_id, old_id))
+
+    conn.execute("UPDATE applications SET user_id = ? WHERE user_id = ?",
+                 (new_id, old_id))
+    _update("UPDATE matches SET user_id = ? WHERE user_id = ?",
+            (new_id, old_id))
+    conn.execute("DELETE FROM matches WHERE user_id = ?", (old_id,))
+    _update("UPDATE saved_jobs SET user_id = ? WHERE user_id = ?",
+            (new_id, old_id))
+    conn.execute("DELETE FROM saved_jobs WHERE user_id = ?", (old_id,))
+    if conn.execute("SELECT 1 FROM subscriptions WHERE user_id = ?",
+                    (new_id,)).fetchone():
+        conn.execute("DELETE FROM subscriptions WHERE user_id = ?", (old_id,))
+    else:
+        _update("UPDATE subscriptions SET user_id = ? WHERE user_id = ?",
+                (new_id, old_id))
+    conn.execute(
+        "UPDATE generation_log SET user_id = ? WHERE user_id = ?",
+        (new_id, old_id))
+    conn.execute("UPDATE events SET user_id = ? WHERE user_id = ?",
+                 (new_id, old_id))
+    _update(
+        "UPDATE role_applications SET candidate_user_id = ? "
+        "WHERE candidate_user_id = ?", (new_id, old_id))
+    conn.execute(
+        "DELETE FROM role_applications WHERE candidate_user_id = ?",
+        (old_id,))
+    _update(
+        "UPDATE interview_invites SET candidate_user_id = ? "
+        "WHERE candidate_user_id = ?", (new_id, old_id))
+    conn.execute(
+        "DELETE FROM interview_invites WHERE candidate_user_id = ?",
+        (old_id,))
+    conn.execute(
+        "UPDATE interview_invites SET invited_by_user_id = ? "
+        "WHERE invited_by_user_id = ?", (new_id, old_id))
+    try:
+        conn.execute(
+            "UPDATE role_shortlists SET candidate_user_id = ? "
+            "WHERE candidate_user_id = ?", (new_id, old_id))
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute(
+            "UPDATE candidate_unlocks SET candidate_user_id = ? "
+            "WHERE candidate_user_id = ?", (new_id, old_id))
+    except sqlite3.OperationalError:
+        pass
+    conn.execute("DELETE FROM users WHERE id = ?", (old_id,))
 
 
 def list_users(conn, limit: int = 500) -> list:
@@ -775,6 +896,35 @@ def get_subscription(conn, user_id: str) -> dict:
     return {"user_id": user_id, "tier": "free", "status": "active",
            "paystack_customer_code": None, "paystack_subscription_code": None,
            "paystack_email": None, "current_period_end": None}
+
+
+def effective_subscription(sub: dict) -> dict:
+    """Access-control view of a billing row.
+
+    Cancelled Pro/Max stays paid until `current_period_end`. After that
+    date (or if the date is unparseable-and-clearly-past) the user is
+    free. A cancelled row with no period end keeps the paid tier — the
+    Settings copy promises access until period end, and dropping them
+    the moment Paystack fires `subscription.disable` broke that promise.
+    """
+    out = dict(sub)
+    if out.get("status") != "cancelled":
+        return out
+    if out.get("tier") in (None, "free"):
+        return out
+    end = (out.get("current_period_end") or "").strip()
+    if not end:
+        return out
+    try:
+        from datetime import datetime, timezone
+        parsed = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        if parsed <= datetime.utcnow():
+            out["tier"] = "free"
+    except ValueError:
+        pass
+    return out
 
 
 def upsert_subscription(conn, user_id: str, **fields) -> None:
@@ -1051,12 +1201,172 @@ def get_employer(conn, employer_id: int) -> Optional[dict]:
 
 
 def get_employer_for_user(conn, user_id: str) -> Optional[dict]:
-    """The employer a user belongs to (v1: at most one), or None."""
+    """The employer a user belongs to (v1: at most one), or None.
+
+    Direct membership first; if this Google id has no employer_users row,
+    look up any membership sharing the same email (split-identity heal).
+    """
     row = conn.execute(
-        "SELECT e.*, eu.role AS membership_role FROM employer_users eu "
+        "SELECT e.*, eu.role AS membership_role, "
+        "  (SELECT COUNT(*) FROM employer_roles r WHERE r.employer_id = e.id) AS _roles "
+        "FROM employer_users eu "
         "JOIN employers e ON e.id = eu.employer_id WHERE eu.user_id = ? "
-        "ORDER BY eu.id LIMIT 1", (user_id,)).fetchone()
+        "ORDER BY _roles DESC, eu.id ASC LIMIT 1", (user_id,)).fetchone()
+    if row:
+        return dict(row)
+    user = get_user(conn, user_id)
+    email = (user or {}).get("email") or ""
+    if not email:
+        return None
+    row = conn.execute(
+        "SELECT e.*, eu.role AS membership_role, "
+        "  (SELECT COUNT(*) FROM employer_roles r WHERE r.employer_id = e.id) AS _roles "
+        "FROM employer_users eu "
+        "JOIN employers e ON e.id = eu.employer_id "
+        "JOIN users u ON u.id = eu.user_id "
+        "WHERE lower(u.email) = lower(?) "
+        "ORDER BY _roles DESC, eu.id ASC LIMIT 1", (email,)).fetchone()
     return dict(row) if row else None
+
+
+def _employer_ids_for_identity(conn, user_id: str, email: str = "") -> list:
+    """Every employer this Google account has ever touched, including
+    split-identity aliases (email-as-id, previous subs)."""
+    ids = set()
+    keys = [user_id]
+    if email and email != user_id:
+        keys.append(email)
+        for r in conn.execute(
+                "SELECT id FROM users WHERE lower(email) = lower(?) AND id != ?",
+                (email, user_id)).fetchall():
+            keys.append(r["id"])
+    q = ",".join("?" * len(keys))
+    for r in conn.execute(
+            f"SELECT employer_id FROM employer_users WHERE user_id IN ({q})",
+            keys).fetchall():
+        ids.add(int(r["employer_id"]))
+    # Historical created_by is only a claim when we have an email — a
+    # deleted account (no users row) must not be resurrected via leftover
+    # role.created_by_user_id on GET /employer.
+    if email:
+        for r in conn.execute(
+                f"SELECT DISTINCT employer_id FROM employer_roles "
+                f"WHERE created_by_user_id IN ({q})", keys).fetchall():
+            ids.add(int(r["employer_id"]))
+        for r in conn.execute(
+                "SELECT eu.employer_id FROM employer_users eu "
+                "JOIN users u ON u.id = eu.user_id "
+                "WHERE lower(u.email) = lower(?)", (email,)).fetchall():
+            ids.add(int(r["employer_id"]))
+    return sorted(ids)
+
+
+def _merge_employer_into(conn, src_id: int, dest_id: int) -> None:
+    """Move roles, credits, memberships from src onto dest. Leaves the
+    empty src row for audit (company_name tagged)."""
+    if src_id == dest_id:
+        return
+    conn.execute("UPDATE employer_roles SET employer_id = ? WHERE employer_id = ?",
+                 (dest_id, src_id))
+    try:
+        conn.execute(
+            "UPDATE employer_credit_ledger SET employer_id = ? WHERE employer_id = ?",
+            (dest_id, src_id))
+    except sqlite3.IntegrityError:
+        conn.execute("DELETE FROM employer_credit_ledger WHERE employer_id = ?",
+                     (src_id,))
+    conn.execute(
+        "INSERT OR IGNORE INTO employer_users (user_id, employer_id, role) "
+        "SELECT user_id, ?, role FROM employer_users WHERE employer_id = ?",
+        (dest_id, src_id))
+    conn.execute("DELETE FROM employer_users WHERE employer_id = ?", (src_id,))
+    conn.execute(
+        "UPDATE employers SET company_name = CASE "
+        "  WHEN company_name LIKE '% (merged)' THEN company_name "
+        "  ELSE company_name || ' (merged)' END, "
+        "updated_at = datetime('now') WHERE id = ?", (src_id,))
+
+
+def consolidate_employers_for_user(conn, user_id: str, email: str = "") -> Optional[dict]:
+    """Heal the 'I posted jobs, signed in, created Supplya again, jobs
+    vanished' loop. Duplicate employer rows from split Google identities
+    are merged onto the one with the most roles. Called on every
+    authenticated employer request and on onboarding."""
+    if not user_id:
+        return None
+    if email:
+        adopt_email_aliases(conn, user_id, email)
+    ids = _employer_ids_for_identity(conn, user_id, email)
+    if not ids:
+        return None
+    scored = []
+    for eid in ids:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM employer_roles WHERE employer_id = ?",
+            (eid,)).fetchone()[0]
+        scored.append((n, -eid, eid))  # most roles, then oldest id
+    scored.sort(reverse=True)
+    primary = scored[0][2]
+    for _, _, other in scored[1:]:
+        _merge_employer_into(conn, other, primary)
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO employer_users (user_id, employer_id, role) "
+            "VALUES (?, ?, 'owner')", (user_id, primary))
+    except sqlite3.IntegrityError:
+        pass
+    conn.commit()
+    return get_employer(conn, primary)
+
+
+def reclaim_employer(conn, user_id: str, email: str,
+                     company_domain: str = "", company_name: str = "") -> Optional[dict]:
+    """Onboarding: if this company already exists under a split identity
+    or the same domain/name this person owns, attach — never mint a
+    seventh empty 'Supplya'."""
+    existing = consolidate_employers_for_user(conn, user_id, email)
+    if existing:
+        return existing
+    domain = (company_domain or "").strip().lower()
+    name = " ".join((company_name or "").lower().split())
+    row = None
+    if domain:
+        row = conn.execute(
+            "SELECT id FROM employers WHERE lower(company_domain) = ? "
+            "AND company_name NOT LIKE '% (merged)' "
+            "ORDER BY id LIMIT 1", (domain,)).fetchone()
+    if row is None and name:
+        # Only attach by name when this identity already created a role
+        # there, or the employer has no owner with a different email.
+        candidates = conn.execute(
+            "SELECT e.id FROM employers e "
+            "WHERE lower(trim(e.company_name)) = ? "
+            "AND e.company_name NOT LIKE '% (merged)' "
+            "ORDER BY e.id", (name,)).fetchall()
+        for cand in candidates:
+            owners = conn.execute(
+                "SELECT u.email FROM employer_users eu "
+                "LEFT JOIN users u ON u.id = eu.user_id "
+                "WHERE eu.employer_id = ? AND eu.role = 'owner'",
+                (cand["id"],)).fetchall()
+            created = conn.execute(
+                "SELECT 1 FROM employer_roles WHERE employer_id = ? "
+                "AND created_by_user_id IN (?, ?)",
+                (cand["id"], user_id, email or user_id)).fetchone()
+            foreign = [o["email"] for o in owners
+                       if o["email"] and email
+                       and o["email"].lower() != email.lower()
+                       and o["email"] != user_id]
+            if created or not foreign:
+                row = cand
+                break
+    if row is None:
+        return None
+    conn.execute(
+        "INSERT OR IGNORE INTO employer_users (user_id, employer_id, role) "
+        "VALUES (?, ?, 'owner')", (user_id, row["id"]))
+    conn.commit()
+    return consolidate_employers_for_user(conn, user_id, email)
 
 
 def list_employers(conn, limit: int = 200) -> list:
@@ -1265,15 +1575,26 @@ def update_role_application_status(conn, role_id: int, candidate_user_id: str,
 def list_unnotified_role_applicants(conn) -> list:
     """Un-notified inbound applicants, joined to their role + the role's poster
     (created_by_user_id) so the notify worker can email the employer. Grouped
-    by poster in the worker. Oldest first so a digest reads chronologically."""
+    by poster in the worker. Oldest first so a digest reads chronologically.
+
+    Poster email: users row for created_by_user_id, else the employer owner
+    membership's users row. The split-identity bug left posted roles on an
+    id that never got a users row; the owner join is the fallback so a
+    missing created_by users row is not a silent skip.
+    """
     rows = conn.execute(
         "SELECT ra.id, ra.employer_role_id, ra.candidate_user_id, "
         "       er.title AS role_title, er.created_by_user_id AS poster_user_id, "
-        "       u.email AS poster_email, u.name AS poster_name, "
-        "       COALESCE(u.notifications_enabled, 1) AS notifications_enabled "
+        "       COALESCE(u.email, owner.email) AS poster_email, "
+        "       COALESCE(u.name, owner.name) AS poster_name, "
+        "       COALESCE(u.notifications_enabled, owner.notifications_enabled, 1) "
+        "         AS notifications_enabled "
         "FROM role_applications ra "
         "JOIN employer_roles er ON er.id = ra.employer_role_id "
         "LEFT JOIN users u ON u.id = er.created_by_user_id "
+        "LEFT JOIN employer_users eu ON eu.employer_id = er.employer_id "
+        "  AND eu.role = 'owner' "
+        "LEFT JOIN users owner ON owner.id = eu.user_id "
         "WHERE ra.notified = 0 "
         "ORDER BY ra.id ASC").fetchall()
     return [dict(r) for r in rows]
