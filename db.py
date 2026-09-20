@@ -629,8 +629,22 @@ def _repoint_user_id(conn, old_id: str, new_id: str) -> None:
             "UPDATE users SET notifications_enabled = 0 WHERE id = ?",
             (new_id,))
 
-    _update("UPDATE employer_users SET user_id = ? WHERE user_id = ?",
-            (new_id, old_id))
+    # Row-by-row: a bulk UPDATE dies (and then the DELETE drops the
+    # surviving memberships) if canonical is already on one of the
+    # alias's employers. That is how a poster kept an empty Supplya
+    # and lost the one with jobs.
+    for r in conn.execute(
+            "SELECT employer_id FROM employer_users WHERE user_id = ?",
+            (old_id,)).fetchall():
+        try:
+            conn.execute(
+                "UPDATE employer_users SET user_id = ? "
+                "WHERE user_id = ? AND employer_id = ?",
+                (new_id, old_id, r["employer_id"]))
+        except sqlite3.IntegrityError:
+            conn.execute(
+                "DELETE FROM employer_users WHERE user_id = ? AND employer_id = ?",
+                (old_id, r["employer_id"]))
     conn.execute("DELETE FROM employer_users WHERE user_id = ?", (old_id,))
     conn.execute(
         "UPDATE employer_roles SET created_by_user_id = ? "
@@ -1229,6 +1243,66 @@ def get_employer_for_user(conn, user_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def _norm_company_name(name: Optional[str]) -> str:
+    n = (name or "").strip().lower()
+    if n.endswith(" (merged)"):
+        n = n[: -len(" (merged)")]
+    return " ".join(n.split())
+
+
+def _foreign_owner(conn, employer_id: int, user_id: str, email: str) -> bool:
+    """True when this company has an owner who is clearly someone else."""
+    email = (email or "").lower()
+    for o in conn.execute(
+            "SELECT eu.user_id, lower(u.email) AS email "
+            "FROM employer_users eu LEFT JOIN users u ON u.id = eu.user_id "
+            "WHERE eu.employer_id = ? AND eu.role = 'owner'",
+            (employer_id,)).fetchall():
+        uid = o["user_id"] or ""
+        em = o["email"] or ""
+        if uid == user_id or (email and uid.lower() == email):
+            continue
+        if em and email and em != email:
+            return True
+        if em and not email and uid != user_id:
+            return True
+    return False
+
+
+def _claimable_same_company_ids(conn, seed_ids: list, user_id: str,
+                                email: str) -> set:
+    """Duplicate Supplyas created under split identities, even when
+    created_by_user_id no longer matches this login."""
+    extra = set()
+    if not seed_ids:
+        return extra
+    names, domains = set(), set()
+    for eid in seed_ids:
+        row = get_employer(conn, eid)
+        if not row:
+            continue
+        n = _norm_company_name(row.get("company_name"))
+        if n:
+            names.add(n)
+        d = (row.get("company_domain") or "").strip().lower()
+        if d:
+            domains.add(d)
+    if not names and not domains:
+        return extra
+    for r in conn.execute(
+            "SELECT id, company_name, company_domain FROM employers").fetchall():
+        if int(r["id"]) in seed_ids:
+            continue
+        n = _norm_company_name(r["company_name"])
+        d = (r["company_domain"] or "").strip().lower()
+        if n not in names and d not in domains:
+            continue
+        if _foreign_owner(conn, r["id"], user_id, email):
+            continue
+        extra.add(int(r["id"]))
+    return extra
+
+
 def _employer_ids_for_identity(conn, user_id: str, email: str = "") -> list:
     """Every employer this Google account has ever touched, including
     split-identity aliases (email-as-id, previous subs)."""
@@ -1297,6 +1371,7 @@ def consolidate_employers_for_user(conn, user_id: str, email: str = "") -> Optio
     if email:
         adopt_email_aliases(conn, user_id, email)
     ids = _employer_ids_for_identity(conn, user_id, email)
+    ids = sorted(set(ids) | _claimable_same_company_ids(conn, ids, user_id, email))
     if not ids:
         return None
     scored = []

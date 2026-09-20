@@ -1238,7 +1238,15 @@ def user_portal(user_id: str = Depends(auth)):
     conn = get_conn()
     user = db.get_user(conn, user_id)
     email = (user or {}).get("email") or (user_id if "@" in user_id else "")
-    employer = db.consolidate_employers_for_user(conn, user_id, email)
+    employer = None
+    try:
+        employer = db.consolidate_employers_for_user(conn, user_id, email)
+    except Exception:
+        log.exception("employer heal failed")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
     if not employer:
         employer = db.get_employer_for_user(conn, user_id)
     twin = db.load_career_twin(conn, user_id) or {}
@@ -1339,7 +1347,15 @@ def require_employer(user_id: str) -> dict:
     conn = get_conn()
     user = db.get_user(conn, user_id)
     email = (user or {}).get("email") or (user_id if "@" in user_id else "")
-    employer = db.consolidate_employers_for_user(conn, user_id, email)
+    employer = None
+    try:
+        employer = db.consolidate_employers_for_user(conn, user_id, email)
+    except Exception:
+        log.exception("employer heal failed")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
     if not employer:
         employer = db.get_employer_for_user(conn, user_id)
     if not employer:

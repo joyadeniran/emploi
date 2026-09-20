@@ -208,6 +208,22 @@ ok &= check("onboarding Supplya again reclaims the existing company",
 ok &= check("reclaimed company still has its role",
             len(list_roles(_new, _kept)) == 1)
 
+# 8d. Empty "Supplya" on the live Google id, jobs on an orphaned row
+# whose created_by is a dead id not in users — the live dashboard trap.
+_orphan = connect(":memory:")
+upsert_user(_orphan, "sub-now", "joy@emploihq.com", "Joy")
+_empty2 = create_employer(_orphan, "Supplya", "supplya.co", "sub-now")
+_old2 = create_employer(_orphan, "Supplya", "supplya.co", "dead-sub")
+create_role(_orphan, _old2, "dead-sub", {"title": "Ops", "description": "run"})
+create_role(_orphan, _old2, "dead-sub", {"title": "Eng", "description": "build"})
+create_role(_orphan, _old2, "dead-sub", {"title": "Sales", "description": "sell"})
+_healed2 = consolidate_employers_for_user(_orphan, "sub-now", "joy@emploihq.com")
+ok &= check("same-name orphan Supplya is merged onto the one with jobs",
+            _healed2 is not None and _healed2["id"] == _old2)
+ok &= check("live login now sees the three jobs, not the empty clone",
+            get_employer_for_user(_orphan, "sub-now")["id"] == _old2
+            and len(list_roles(_orphan, _old2)) == 3)
+
 # 9. clear_user wipes only that user (NDPA/GDPR right)
 clear_user(conn, "user-1")
 ok &= check("clear_user removes career twin and applications",

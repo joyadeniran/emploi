@@ -15,8 +15,12 @@ export default async function EmployerOnboardingPage() {
   try {
     await apiFetch("/employer");
     hasEmployer = true;
-  } catch {
-    /* 404 — genuinely new */
+  } catch (error) {
+    const status = (error as { status?: number }).status;
+    // Only a real "no company" 404 should show the form. A 500 from the
+    // heal must not look like a first-time signup (that is how a sixth
+    // empty Supplya got created).
+    if (status && status !== 404) throw error;
   }
   if (hasEmployer) redirect("/employer");
   return <EmployerOnboardingForm email={session?.user?.email ?? ""} />;
